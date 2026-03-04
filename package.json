@@ -1,0 +1,20 @@
+{
+  "name": "vpc",
+  "version": "1.0.0",
+  "description": "Virtual PC Control - Web-based OS-style VPS management dashboard",
+  "private": true,
+  "scripts": {
+    "start": "node app.js",
+    "dev:backend": "cd backend && npx nodemon server.js",
+    "dev:frontend": "cd frontend && npx vite",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "cd frontend && npm run build",
+    "migrate": "cd backend && node db/run-migrations.js",
+    "seed": "cd backend && node db/seed-admin.js",
+    "postinstall": "cd backend && npm install && cd ../frontend && npm install"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.3.1"
+  }
+}

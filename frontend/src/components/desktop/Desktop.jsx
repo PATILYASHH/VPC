@@ -1,0 +1,35 @@
+import useDesktopStore from '@/stores/useDesktopStore';
+import APP_REGISTRY from '@/lib/appRegistry';
+import WindowManager from './WindowManager';
+import Taskbar from './Taskbar';
+import AppLauncher from './AppLauncher';
+import AppIcon from './AppIcon';
+
+export default function Desktop() {
+  const launcherOpen = useDesktopStore((s) => s.launcherOpen);
+  const appIds = Object.keys(APP_REGISTRY);
+
+  return (
+    <div className="h-screen w-screen overflow-hidden relative bg-gradient-to-br from-[hsl(222,47%,8%)] via-[hsl(222,47%,11%)] to-[hsl(220,40%,13%)]">
+      {/* Desktop icon grid */}
+      <div className="absolute inset-0 bottom-12 p-6">
+        <div className="flex flex-col flex-wrap gap-4 h-full content-start">
+          {appIds.map((appId) => (
+            <AppIcon key={appId} appId={appId} />
+          ))}
+        </div>
+      </div>
+
+      {/* Window layer */}
+      <div className="absolute inset-0 bottom-12">
+        <WindowManager />
+      </div>
+
+      {/* Taskbar */}
+      <Taskbar />
+
+      {/* App launcher */}
+      {launcherOpen && <AppLauncher />}
+    </div>
+  );
+}
