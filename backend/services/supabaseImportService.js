@@ -49,6 +49,7 @@ function createRemotePool(connectionString) {
     user: conn.user,
     password: conn.password,
     database: conn.database,
+    ssl: { rejectUnauthorized: false }, // Supabase requires SSL
     max: 3,
     connectionTimeoutMillis: 15000,
     idleTimeoutMillis: 30000,
@@ -167,10 +168,16 @@ async function importFromSupabase(mainPool, project, { connectionString, importA
     `);
 
     for (const en of enumsResult.rows) {
-      const labels = en.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(', ');
+      // array_agg may return a JS array or a PG string like "{val1,val2}"
+      let labelArr = en.labels;
+      if (typeof labelArr === 'string') {
+        labelArr = labelArr.replace(/^\{|\}$/g, '').split(',').map((s) => s.replace(/^"|"$/g, ''));
+      }
+      if (!Array.isArray(labelArr)) labelArr = [];
+      const labels = labelArr.map((l) => `'${l.replace(/'/g, "''")}'`).join(', ');
       try {
         await local.query(`DROP TYPE IF EXISTS "${en.enum_name}" CASCADE`);
-        await local.query(`CREATE TYPE "${en.enum_name}" AS ENUM (${labels})`);
+        if (labels) await local.query(`CREATE TYPE "${en.enum_name}" AS ENUM (${labels})`);
       } catch (e) {
         console.error(`[Import] Enum ${en.enum_name}:`, e.message);
       }
@@ -460,11 +467,15 @@ async function syncFromSupabase(mainPool, project) {
       GROUP BY t.typname
     `);
     for (const en of enumsResult.rows) {
-      const labels = en.labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(', ');
+      let labelArr = en.labels;
+      if (typeof labelArr === 'string') {
+        labelArr = labelArr.replace(/^\{|\}$/g, '').split(',').map((s) => s.replace(/^"|"$/g, ''));
+      }
+      if (!Array.isArray(labelArr)) labelArr = [];
+      const labels = labelArr.map((l) => `'${l.replace(/'/g, "''")}'`).join(', ');
       try {
-        // Drop and recreate to handle added enum values
         await local.query(`DROP TYPE IF EXISTS "${en.enum_name}" CASCADE`);
-        await local.query(`CREATE TYPE "${en.enum_name}" AS ENUM (${labels})`);
+        if (labels) await local.query(`CREATE TYPE "${en.enum_name}" AS ENUM (${labels})`);
       } catch (e) {
         console.error(`[Sync] Enum ${en.enum_name}:`, e.message);
       }
