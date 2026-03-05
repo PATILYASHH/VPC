@@ -107,10 +107,19 @@ export default function BanaSettings({ project }) {
         <div className="space-y-3">
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <span className="text-muted-foreground">Storage</span>
-              <span>{stats.storage_used_mb || 0} MB / {proj.storage_limit_mb} MB</span>
+              <span className="text-muted-foreground">Storage Used</span>
+              <span className={`font-mono ${storagePercent >= 100 ? 'text-destructive font-medium' : storagePercent > 80 ? 'text-amber-500' : ''}`}>
+                {stats.storage_used_mb || 0} MB / {proj.storage_limit_mb} MB allocated
+              </span>
             </div>
-            <Progress value={storagePercent} className="h-2" />
+            <Progress
+              value={Math.min(storagePercent, 100)}
+              className={`h-2 ${storagePercent >= 100 ? '[&>div]:bg-destructive' : storagePercent > 80 ? '[&>div]:bg-amber-500' : ''}`}
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {Math.max(0, proj.storage_limit_mb - (stats.storage_used_mb || 0))} MB remaining.
+              Writes are blocked when storage is full.
+            </p>
           </div>
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">Active Connections</span>

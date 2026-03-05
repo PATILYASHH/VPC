@@ -19,6 +19,11 @@ async function authenticateAdmin(req, res, next) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
 
+    // Reject temporary tokens (e.g. TOTP challenge tokens)
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Invalid token type' });
+    }
+
     const pool = req.app.locals.pool;
     const { rows } = await pool.query(
       'SELECT id, username, email, display_name, allowed_ips FROM vpc_admins WHERE id = $1 AND is_active = true',

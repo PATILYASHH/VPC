@@ -1,0 +1,2 @@
+ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(255);
+ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT false;

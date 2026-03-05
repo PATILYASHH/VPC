@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const banaApiAuth = require('../middleware/banaApiAuth');
+const { banaApiAuth, banaStorageCheck } = require('../middleware/banaApiAuth');
 const banadbService = require('../services/banadbService');
 const dbBrowser = require('../services/dbBrowserService');
 const { signToken, verifyToken } = require('../utils/jwt');
@@ -101,7 +101,7 @@ router.get('/:slug/rest/:table', async (req, res) => {
   }
 });
 
-router.post('/:slug/rest/:table', async (req, res) => {
+router.post('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
   try {
     const table = req.params.table;
     validateIdentifier(table);
@@ -129,7 +129,7 @@ router.post('/:slug/rest/:table', async (req, res) => {
   }
 });
 
-router.patch('/:slug/rest/:table', async (req, res) => {
+router.patch('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
   try {
     const table = req.params.table;
     validateIdentifier(table);
@@ -203,7 +203,7 @@ router.delete('/:slug/rest/:table', async (req, res) => {
 
 // ─── SQL (service key only) ────────────────────────────────
 
-router.post('/:slug/sql', async (req, res) => {
+router.post('/:slug/sql', banaStorageCheck, async (req, res) => {
   try {
     if (req.banaKeyRole !== 'service') {
       return res.status(403).json({ error: 'SQL execution requires a service key' });

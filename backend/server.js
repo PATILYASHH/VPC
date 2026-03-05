@@ -71,6 +71,7 @@ adminRouter.use('/backup', require('./routes/backups'));
 adminRouter.use('/logs', require('./routes/logs'));
 adminRouter.use('/terminal', require('./routes/terminal'));
 adminRouter.use('/bana', require('./routes/banadb'));
+adminRouter.use('/users', require('./routes/users'));
 
 // Placeholder authenticated route for testing
 adminRouter.get('/me', (req, res) => {

@@ -26,4 +26,20 @@ async function banaApiAuth(req, res, next) {
   }
 }
 
-module.exports = banaApiAuth;
+// Middleware to enforce per-project storage limits on write operations
+async function banaStorageCheck(req, res, next) {
+  try {
+    const check = await banadbService.checkStorageLimit(req.app.locals.pool, req.banaProject);
+    if (check.exceeded) {
+      return res.status(507).json({
+        error: `Storage limit exceeded. Used ${check.used_mb} MB of ${check.limit_mb} MB allocated. Upgrade your storage limit or delete data.`,
+        storage: check,
+      });
+    }
+    next();
+  } catch {
+    next(); // Don't block on check failure
+  }
+}
+
+module.exports = { banaApiAuth, banaStorageCheck };

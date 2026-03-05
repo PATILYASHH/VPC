@@ -7,8 +7,23 @@ const useAuthStore = create((set) => ({
   isAuthenticated: false,
   isLoading: true,
 
-  login: async (username, password) => {
-    const { data } = await api.post('/admin/auth/login', { username, password });
+  login: async (email, password, totpData) => {
+    if (totpData) {
+      const { data } = await api.post('/admin/auth/login/totp', {
+        tempToken: totpData.tempToken,
+        totpCode: totpData.totpCode,
+      });
+      localStorage.setItem('vpc-token', data.token);
+      set({ admin: data.admin, token: data.token, isAuthenticated: true });
+      return data.admin;
+    }
+
+    const { data } = await api.post('/admin/auth/login', { email, password });
+
+    if (data.requireTotp) {
+      return { requireTotp: true, tempToken: data.tempToken };
+    }
+
     localStorage.setItem('vpc-token', data.token);
     set({ admin: data.admin, token: data.token, isAuthenticated: true });
     return data.admin;

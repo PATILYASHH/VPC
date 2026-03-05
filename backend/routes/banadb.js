@@ -9,7 +9,8 @@ const supabaseImport = require('../services/supabaseImportService');
 router.get('/projects', async (req, res) => {
   try {
     const projects = await banadbService.getProjects(req.app.locals.pool);
-    res.json({ projects });
+    const storage = await banadbService.getStorageSummary(req.app.locals.pool);
+    res.json({ projects, storage });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -93,6 +94,22 @@ async function resolveProject(req, res, next) {
   }
 }
 
+// Middleware: enforce per-project storage limit on write operations
+async function enforceStorageLimit(req, res, next) {
+  try {
+    const check = await banadbService.checkStorageLimit(req.app.locals.pool, req.banaProject);
+    if (check.exceeded) {
+      return res.status(507).json({
+        error: `Storage limit exceeded (${check.used_mb}/${check.limit_mb} MB). Increase the limit in Settings or delete data.`,
+        storage: check,
+      });
+    }
+    next();
+  } catch {
+    next();
+  }
+}
+
 router.get('/projects/:id/schemas', resolveProject, async (req, res) => {
   try {
     const schemas = await dbBrowser.getSchemas(req.banaPool);
@@ -142,7 +159,7 @@ router.get('/projects/:id/table/:name', resolveProject, async (req, res) => {
   }
 });
 
-router.post('/projects/:id/query', resolveProject, async (req, res) => {
+router.post('/projects/:id/query', resolveProject, enforceStorageLimit, async (req, res) => {
   try {
     const { sql, confirm } = req.body;
     if (!sql) return res.status(400).json({ error: 'SQL is required' });
@@ -153,7 +170,7 @@ router.post('/projects/:id/query', resolveProject, async (req, res) => {
   }
 });
 
-router.post('/projects/:id/table/:name/row', resolveProject, async (req, res) => {
+router.post('/projects/:id/table/:name/row', resolveProject, enforceStorageLimit, async (req, res) => {
   try {
     const schema = req.query.schema || 'public';
     const row = await dbBrowser.insertRow(req.banaPool, schema, req.params.name, req.body);
@@ -163,7 +180,7 @@ router.post('/projects/:id/table/:name/row', resolveProject, async (req, res) =>
   }
 });
 
-router.put('/projects/:id/table/:name/row/:rowId', resolveProject, async (req, res) => {
+router.put('/projects/:id/table/:name/row/:rowId', resolveProject, enforceStorageLimit, async (req, res) => {
   try {
     const schema = req.query.schema || 'public';
     const primaryKey = req.query.primaryKey || 'id';
@@ -259,7 +276,7 @@ router.delete('/projects/:id/api-keys/:keyId', async (req, res) => {
   }
 });
 
-// ─── Supabase Import ───────────────────────────────────────
+// ─── Supabase Import & Sync ───────────────────────────────
 
 router.post('/projects/:id/import/test-connection', async (req, res) => {
   try {
@@ -283,6 +300,58 @@ router.post('/projects/:id/import/supabase', resolveProject, async (req, res) =>
       { connectionString, importAuth: importAuth !== false }
     );
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync: pull latest changes from linked Supabase
+router.post('/projects/:id/import/sync', resolveProject, async (req, res) => {
+  try {
+    const result = await supabaseImport.syncFromSupabase(
+      req.app.locals.pool,
+      req.banaProject
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get link status
+router.get('/projects/:id/import/status', async (req, res) => {
+  try {
+    const { rows } = await req.app.locals.pool.query(
+      `SELECT supabase_connection IS NOT NULL AS linked, last_sync_at, sync_status
+       FROM bana_projects WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
+
+    let remoteInfo = null;
+    if (rows[0].linked) {
+      try {
+        const connStr = await supabaseImport.getConnection(req.app.locals.pool, req.params.id);
+        remoteInfo = await supabaseImport.testConnection(connStr);
+      } catch {}
+    }
+
+    res.json({
+      linked: rows[0].linked,
+      last_sync_at: rows[0].last_sync_at,
+      sync_status: rows[0].sync_status,
+      remote: remoteInfo,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Disconnect: remove stored connection
+router.delete('/projects/:id/import/disconnect', async (req, res) => {
+  try {
+    await supabaseImport.removeConnection(req.app.locals.pool, req.params.id);
+    res.json({ disconnected: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

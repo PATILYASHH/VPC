@@ -350,6 +350,65 @@ async function findProjectByApiKeyHash(pool, keyHash) {
   return rows[0] || null;
 }
 
+// Storage summary: total server disk, total allocated across projects, total used
+async function getStorageSummary(pool) {
+  // Get total allocated and used across all projects
+  const { rows: projects } = await pool.query(
+    `SELECT id, db_name, storage_limit_mb FROM bana_projects WHERE status != 'deleted'`
+  );
+
+  let totalAllocatedMb = 0;
+  let totalUsedMb = 0;
+
+  for (const p of projects) {
+    totalAllocatedMb += p.storage_limit_mb || 0;
+    try {
+      const sizeResult = await pool.query(
+        `SELECT pg_database_size($1) AS size_bytes`, [p.db_name]
+      );
+      totalUsedMb += Math.round(parseInt(sizeResult.rows[0]?.size_bytes || 0) / (1024 * 1024));
+    } catch {}
+  }
+
+  // Get total PG data directory size (server-level)
+  let serverTotalMb = 0;
+  try {
+    const diskResult = await pool.query(
+      `SELECT pg_size_pretty(sum(pg_database_size(datname))) AS total_pretty,
+              sum(pg_database_size(datname)) AS total_bytes
+       FROM pg_database WHERE datistemplate = false`
+    );
+    serverTotalMb = Math.round(parseInt(diskResult.rows[0]?.total_bytes || 0) / (1024 * 1024));
+  } catch {}
+
+  return {
+    total_allocated_mb: totalAllocatedMb,
+    total_used_mb: totalUsedMb,
+    remaining_allocatable_mb: Math.max(0, totalAllocatedMb - totalUsedMb),
+    server_total_db_mb: serverTotalMb,
+    project_count: projects.length,
+  };
+}
+
+// Check if a project has exceeded its storage limit
+async function checkStorageLimit(pool, project) {
+  try {
+    const sizeResult = await pool.query(
+      `SELECT pg_database_size($1) AS size_bytes`, [project.db_name]
+    );
+    const usedMb = Math.round(parseInt(sizeResult.rows[0]?.size_bytes || 0) / (1024 * 1024));
+    const limitMb = project.storage_limit_mb || 500;
+    return {
+      used_mb: usedMb,
+      limit_mb: limitMb,
+      exceeded: usedMb >= limitMb,
+      remaining_mb: Math.max(0, limitMb - usedMb),
+    };
+  } catch {
+    return { used_mb: 0, limit_mb: project.storage_limit_mb || 500, exceeded: false, remaining_mb: project.storage_limit_mb || 500 };
+  }
+}
+
 module.exports = {
   getProjectPool,
   removeProjectPool,
@@ -371,4 +430,6 @@ module.exports = {
   createApiKey,
   revokeApiKey,
   findProjectByApiKeyHash,
+  getStorageSummary,
+  checkStorageLimit,
 };

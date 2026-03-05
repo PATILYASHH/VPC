@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -7,6 +7,7 @@ import BackupManager from '@/components/apps/BackupManager';
 import LogsViewer from '@/components/apps/LogsViewer';
 import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
 import BanaDB from '@/components/apps/BanaDB';
+import VpcAuth from '@/components/apps/VpcAuth';
 
 const APP_REGISTRY = {
   'server-manager': {
@@ -88,6 +89,16 @@ const APP_REGISTRY = {
     defaultHeight: 700,
     minWidth: 900,
     minHeight: 550,
+  },
+  'vpc-auth': {
+    id: 'vpc-auth',
+    title: 'VPC Auth',
+    icon: Shield,
+    component: VpcAuth,
+    defaultWidth: 900,
+    defaultHeight: 600,
+    minWidth: 600,
+    minHeight: 400,
   },
 };
 
