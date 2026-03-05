@@ -303,6 +303,32 @@ async function authenticateAuthUser(projectPool, email, password) {
   return { id: user.id, email: user.email, metadata: user.metadata };
 }
 
+// ── API Key encryption (for dashboard display like Supabase) ──────
+const KEY_ENC_ALGO = 'aes-256-gcm';
+const KEY_ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'bana-default-key', 'bana-key-salt', 32);
+
+function encryptApiKey(text) {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(KEY_ENC_ALGO, KEY_ENC_KEY, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const tag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${tag}:${encrypted}`;
+}
+
+function decryptApiKey(data) {
+  try {
+    const [ivHex, tagHex, encrypted] = data.split(':');
+    const decipher = crypto.createDecipheriv(KEY_ENC_ALGO, KEY_ENC_KEY, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch {
+    return null;
+  }
+}
+
 // API key management
 function generateApiKey(role) {
   const prefix = role === 'service' ? 'bana_svc_' : 'bana_';
@@ -314,21 +340,54 @@ function generateApiKey(role) {
 
 async function getApiKeys(pool, projectId) {
   const { rows } = await pool.query(
-    `SELECT id, project_id, name, key_prefix, role, is_active, created_at
+    `SELECT id, project_id, name, key_prefix, role, is_active, encrypted_key, created_at
      FROM bana_api_keys WHERE project_id = $1 ORDER BY created_at DESC`,
     [projectId]
   );
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    api_key: row.encrypted_key ? decryptApiKey(row.encrypted_key) : null,
+    encrypted_key: undefined,
+  }));
 }
 
 async function createApiKey(pool, projectId, { name, role }) {
   const { rawKey, keyPrefix, keyHash } = generateApiKey(role || 'anon');
+  const encrypted = encryptApiKey(rawKey);
   const { rows } = await pool.query(
-    `INSERT INTO bana_api_keys (project_id, name, key_prefix, key_hash, role)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, name, key_prefix, role, created_at`,
-    [projectId, name, keyPrefix, keyHash, role || 'anon']
+    `INSERT INTO bana_api_keys (project_id, name, key_prefix, key_hash, role, encrypted_key)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, key_prefix, role, created_at`,
+    [projectId, name, keyPrefix, keyHash, role || 'anon', encrypted]
   );
   return { ...rows[0], api_key: rawKey };
+}
+
+// Auto-create default anon + service keys if they don't exist
+async function ensureDefaultKeys(pool, projectId) {
+  const existing = await getApiKeys(pool, projectId);
+  const activeAnon = existing.find((k) => k.role === 'anon' && k.is_active);
+  const activeService = existing.find((k) => k.role === 'service' && k.is_active);
+
+  if (!activeAnon) {
+    await createApiKey(pool, projectId, { name: 'anon key', role: 'anon' });
+  }
+  if (!activeService) {
+    await createApiKey(pool, projectId, { name: 'service_role key', role: 'service' });
+  }
+
+  // Return fresh list
+  return getApiKeys(pool, projectId);
+}
+
+// Regenerate a key: revoke old, create new with same role
+async function regenerateApiKey(pool, projectId, role) {
+  // Revoke all active keys of this role
+  await pool.query(
+    `UPDATE bana_api_keys SET is_active = false WHERE project_id = $1 AND role = $2 AND is_active = true`,
+    [projectId, role]
+  );
+  const name = role === 'service' ? 'service_role key' : 'anon key';
+  return createApiKey(pool, projectId, { name, role });
 }
 
 async function revokeApiKey(pool, keyId) {
@@ -428,6 +487,8 @@ module.exports = {
   generateApiKey,
   getApiKeys,
   createApiKey,
+  ensureDefaultKeys,
+  regenerateApiKey,
   revokeApiKey,
   findProjectByApiKeyHash,
   getStorageSummary,

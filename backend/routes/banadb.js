@@ -249,7 +249,8 @@ router.delete('/projects/:id/auth/users/:userId', resolveProject, async (req, re
 
 router.get('/projects/:id/api-keys', async (req, res) => {
   try {
-    const keys = await banadbService.getApiKeys(req.app.locals.pool, req.params.id);
+    // Auto-create default anon + service keys if missing
+    const keys = await banadbService.ensureDefaultKeys(req.app.locals.pool, req.params.id);
     res.json({ keys });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -262,6 +263,19 @@ router.post('/projects/:id/api-keys', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'Key name is required' });
     const result = await banadbService.createApiKey(req.app.locals.pool, req.params.id, { name, role });
     res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/api-keys/regenerate', async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!role || !['anon', 'service'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be anon or service' });
+    }
+    const result = await banadbService.regenerateApiKey(req.app.locals.pool, req.params.id, role);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
