@@ -1,6 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { generateSecret, generateURI, verifySync } = require('otplib');
+const { generateSecret, generateURI, verifyTOTP } = require('../utils/totp');
 const QRCode = require('qrcode');
 
 const router = express.Router();
@@ -144,7 +144,7 @@ router.post('/:id/totp/setup', async (req, res) => {
       [secret, user.id]
     );
 
-    const otpauthUrl = generateURI({ type: 'totp', issuer: 'VPC Control', label: user.email, secret });
+    const otpauthUrl = generateURI({ issuer: 'VPC Control', label: user.email, secret });
     const qrCode = await QRCode.toDataURL(otpauthUrl);
 
     res.json({ secret, qrCode });
@@ -175,8 +175,7 @@ router.post('/:id/totp/verify', async (req, res) => {
       return res.status(400).json({ error: 'TOTP not set up yet' });
     }
 
-    const result = verifySync({ secret: rows[0].totp_secret, token: code });
-    const isValid = result.valid;
+    const isValid = verifyTOTP(rows[0].totp_secret, code);
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid TOTP code' });
     }

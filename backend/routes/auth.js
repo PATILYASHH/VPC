@@ -1,6 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { verifySync } = require('otplib');
+const { verifyTOTP } = require('../utils/totp');
 const { signToken, verifyToken } = require('../utils/jwt');
 const { loginLimiter } = require('../middleware/rateLimiter');
 
@@ -96,8 +96,7 @@ router.post('/login/totp', loginLimiter, async (req, res) => {
     }
 
     const admin = rows[0];
-    const totpResult = verifySync({ secret: admin.totp_secret, token: totpCode });
-    const isValid = totpResult.valid;
+    const isValid = verifyTOTP(admin.totp_secret, totpCode);
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid TOTP code' });
