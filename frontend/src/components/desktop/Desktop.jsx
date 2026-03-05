@@ -20,8 +20,8 @@ export default function Desktop() {
         </div>
       </div>
 
-      {/* Window layer */}
-      <div className="absolute inset-0 bottom-12">
+      {/* Window layer (pointer-events-none so icons stay clickable) */}
+      <div className="absolute inset-0 bottom-12 pointer-events-none">
         <WindowManager />
       </div>
 

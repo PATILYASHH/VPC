@@ -5,12 +5,17 @@ const pool = require('./db/pool');
 const { authenticateAdmin } = require('./middleware/auth');
 const actionLogger = require('./middleware/actionLogger');
 const ipRestriction = require('./middleware/ipRestriction');
-const { globalLimiter } = require('./middleware/rateLimiter');
+const { globalLimiter, banaApiLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 
-// Security headers
-app.use(helmet());
+// Security headers (relaxed for HTTP; tighten when SSL is added)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  originAgentCluster: false,
+}));
 
 // CORS
 const allowedOrigins = [
@@ -19,10 +24,12 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-}));
+// CORS for admin panel (restricted origins)
+app.use('/api/admin', cors({ origin: allowedOrigins, credentials: true }));
+// CORS for BanaDB external API (open to any origin)
+app.use('/api/bana', cors());
+// Fallback CORS
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
@@ -40,6 +47,9 @@ app.get('/health', async (req, res) => {
     res.status(503).json({ status: 'error', error: err.message });
   }
 });
+
+// BanaDB External REST API (API key auth, no JWT)
+app.use('/api/bana/v1', banaApiLimiter, require('./routes/banaApi'));
 
 // Admin API routes
 const adminRouter = express.Router();
@@ -60,6 +70,7 @@ adminRouter.use('/integrations', require('./routes/integrations'));
 adminRouter.use('/backup', require('./routes/backups'));
 adminRouter.use('/logs', require('./routes/logs'));
 adminRouter.use('/terminal', require('./routes/terminal'));
+adminRouter.use('/bana', require('./routes/banadb'));
 
 // Placeholder authenticated route for testing
 adminRouter.get('/me', (req, res) => {

@@ -25,7 +25,7 @@ export default function Window({ windowId }) {
       size={{ width: win.width, height: win.height }}
       minWidth={win.minWidth}
       minHeight={win.minHeight}
-      style={{ zIndex: win.zIndex }}
+      style={{ zIndex: win.zIndex, pointerEvents: 'auto' }}
       dragHandleClassName="window-drag-handle"
       bounds="parent"
       disableDragging={win.isMaximized}

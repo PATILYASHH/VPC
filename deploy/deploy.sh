@@ -14,7 +14,8 @@ cd $APP_DIR
 # Pull latest code
 git pull origin main
 
-# Install dependencies
+# Install dependencies (root first, then backend + frontend via postinstall)
+npm install --production
 cd backend && npm install --production && cd ..
 cd frontend && npm install && cd ..
 

@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -6,6 +6,7 @@ import IntegrationMonitor from '@/components/apps/IntegrationMonitor';
 import BackupManager from '@/components/apps/BackupManager';
 import LogsViewer from '@/components/apps/LogsViewer';
 import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
+import BanaDB from '@/components/apps/BanaDB';
 
 const APP_REGISTRY = {
   'server-manager': {
@@ -77,6 +78,16 @@ const APP_REGISTRY = {
     defaultHeight: 500,
     minWidth: 500,
     minHeight: 300,
+  },
+  'bana-db': {
+    id: 'bana-db',
+    title: 'BanaDB',
+    icon: Layers,
+    component: BanaDB,
+    defaultWidth: 1200,
+    defaultHeight: 700,
+    minWidth: 900,
+    minHeight: 550,
   },
 };
 
