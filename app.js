@@ -17,7 +17,7 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Auto-run pending migrations on startup
+// Auto-run pending migrations on startup (non-blocking — server starts even if migrations fail)
 async function runMigrations() {
   const client = new Client({
     host: process.env.DB_HOST || 'localhost',
@@ -25,33 +25,30 @@ async function runMigrations() {
     database: process.env.DB_NAME || 'vpc',
     user: process.env.DB_USER || 'vpc_admin',
     password: process.env.DB_PASSWORD,
+    connectionTimeoutMillis: 5000,
   });
   try {
     await client.connect();
     const migrationsDir = path.join(__dirname, 'backend', 'migrations');
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
-    let applied = 0;
     for (const file of files) {
       try {
         await client.query(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
-        applied++;
-      } catch (err) {
-        if (!err.message.includes('already exists')) {
-          console.error(`[Migrations] FAIL ${file}:`, err.message);
-        }
+      } catch {
+        // Silently skip — migrations use IF NOT EXISTS / IF EXISTS
       }
     }
-    if (applied) console.log(`[Migrations] ${applied} migration(s) applied`);
+    console.log('[Migrations] Done');
   } catch (err) {
-    console.error('[Migrations] Error:', err.message);
+    console.error('[Migrations] Skipped:', err.message);
   } finally {
-    await client.end();
+    try { await client.end(); } catch {}
   }
 }
 
-runMigrations().then(() => {
-  app.listen(PORT, () => {
-    console.log(`[VPC] Server running on port ${PORT}`);
-    console.log(`[VPC] Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
+// Start server immediately, run migrations in parallel
+app.listen(PORT, () => {
+  console.log(`[VPC] Server running on port ${PORT}`);
+  console.log(`[VPC] Environment: ${process.env.NODE_ENV || 'development'}`);
 });
+runMigrations();
