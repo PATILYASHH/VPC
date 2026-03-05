@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { Table2, Code2, Users, Key, Settings } from 'lucide-react';
+import { Table2, Code2, Users, Key, Settings, CloudDownload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import BanaTableEditor from './BanaTableEditor';
 import BanaSqlEditor from './BanaSqlEditor';
 import BanaAuth from './BanaAuth';
 import BanaApiKeys from './BanaApiKeys';
 import BanaSettings from './BanaSettings';
+import BanaSupabaseImport from './BanaSupabaseImport';
 
 const NAV_ITEMS = [
   { id: 'tables', label: 'Table Editor', icon: Table2 },
   { id: 'sql', label: 'SQL Editor', icon: Code2 },
   { id: 'auth', label: 'Auth', icon: Users },
   { id: 'api', label: 'API Keys', icon: Key },
+  { id: 'import', label: 'Import', icon: CloudDownload },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -50,6 +52,7 @@ export default function ProjectDashboard({ project }) {
         {activeSection === 'sql' && <BanaSqlEditor project={project} />}
         {activeSection === 'auth' && <BanaAuth project={project} />}
         {activeSection === 'api' && <BanaApiKeys project={project} />}
+        {activeSection === 'import' && <BanaSupabaseImport project={project} />}
         {activeSection === 'settings' && <BanaSettings project={project} />}
       </div>
     </div>

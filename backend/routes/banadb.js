@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const banadbService = require('../services/banadbService');
 const dbBrowser = require('../services/dbBrowserService');
+const supabaseImport = require('../services/supabaseImportService');
 
 // ─── Projects ──────────────────────────────────────────────
 
@@ -252,6 +253,35 @@ router.post('/projects/:id/api-keys', async (req, res) => {
 router.delete('/projects/:id/api-keys/:keyId', async (req, res) => {
   try {
     const result = await banadbService.revokeApiKey(req.app.locals.pool, req.params.keyId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Supabase Import ───────────────────────────────────────
+
+router.post('/projects/:id/import/test-connection', async (req, res) => {
+  try {
+    const { connectionString } = req.body;
+    if (!connectionString) return res.status(400).json({ error: 'Connection string is required' });
+    const result = await supabaseImport.testConnection(connectionString);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/import/supabase', resolveProject, async (req, res) => {
+  try {
+    const { connectionString, importAuth } = req.body;
+    if (!connectionString) return res.status(400).json({ error: 'Connection string is required' });
+
+    const result = await supabaseImport.importFromSupabase(
+      req.app.locals.pool,
+      req.banaProject,
+      { connectionString, importAuth: importAuth !== false }
+    );
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
