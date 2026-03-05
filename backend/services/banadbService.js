@@ -329,6 +329,18 @@ function decryptApiKey(data) {
   }
 }
 
+// Ensure encrypted_key column exists (self-healing migration)
+let _columnEnsured = false;
+async function ensureEncryptedKeyColumn(pool) {
+  if (_columnEnsured) return;
+  try {
+    await pool.query('ALTER TABLE bana_api_keys ADD COLUMN IF NOT EXISTS encrypted_key TEXT');
+    _columnEnsured = true;
+  } catch (err) {
+    console.error('[BanaDB] Failed to ensure encrypted_key column:', err.message);
+  }
+}
+
 // API key management
 function generateApiKey(role) {
   const prefix = role === 'service' ? 'bana_svc_' : 'bana_';
@@ -364,6 +376,7 @@ async function createApiKey(pool, projectId, { name, role }) {
 
 // Auto-create default anon + service keys if they don't exist
 async function ensureDefaultKeys(pool, projectId) {
+  await ensureEncryptedKeyColumn(pool);
   const existing = await getApiKeys(pool, projectId);
   const activeAnon = existing.find((k) => k.role === 'anon' && k.is_active);
   const activeService = existing.find((k) => k.role === 'service' && k.is_active);
