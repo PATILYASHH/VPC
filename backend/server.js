@@ -5,7 +5,7 @@ const pool = require('./db/pool');
 const { authenticateAdmin } = require('./middleware/auth');
 const actionLogger = require('./middleware/actionLogger');
 const ipRestriction = require('./middleware/ipRestriction');
-const { globalLimiter, banaApiLimiter } = require('./middleware/rateLimiter');
+// Rate limiters removed — private system, no throttling needed
 
 const app = express();
 
@@ -32,8 +32,8 @@ app.use('/api/bana', cors());
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Attach database pool
 app.locals.pool = pool;
@@ -49,7 +49,7 @@ app.get('/health', async (req, res) => {
 });
 
 // BanaDB External REST API (API key auth, no JWT)
-app.use('/api/bana/v1', banaApiLimiter, require('./routes/banaApi'));
+app.use('/api/bana/v1', require('./routes/banaApi'));
 
 // Admin API routes
 const adminRouter = express.Router();
@@ -78,7 +78,7 @@ adminRouter.get('/me', (req, res) => {
   res.json({ admin: req.admin });
 });
 
-app.use('/api/admin', globalLimiter, adminRouter);
+app.use('/api/admin', adminRouter);
 
 // Error handling
 app.use((err, req, res, _next) => {

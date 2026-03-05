@@ -6,9 +6,9 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'vpc',
   user: process.env.DB_USER || 'vpc_admin',
   password: process.env.DB_PASSWORD,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  max: 50,
+  idleTimeoutMillis: 60000,
+  connectionTimeoutMillis: 5000,
 });
 
 pool.on('error', (err) => {
