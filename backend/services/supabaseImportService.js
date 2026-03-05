@@ -271,6 +271,50 @@ function runPgRestore(project, dumpPath) {
   });
 }
 
+// ── Prepare local DB: install extensions that exist on remote ───────
+
+async function prepareLocalExtensions(remote, local, jobId) {
+  // Query remote for installed extensions and their schemas
+  const extResult = await remote.query(`
+    SELECT e.extname, n.nspname AS schema
+    FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace
+    WHERE e.extname NOT IN ('plpgsql')
+  `);
+
+  if (extResult.rows.length === 0) return 0;
+
+  // Create the extensions schema if any extension uses it
+  const schemas = [...new Set(extResult.rows.map((r) => r.schema).filter((s) => s !== 'public'))];
+  for (const schema of schemas) {
+    try {
+      await local.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+    } catch (e) {
+      console.error(`[Import] Create schema ${schema}:`, e.message);
+    }
+  }
+
+  // Install each extension in the same schema as remote
+  let installed = 0;
+  for (const ext of extResult.rows) {
+    try {
+      await local.query(`CREATE EXTENSION IF NOT EXISTS "${ext.extname}" SCHEMA "${ext.schema}"`);
+      installed++;
+    } catch (e) {
+      // Some extensions may not be available on the local server — try without schema
+      try {
+        await local.query(`CREATE EXTENSION IF NOT EXISTS "${ext.extname}"`);
+        installed++;
+      } catch (e2) {
+        console.error(`[Import] Extension ${ext.extname}:`, e2.message);
+      }
+    }
+  }
+
+  addJobStep(jobId, 'extensions', 'done', `Installed ${installed}/${extResult.rows.length} extensions (${extResult.rows.map((e) => e.extname).join(', ')})`);
+  return installed;
+}
+
 // ── Start Import (background job) ──────────────────────────────────
 
 function startImport(mainPool, project, { connectionString, importAuth = true }) {
@@ -287,9 +331,18 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
     let remote = null;
 
     try {
-      // ── Step 1: pg_dump remote Supabase DB ─────────────────
+      // ── Step 1: Prepare local DB with extensions ───────────
+      addJobStep(job.id, 'extensions', 'running', 'Installing required extensions...');
+      updateJob(job.id, { progress: 5, message: 'Preparing database extensions...' });
+
+      remote = createRemotePool(connectionString);
+      const local = banadbService.getProjectPool(project);
+      await prepareLocalExtensions(remote, local, job.id);
+      updateJob(job.id, { progress: 10 });
+
+      // ── Step 2: pg_dump remote Supabase DB ─────────────────
       addJobStep(job.id, 'dump', 'running', 'Dumping remote Supabase database...');
-      updateJob(job.id, { progress: 10, message: 'Dumping remote database...' });
+      updateJob(job.id, { progress: 15, message: 'Dumping remote database...' });
 
       await runPgDump(conn, dumpPath);
 
@@ -299,27 +352,39 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       addJobStep(job.id, 'dump', 'done', `Database dumped (${dumpSizeMb} MB compressed)`);
       updateJob(job.id, { progress: 40 });
 
-      // ── Step 2: pg_restore into BanaDB project DB ──────────
+      // ── Step 3: pg_restore into BanaDB project DB ──────────
       addJobStep(job.id, 'restore', 'running', 'Restoring into BanaDB project...');
       updateJob(job.id, { progress: 45, message: 'Restoring to BanaDB...' });
 
-      await runPgRestore(project, dumpPath);
+      const restoreResult = await runPgRestore(project, dumpPath);
 
-      addJobStep(job.id, 'restore', 'done', 'Database restored successfully');
+      // Log any warnings from pg_restore for debugging
+      if (restoreResult.stderr) {
+        const warnings = restoreResult.stderr.split('\n').filter((l) => l.trim());
+        const errorLines = warnings.filter((l) => l.includes('ERROR'));
+        if (errorLines.length > 0) {
+          console.error(`[Import] pg_restore had ${errorLines.length} errors:\n${errorLines.slice(0, 10).join('\n')}`);
+          addJobStep(job.id, 'restore', 'done', `Database restored with ${errorLines.length} warnings`);
+        } else {
+          addJobStep(job.id, 'restore', 'done', 'Database restored successfully');
+        }
+      } else {
+        addJobStep(job.id, 'restore', 'done', 'Database restored successfully');
+      }
       updateJob(job.id, { progress: 75 });
 
-      // ── Step 3: Count imported tables ──────────────────────
+      // ── Step 4: Count imported tables ──────────────────────
       addJobStep(job.id, 'verify', 'running', 'Verifying imported data...');
       updateJob(job.id, { message: 'Verifying import...' });
 
-      const local = banadbService.getProjectPool(project);
       const tableCountResult = await local.query(
         `SELECT count(*) AS cnt FROM information_schema.tables
          WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
       );
       const tablesImported = parseInt(tableCountResult.rows[0].cnt);
 
-      // Count total rows across all tables
+      // Count total rows across all tables (use ANALYZE first for accurate counts)
+      try { await local.query('ANALYZE'); } catch {}
       let totalRows = 0;
       try {
         const rowsResult = await local.query(`
@@ -333,14 +398,13 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       addJobStep(job.id, 'verify', 'done', `Verified: ${tablesImported} tables, ${totalRows.toLocaleString()} rows`);
       updateJob(job.id, { progress: 80, tables_imported: tablesImported, rows_imported: totalRows });
 
-      // ── Step 4: Import auth users (optional) ───────────────
+      // ── Step 5: Import auth users (optional) ───────────────
       let authUsersImported = 0;
       if (importAuth) {
         addJobStep(job.id, 'auth', 'running', 'Migrating auth users...');
         updateJob(job.id, { progress: 85, message: 'Migrating auth users...' });
 
         try {
-          remote = createRemotePool(connectionString);
           const authResult = await importAuthUsers(remote, local);
           authUsersImported = authResult.imported;
           addJobStep(job.id, 'auth', 'done', `Imported ${authResult.imported}/${authResult.total} auth users`);
@@ -349,7 +413,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
         }
       }
 
-      // ── Step 5: Save connection for future sync ────────────
+      // ── Step 6: Save connection for future sync ────────────
       addJobStep(job.id, 'link', 'running', 'Saving connection for sync...');
       updateJob(job.id, { progress: 95, message: 'Finalizing...' });
 
