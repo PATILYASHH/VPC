@@ -368,10 +368,16 @@ async function ensureDefaultKeys(pool, projectId) {
   const activeAnon = existing.find((k) => k.role === 'anon' && k.is_active);
   const activeService = existing.find((k) => k.role === 'service' && k.is_active);
 
-  if (!activeAnon) {
+  // If active key exists but has no encrypted_key (legacy), regenerate it
+  if (activeAnon && !activeAnon.api_key) {
+    await regenerateApiKey(pool, projectId, 'anon');
+  } else if (!activeAnon) {
     await createApiKey(pool, projectId, { name: 'anon key', role: 'anon' });
   }
-  if (!activeService) {
+
+  if (activeService && !activeService.api_key) {
+    await regenerateApiKey(pool, projectId, 'service');
+  } else if (!activeService) {
     await createApiKey(pool, projectId, { name: 'service_role key', role: 'service' });
   }
 
