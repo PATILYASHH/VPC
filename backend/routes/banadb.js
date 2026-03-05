@@ -294,12 +294,12 @@ router.post('/projects/:id/import/supabase', resolveProject, async (req, res) =>
     const { connectionString, importAuth } = req.body;
     if (!connectionString) return res.status(400).json({ error: 'Connection string is required' });
 
-    const result = await supabaseImport.importFromSupabase(
+    const jobId = supabaseImport.startImport(
       req.app.locals.pool,
       req.banaProject,
       { connectionString, importAuth: importAuth !== false }
     );
-    res.json(result);
+    res.json({ jobId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -308,14 +308,21 @@ router.post('/projects/:id/import/supabase', resolveProject, async (req, res) =>
 // Sync: pull latest changes from linked Supabase
 router.post('/projects/:id/import/sync', resolveProject, async (req, res) => {
   try {
-    const result = await supabaseImport.syncFromSupabase(
+    const jobId = await supabaseImport.startSync(
       req.app.locals.pool,
       req.banaProject
     );
-    res.json(result);
+    res.json({ jobId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Get import/sync job status (polling endpoint)
+router.get('/projects/:id/import/job/:jobId', async (req, res) => {
+  const job = supabaseImport.getJobStatus(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
 });
 
 // Get link status

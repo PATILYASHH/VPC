@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -19,9 +19,9 @@ export default function BanaSupabaseImport({ project }) {
   const [importAuth, setImportAuth] = useState(true);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [operationResult, setOperationResult] = useState(null);
+  const [jobId, setJobId] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);
+  const pollRef = useRef(null);
   const queryClient = useQueryClient();
 
   const baseUrl = `/admin/bana/projects/${project.id}`;
@@ -33,6 +33,45 @@ export default function BanaSupabaseImport({ project }) {
   );
 
   const isLinked = linkStatus?.linked;
+
+  // Poll for job status when jobId is set
+  useEffect(() => {
+    if (!jobId) return;
+
+    const poll = async () => {
+      try {
+        const { data } = await api.get(`${baseUrl}/import/job/${jobId}`);
+        setJobStatus(data);
+
+        if (data.status !== 'running') {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setJobId(null);
+
+          if (data.status === 'completed') {
+            toast.success(data.message);
+            refetchStatus();
+            queryClient.invalidateQueries({ queryKey: ['bana-'] });
+          } else {
+            toast.error(data.message || 'Operation failed');
+          }
+        }
+      } catch {
+        // Polling error — keep trying
+      }
+    };
+
+    // Poll immediately, then every 2s
+    poll();
+    pollRef.current = setInterval(poll, 2000);
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [jobId]);
 
   const handleTestConnection = async () => {
     if (!connectionString.trim()) return;
@@ -56,56 +95,29 @@ export default function BanaSupabaseImport({ project }) {
     if (!connectionString.trim()) return;
     if (!confirm('This will import ALL data from Supabase into this BanaDB project. Existing tables will be replaced. Continue?')) return;
 
-    setImporting(true);
-    setOperationResult(null);
+    setJobStatus(null);
     try {
       const { data } = await api.post(`${baseUrl}/import/supabase`, {
         connectionString: connectionString.trim(),
         importAuth,
       });
-      setOperationResult(data);
-      if (data.status === 'completed') {
-        toast.success(data.message);
-        refetchStatus();
-        queryClient.invalidateQueries({ queryKey: ['bana-'] });
-      } else {
-        toast.error(data.message || 'Import failed');
-      }
+      setJobId(data.jobId);
+      setJobStatus({ status: 'running', progress: 5, steps: [], message: 'Starting import...' });
     } catch (err) {
-      setOperationResult({
-        status: 'failed',
-        message: err.response?.data?.error || err.message,
-        steps: [],
-      });
-      toast.error('Import failed');
-    } finally {
-      setImporting(false);
+      toast.error(err.response?.data?.error || 'Failed to start import');
     }
   };
 
   const handleSync = async () => {
-    if (!confirm('Sync all changes from Supabase? New tables, rows, and schema changes will be pulled in.')) return;
-    setSyncing(true);
-    setOperationResult(null);
+    if (!confirm('Sync all data from Supabase? This re-imports everything to ensure full consistency.')) return;
+
+    setJobStatus(null);
     try {
       const { data } = await api.post(`${baseUrl}/import/sync`);
-      setOperationResult(data);
-      if (data.status === 'completed') {
-        toast.success(data.message);
-        refetchStatus();
-        queryClient.invalidateQueries({ queryKey: ['bana-'] });
-      } else {
-        toast.error(data.message || 'Sync failed');
-      }
+      setJobId(data.jobId);
+      setJobStatus({ status: 'running', progress: 5, steps: [], message: 'Starting sync...' });
     } catch (err) {
-      setOperationResult({
-        status: 'failed',
-        message: err.response?.data?.error || err.message,
-        steps: [],
-      });
-      toast.error('Sync failed');
-    } finally {
-      setSyncing(false);
+      toast.error(err.response?.data?.error || 'Failed to start sync');
     }
   };
 
@@ -116,16 +128,13 @@ export default function BanaSupabaseImport({ project }) {
       toast.success('Disconnected from Supabase');
       refetchStatus();
       setTestResult(null);
-      setOperationResult(null);
+      setJobStatus(null);
     } catch (err) {
       toast.error('Failed to disconnect');
     }
   };
 
-  const isBusy = importing || syncing;
-  const progressValue = isBusy && operationResult?.steps?.length
-    ? Math.round((operationResult.steps.filter((s) => s.status === 'done').length / 7) * 100)
-    : isBusy ? 15 : 0;
+  const isBusy = !!jobId || jobStatus?.status === 'running';
 
   return (
     <div className="h-full overflow-auto p-4 space-y-5 max-w-2xl">
@@ -141,7 +150,7 @@ export default function BanaSupabaseImport({ project }) {
       </div>
 
       {/* Linked Status Banner */}
-      {isLinked && (
+      {isLinked && !isBusy && (
         <div className="border rounded-lg p-4 border-green-500/30 bg-green-500/5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -197,11 +206,8 @@ export default function BanaSupabaseImport({ project }) {
           {/* Sync & Disconnect actions */}
           <div className="flex gap-2 pt-1">
             <Button size="sm" onClick={handleSync} disabled={isBusy} className="flex-1">
-              {syncing ? (
-                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Syncing...</>
-              ) : (
-                <><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Sync Now</>
-              )}
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+              Sync Now
             </Button>
             <Button size="sm" variant="outline" onClick={handleDisconnect} disabled={isBusy}>
               <Unlink className="w-3.5 h-3.5 mr-1.5" />
@@ -211,8 +217,8 @@ export default function BanaSupabaseImport({ project }) {
         </div>
       )}
 
-      {/* Connection String (show when not linked) */}
-      {!isLinked && (
+      {/* Connection String (show when not linked and not busy) */}
+      {!isLinked && !isBusy && (
         <>
           <div className="border rounded-lg p-4 space-y-3">
             <div className="space-y-1">
@@ -301,7 +307,7 @@ export default function BanaSupabaseImport({ project }) {
               <label className="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" checked disabled className="rounded" />
                 <span>Schema & Data</span>
-                <span className="text-muted-foreground">(all tables, indexes, foreign keys, sequences, enums)</span>
+                <span className="text-muted-foreground">(all tables, indexes, foreign keys, sequences, enums, views)</span>
               </label>
 
               <label className="flex items-center gap-2 text-xs cursor-pointer">
@@ -325,11 +331,8 @@ export default function BanaSupabaseImport({ project }) {
 
               <div className="pt-2">
                 <Button onClick={handleImport} disabled={isBusy} className="w-full">
-                  {importing ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing All Data...</>
-                  ) : (
-                    <><ArrowDownToLine className="w-4 h-4 mr-2" />Import Everything from Supabase</>
-                  )}
+                  <ArrowDownToLine className="w-4 h-4 mr-2" />
+                  Import Everything from Supabase
                 </Button>
               </div>
             </div>
@@ -338,40 +341,59 @@ export default function BanaSupabaseImport({ project }) {
       )}
 
       {/* Progress / Running */}
-      {isBusy && (
+      {(isBusy || jobStatus?.status === 'running') && (
         <div className="border rounded-lg p-4 space-y-3 border-primary/30">
           <div className="flex items-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            <span className="text-sm font-medium">{syncing ? 'Syncing...' : 'Importing...'}</span>
+            <span className="text-sm font-medium">{jobStatus?.message || 'Working...'}</span>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Transferring data directly via SQL. This may take several minutes for large databases.
+          <Progress value={jobStatus?.progress || 5} className="h-1.5" />
+
+          {/* Show completed steps */}
+          {jobStatus?.steps?.length > 0 && (
+            <div className="space-y-1.5 mt-2">
+              {jobStatus.steps.map((step, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  {step.status === 'done' ? (
+                    <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
+                  ) : step.status === 'failed' ? (
+                    <XCircle className="w-3 h-3 text-destructive shrink-0" />
+                  ) : step.status === 'warning' ? (
+                    <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                  ) : (
+                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                  )}
+                  <span className="text-muted-foreground">{step.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="text-[10px] text-muted-foreground">
+            Using PostgreSQL native dump/restore for maximum reliability. This runs in the background — you can navigate away and come back.
           </p>
-          <Progress value={progressValue} className="h-1.5" />
         </div>
       )}
 
-      {/* Operation Results */}
-      {operationResult && !isBusy && (
+      {/* Operation Results (shown after completion) */}
+      {jobStatus && !isBusy && jobStatus.status !== 'running' && (
         <div className={`border rounded-lg p-4 space-y-3 ${
-          operationResult.status === 'completed' ? 'border-green-500/30 bg-green-500/5' :
-          operationResult.status === 'failed' ? 'border-destructive/30 bg-destructive/5' : ''
+          jobStatus.status === 'completed' ? 'border-green-500/30 bg-green-500/5' :
+          jobStatus.status === 'failed' ? 'border-destructive/30 bg-destructive/5' : ''
         }`}>
           <div className="flex items-center gap-2">
-            {operationResult.status === 'completed' ? (
+            {jobStatus.status === 'completed' ? (
               <CheckCircle className="w-4 h-4 text-green-500" />
-            ) : operationResult.status === 'failed' ? (
-              <XCircle className="w-4 h-4 text-destructive" />
             ) : (
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              <XCircle className="w-4 h-4 text-destructive" />
             )}
-            <span className="text-sm font-medium">{operationResult.message}</span>
+            <span className="text-sm font-medium">{jobStatus.message}</span>
           </div>
 
           {/* Steps */}
-          {operationResult.steps?.length > 0 && (
+          {jobStatus.steps?.length > 0 && (
             <div className="space-y-1.5 mt-2">
-              {operationResult.steps.map((step, i) => (
+              {jobStatus.steps.map((step, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs">
                   {step.status === 'done' ? (
                     <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
@@ -389,23 +411,23 @@ export default function BanaSupabaseImport({ project }) {
           )}
 
           {/* Summary */}
-          {operationResult.status === 'completed' && (
+          {jobStatus.status === 'completed' && (
             <div className="grid grid-cols-4 gap-3 mt-2 pt-2 border-t">
               <div className="text-xs">
                 <span className="block text-muted-foreground">Tables</span>
-                <span className="font-medium text-lg">{operationResult.tables_imported ?? operationResult.new_tables ?? 0}</span>
+                <span className="font-medium text-lg">{jobStatus.tables_imported || 0}</span>
               </div>
               <div className="text-xs">
                 <span className="block text-muted-foreground">Rows</span>
-                <span className="font-medium text-lg">{(operationResult.rows_imported ?? operationResult.rows_synced ?? 0).toLocaleString()}</span>
+                <span className="font-medium text-lg">{(jobStatus.rows_imported || 0).toLocaleString()}</span>
               </div>
               <div className="text-xs">
                 <span className="block text-muted-foreground">Auth Users</span>
-                <span className="font-medium text-lg">{operationResult.auth_users_imported ?? operationResult.auth_users_synced ?? 0}</span>
+                <span className="font-medium text-lg">{jobStatus.auth_users_imported || 0}</span>
               </div>
               <div className="text-xs">
                 <span className="block text-muted-foreground">Duration</span>
-                <span className="font-medium text-lg">{((operationResult.duration_ms || 0) / 1000).toFixed(1)}s</span>
+                <span className="font-medium text-lg">{((jobStatus.duration_ms || 0) / 1000).toFixed(1)}s</span>
               </div>
             </div>
           )}
@@ -416,19 +438,12 @@ export default function BanaSupabaseImport({ project }) {
       <div className="border rounded-lg p-3 bg-muted/30">
         <h3 className="text-xs font-medium mb-1">How it works</h3>
         <ul className="text-[10px] text-muted-foreground space-y-0.5 list-disc list-inside">
-          <li>Connects directly to your Supabase PostgreSQL database</li>
-          <li>Copies <strong>all tables</strong> with full data (batch transfer via SQL)</li>
+          <li>Uses PostgreSQL native <strong>pg_dump/pg_restore</strong> for maximum reliability</li>
+          <li>Copies <strong>all tables</strong> with full data, views, functions, triggers, and extensions</li>
           <li>Preserves primary keys, foreign keys, indexes, constraints, sequences, and enums</li>
           <li>Migrates auth users with password hashes (login compatibility preserved)</li>
           <li>Saves the connection for <strong>ongoing sync</strong> — pull new changes anytime</li>
-        </ul>
-        <h3 className="text-xs font-medium mt-2 mb-1">What syncing does</h3>
-        <ul className="text-[10px] text-muted-foreground space-y-0.5 list-disc list-inside">
-          <li>Detects new tables added in Supabase and creates them in BanaDB</li>
-          <li>Detects new columns and adds them to existing tables</li>
-          <li>Upserts all rows — new rows are added, changed rows are updated</li>
-          <li>Removes rows deleted in Supabase (full consistency)</li>
-          <li>Syncs new auth users and updated passwords</li>
+          <li>Runs in the background — no timeout limits, handles databases of any size</li>
         </ul>
         <h3 className="text-xs font-medium mt-2 mb-1">Not imported</h3>
         <ul className="text-[10px] text-muted-foreground space-y-0.5 list-disc list-inside">
