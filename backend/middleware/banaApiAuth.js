@@ -16,9 +16,10 @@ async function banaApiAuth(req, res, next) {
       return res.status(401).json({ error: 'Invalid or revoked API key' });
     }
 
-    // Attach project and role
+    // Attach project, role, and key ID
     req.banaProject = result;
     req.banaKeyRole = result.role;
+    req.banaApiKeyId = result.api_key_id;
     req.banaPool = banadbService.getProjectPool(result);
     next();
   } catch (err) {

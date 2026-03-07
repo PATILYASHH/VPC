@@ -271,8 +271,8 @@ router.post('/projects/:id/api-keys', async (req, res) => {
 router.post('/projects/:id/api-keys/regenerate', async (req, res) => {
   try {
     const { role } = req.body;
-    if (!role || !['anon', 'service'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be anon or service' });
+    if (!role || !['anon', 'service', 'pull'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be anon, service, or pull' });
     }
     const result = await banadbService.regenerateApiKey(req.app.locals.pool, req.params.id, role);
     res.json(result);
@@ -285,6 +285,38 @@ router.delete('/projects/:id/api-keys/:keyId', async (req, res) => {
   try {
     const result = await banadbService.revokeApiKey(req.app.locals.pool, req.params.keyId);
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Pull Tracking ────────────────────────────────────────
+
+router.post('/projects/:id/pull/enable', resolveProject, async (req, res) => {
+  try {
+    const pullService = require('../services/pullService');
+    const result = await pullService.installPullTracking(req.app.locals.pool, req.banaProject);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull/disable', resolveProject, async (req, res) => {
+  try {
+    const pullService = require('../services/pullService');
+    const result = await pullService.uninstallPullTracking(req.app.locals.pool, req.banaProject);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/projects/:id/pull/status', resolveProject, async (req, res) => {
+  try {
+    const pullService = require('../services/pullService');
+    const status = await pullService.getPullTrackingStatus(req.app.locals.pool, req.banaProject);
+    res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

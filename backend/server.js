@@ -50,6 +50,8 @@ app.get('/health', async (req, res) => {
 
 // BanaDB External REST API (API key auth, no JWT)
 app.use('/api/bana/v1', require('./routes/banaApi'));
+// BanaDB Pull API (pull key auth, no JWT)
+app.use('/api/bana/v1', require('./routes/pull'));
 
 // Admin API routes
 const adminRouter = express.Router();

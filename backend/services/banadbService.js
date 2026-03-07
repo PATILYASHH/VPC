@@ -343,7 +343,8 @@ async function ensureEncryptedKeyColumn(pool) {
 
 // API key management
 function generateApiKey(role) {
-  const prefix = role === 'service' ? 'bana_svc_' : 'bana_';
+  const prefixMap = { service: 'bana_svc_', pull: 'bana_pull_', anon: 'bana_' };
+  const prefix = prefixMap[role] || 'bana_';
   const rawKey = prefix + crypto.randomBytes(32).toString('hex');
   const keyPrefix = rawKey.slice(prefix.length, prefix.length + 12);
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -394,6 +395,14 @@ async function ensureDefaultKeys(pool, projectId) {
     await createApiKey(pool, projectId, { name: 'service_role key', role: 'service' });
   }
 
+  // Ensure pull key exists
+  const activePull = existing.find((k) => k.role === 'pull' && k.is_active);
+  if (activePull && !activePull.api_key) {
+    await regenerateApiKey(pool, projectId, 'pull');
+  } else if (!activePull) {
+    await createApiKey(pool, projectId, { name: 'pull key', role: 'pull' });
+  }
+
   // Return fresh list
   return getApiKeys(pool, projectId);
 }
@@ -405,7 +414,8 @@ async function regenerateApiKey(pool, projectId, role) {
     `UPDATE bana_api_keys SET is_active = false WHERE project_id = $1 AND role = $2 AND is_active = true`,
     [projectId, role]
   );
-  const name = role === 'service' ? 'service_role key' : 'anon key';
+  const nameMap = { service: 'service_role key', pull: 'pull key', anon: 'anon key' };
+  const name = nameMap[role] || 'anon key';
   return createApiKey(pool, projectId, { name, role });
 }
 
@@ -419,7 +429,7 @@ async function revokeApiKey(pool, keyId) {
 
 async function findProjectByApiKeyHash(pool, keyHash) {
   const { rows } = await pool.query(
-    `SELECT bak.role, bp.*
+    `SELECT bak.id AS api_key_id, bak.role, bp.*
      FROM bana_api_keys bak
      JOIN bana_projects bp ON bp.id = bak.project_id
      WHERE bak.key_hash = $1 AND bak.is_active = true AND bp.status = 'active'`,

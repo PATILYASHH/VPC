@@ -1,0 +1,70 @@
+{
+  "name": "vpc-pull",
+  "displayName": "VPC Pull - BanaDB Migrations",
+  "description": "Pull schema migrations from BanaDB projects directly in VS Code",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "workspaceContains:.vpcpull"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vpcPull.configure",
+        "title": "VPC Pull: Configure Connection"
+      },
+      {
+        "command": "vpcPull.pull",
+        "title": "VPC Pull: Pull Schema Changes"
+      },
+      {
+        "command": "vpcPull.status",
+        "title": "VPC Pull: Show Status"
+      },
+      {
+        "command": "vpcPull.selectFolder",
+        "title": "VPC Pull: Select Output Folder"
+      }
+    ],
+    "configuration": {
+      "title": "VPC Pull",
+      "properties": {
+        "vpcPull.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "BanaDB project API URL (e.g. https://server/api/bana/v1/my-project)"
+        },
+        "vpcPull.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Pull API key (starts with bana_pull_)"
+        },
+        "vpcPull.outputFolder": {
+          "type": "string",
+          "default": "./migrations",
+          "description": "Output folder for migration files (relative to workspace root)"
+        },
+        "vpcPull.autoRefreshInterval": {
+          "type": "number",
+          "default": 60,
+          "description": "Status bar refresh interval in seconds (0 to disable)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
