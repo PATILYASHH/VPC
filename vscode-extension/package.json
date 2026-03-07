@@ -1,58 +1,134 @@
 {
-  "name": "vpc-pull",
-  "displayName": "VPC Pull - BanaDB Migrations",
-  "description": "Pull schema migrations from BanaDB projects directly in VS Code",
+  "name": "vpc-sync",
+  "displayName": "VPC Sync - BanaDB Schema Management",
+  "description": "Git-like schema sync for BanaDB projects. Pull & push database migrations directly from VS Code.",
   "publisher": "vpc-admin",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
   "activationEvents": [
-    "workspaceContains:.vpcpull"
+    "workspaceContains:.vpcpull",
+    "onView:vpcSync.changes",
+    "onView:vpcSync.migrations",
+    "onView:vpcSync.history"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vpcSync",
+          "title": "VPC Sync",
+          "icon": "$(database)"
+        }
+      ]
+    },
+    "views": {
+      "vpcSync": [
+        {
+          "id": "vpcSync.changes",
+          "name": "Pending Changes"
+        },
+        {
+          "id": "vpcSync.migrations",
+          "name": "Local Migrations"
+        },
+        {
+          "id": "vpcSync.history",
+          "name": "History"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "vpcPull.configure",
-        "title": "VPC Pull: Configure Connection"
+        "command": "vpcSync.configure",
+        "title": "VPC Sync: Configure Connection",
+        "icon": "$(gear)"
       },
       {
-        "command": "vpcPull.pull",
-        "title": "VPC Pull: Pull Schema Changes"
+        "command": "vpcSync.pull",
+        "title": "VPC Sync: Pull Schema Changes",
+        "icon": "$(cloud-download)"
       },
       {
-        "command": "vpcPull.status",
-        "title": "VPC Pull: Show Status"
+        "command": "vpcSync.push",
+        "title": "VPC Sync: Push Migration",
+        "icon": "$(cloud-upload)"
       },
       {
-        "command": "vpcPull.selectFolder",
-        "title": "VPC Pull: Select Output Folder"
+        "command": "vpcSync.refresh",
+        "title": "VPC Sync: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vpcSync.status",
+        "title": "VPC Sync: Show Status"
+      },
+      {
+        "command": "vpcSync.selectFolder",
+        "title": "VPC Sync: Select Output Folder"
+      },
+      {
+        "command": "vpcSync.pullAll",
+        "title": "Pull All Changes",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "vpcSync.pushFile",
+        "title": "Push Migration",
+        "icon": "$(cloud-upload)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vpcSync.refresh",
+          "when": "view =~ /vpcSync/",
+          "group": "navigation"
+        },
+        {
+          "command": "vpcSync.configure",
+          "when": "view =~ /vpcSync/",
+          "group": "navigation"
+        },
+        {
+          "command": "vpcSync.pullAll",
+          "when": "view == vpcSync.changes",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vpcSync.pushFile",
+          "when": "view == vpcSync.migrations && viewItem == pendingMigration",
+          "group": "inline"
+        }
+      ]
+    },
     "configuration": {
-      "title": "VPC Pull",
+      "title": "VPC Sync",
       "properties": {
-        "vpcPull.serverUrl": {
+        "vpcSync.serverUrl": {
           "type": "string",
           "default": "",
-          "description": "BanaDB project API URL (e.g. https://server/api/bana/v1/my-project)"
+          "description": "BanaDB project API URL (e.g. http://server:8001/api/bana/v1/my-project)"
         },
-        "vpcPull.apiKey": {
+        "vpcSync.apiKey": {
           "type": "string",
           "default": "",
           "description": "Pull API key (starts with bana_pull_)"
         },
-        "vpcPull.outputFolder": {
+        "vpcSync.outputFolder": {
           "type": "string",
           "default": "./migrations",
           "description": "Output folder for migration files (relative to workspace root)"
         },
-        "vpcPull.autoRefreshInterval": {
+        "vpcSync.autoRefreshInterval": {
           "type": "number",
-          "default": 60,
-          "description": "Status bar refresh interval in seconds (0 to disable)"
+          "default": 30,
+          "description": "Auto-refresh interval in seconds (0 to disable)"
         }
       }
     }

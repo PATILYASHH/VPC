@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 8001;
 // Serve gallery uploads for preview (before auth, images need direct access)
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads', 'gallery')));
 
+// Serve downloadable files (VS Code extension, etc.)
+app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
+
 // Serve frontend build in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'frontend', 'dist')));

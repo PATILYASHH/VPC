@@ -52,6 +52,7 @@ app.get('/health', async (req, res) => {
 app.use('/api/bana/v1', require('./routes/banaApi'));
 // BanaDB Pull API (pull key auth, no JWT)
 app.use('/api/bana/v1', require('./routes/pull'));
+app.use('/api/bana/v1', require('./routes/syncApi'));
 
 // Admin API routes
 const adminRouter = express.Router();
@@ -75,6 +76,7 @@ adminRouter.use('/terminal', require('./routes/terminal'));
 adminRouter.use('/bana', require('./routes/banadb'));
 adminRouter.use('/users', require('./routes/users'));
 adminRouter.use('/gallery', require('./routes/gallery'));
+adminRouter.use('/sync', require('./routes/sync'));
 
 // Placeholder authenticated route for testing
 adminRouter.get('/me', (req, res) => {

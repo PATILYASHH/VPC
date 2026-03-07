@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -9,6 +9,7 @@ import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
 import BanaDB from '@/components/apps/BanaDB';
 import VpcAuth from '@/components/apps/VpcAuth';
 import Gallery from '@/components/apps/Gallery';
+import VPSHub from '@/components/apps/VPSHub';
 
 const APP_REGISTRY = {
   'server-manager': {
@@ -106,6 +107,16 @@ const APP_REGISTRY = {
     title: 'Gallery',
     icon: FolderOpen,
     component: Gallery,
+    defaultWidth: 1100,
+    defaultHeight: 700,
+    minWidth: 800,
+    minHeight: 500,
+  },
+  'vpshub': {
+    id: 'vpshub',
+    title: 'VPSHub',
+    icon: GitMerge,
+    component: VPSHub,
     defaultWidth: 1100,
     defaultHeight: 700,
     minWidth: 800,

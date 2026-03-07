@@ -1,26 +1,60 @@
 import * as https from 'https';
 import * as http from 'http';
 
-export interface PullMigrationResult {
-  migration: { filename: string; content: string } | null;
-  message?: string;
-  change_count?: number;
-  latest_id?: number;
-  has_more?: boolean;
+export interface SchemaChange {
+  id: number;
+  event_type: string;
+  object_type: string;
+  object_identity: string;
+  ddl_command: string;
+  schema_name: string;
+  created_at: string;
 }
 
-export interface PullStatusResult {
+export interface SyncStatusResult {
   tracking_enabled: boolean;
   total_changes: number;
   cursor: number;
   pending_changes: number;
   last_pulled_at: string | null;
+  total_migrations: number;
+  latest_migration: any;
   project: { name: string; slug: string };
 }
 
-export interface AckResult {
-  acknowledged: boolean;
+export interface SyncChangesResult {
+  changes: SchemaChange[];
+  latest_id: number;
+  has_more: boolean;
+  since_id: number;
+}
+
+export interface SyncPullResult {
+  migration: any;
+  change_count: number;
   cursor: number;
+  message?: string;
+}
+
+export interface MigrationRecord {
+  id: string;
+  version: number;
+  name: string;
+  sql_up: string;
+  sql_down: string | null;
+  status: string;
+  applied_at: string | null;
+  rolled_back_at: string | null;
+  applied_by: string;
+  source: string;
+  created_at: string;
+}
+
+export interface MigrationsListResult {
+  migrations: MigrationRecord[];
+  total: number;
+  page: number;
+  limit: number;
 }
 
 function request(url: string, options: { method?: string; headers?: Record<string, string>; body?: string }): Promise<any> {
@@ -60,23 +94,71 @@ function request(url: string, options: { method?: string; headers?: Record<strin
   });
 }
 
-export class PullApiClient {
-  async fetchMigration(url: string, key: string): Promise<PullMigrationResult> {
+export class SyncApiClient {
+  private getHeaders(key: string): Record<string, string> {
+    return { apikey: key, 'Content-Type': 'application/json' };
+  }
+
+  async getStatus(url: string, key: string): Promise<SyncStatusResult> {
+    return request(`${url}/sync/status`, {
+      headers: { apikey: key },
+    });
+  }
+
+  async getChanges(url: string, key: string, sinceId?: number): Promise<SyncChangesResult> {
+    const qs = sinceId ? `?since_id=${sinceId}` : '';
+    return request(`${url}/sync/changes${qs}`, {
+      headers: { apikey: key },
+    });
+  }
+
+  async pull(url: string, key: string): Promise<SyncPullResult> {
+    return request(`${url}/sync/pull`, {
+      method: 'POST',
+      headers: this.getHeaders(key),
+      body: '{}',
+    });
+  }
+
+  async push(url: string, key: string, sql: string, name?: string): Promise<any> {
+    return request(`${url}/sync/push`, {
+      method: 'POST',
+      headers: this.getHeaders(key),
+      body: JSON.stringify({ sql, name }),
+    });
+  }
+
+  async ack(url: string, key: string, changeId: number): Promise<{ acknowledged: boolean; cursor: number }> {
+    return request(`${url}/sync/ack`, {
+      method: 'POST',
+      headers: this.getHeaders(key),
+      body: JSON.stringify({ change_id: changeId }),
+    });
+  }
+
+  async getMigrations(url: string, key: string, page = 1): Promise<MigrationsListResult> {
+    return request(`${url}/sync/migrations?page=${page}&limit=50`, {
+      headers: { apikey: key },
+    });
+  }
+
+  // Legacy pull endpoints (backward compat)
+  async fetchMigration(url: string, key: string): Promise<any> {
     return request(`${url}/pull/migration`, {
       headers: { apikey: key },
     });
   }
 
-  async fetchStatus(url: string, key: string): Promise<PullStatusResult> {
+  async fetchStatus(url: string, key: string): Promise<any> {
     return request(`${url}/pull/status`, {
       headers: { apikey: key },
     });
   }
 
-  async ackPull(url: string, key: string, changeId: number): Promise<AckResult> {
+  async ackPull(url: string, key: string, changeId: number): Promise<any> {
     return request(`${url}/pull/ack`, {
       method: 'POST',
-      headers: { apikey: key, 'Content-Type': 'application/json' },
+      headers: this.getHeaders(key),
       body: JSON.stringify({ change_id: changeId }),
     });
   }

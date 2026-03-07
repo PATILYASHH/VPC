@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PullApiClient = void 0;
+exports.SyncApiClient = void 0;
 const https = __importStar(require("https"));
 const http = __importStar(require("http"));
 function request(url, options) {
@@ -68,7 +68,48 @@ function request(url, options) {
         req.end();
     });
 }
-class PullApiClient {
+class SyncApiClient {
+    getHeaders(key) {
+        return { apikey: key, 'Content-Type': 'application/json' };
+    }
+    async getStatus(url, key) {
+        return request(`${url}/sync/status`, {
+            headers: { apikey: key },
+        });
+    }
+    async getChanges(url, key, sinceId) {
+        const qs = sinceId ? `?since_id=${sinceId}` : '';
+        return request(`${url}/sync/changes${qs}`, {
+            headers: { apikey: key },
+        });
+    }
+    async pull(url, key) {
+        return request(`${url}/sync/pull`, {
+            method: 'POST',
+            headers: this.getHeaders(key),
+            body: '{}',
+        });
+    }
+    async push(url, key, sql, name) {
+        return request(`${url}/sync/push`, {
+            method: 'POST',
+            headers: this.getHeaders(key),
+            body: JSON.stringify({ sql, name }),
+        });
+    }
+    async ack(url, key, changeId) {
+        return request(`${url}/sync/ack`, {
+            method: 'POST',
+            headers: this.getHeaders(key),
+            body: JSON.stringify({ change_id: changeId }),
+        });
+    }
+    async getMigrations(url, key, page = 1) {
+        return request(`${url}/sync/migrations?page=${page}&limit=50`, {
+            headers: { apikey: key },
+        });
+    }
+    // Legacy pull endpoints (backward compat)
     async fetchMigration(url, key) {
         return request(`${url}/pull/migration`, {
             headers: { apikey: key },
@@ -82,10 +123,10 @@ class PullApiClient {
     async ackPull(url, key, changeId) {
         return request(`${url}/pull/ack`, {
             method: 'POST',
-            headers: { apikey: key, 'Content-Type': 'application/json' },
+            headers: this.getHeaders(key),
             body: JSON.stringify({ change_id: changeId }),
         });
     }
 }
-exports.PullApiClient = PullApiClient;
+exports.SyncApiClient = SyncApiClient;
 //# sourceMappingURL=client.js.map

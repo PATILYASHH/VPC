@@ -1,21 +1,21 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PullApiClient } from '../api/client';
+import { SyncApiClient } from '../api/client';
 
-export async function pullCommand(client: PullApiClient): Promise<void> {
-  const config = vscode.workspace.getConfiguration('vpcPull');
+export async function pullCommand(client: SyncApiClient, onComplete?: () => void): Promise<void> {
+  const config = vscode.workspace.getConfiguration('vpcSync');
   const url = config.get<string>('serverUrl');
   const key = config.get<string>('apiKey');
   const outFolder = config.get<string>('outputFolder') || './migrations';
 
   if (!url || !key) {
     const action = await vscode.window.showErrorMessage(
-      'VPC Pull not configured.',
+      'VPC Sync not configured.',
       'Configure Now'
     );
     if (action === 'Configure Now') {
-      vscode.commands.executeCommand('vpcPull.configure');
+      vscode.commands.executeCommand('vpcSync.configure');
     }
     return;
   }
@@ -23,21 +23,22 @@ export async function pullCommand(client: PullApiClient): Promise<void> {
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: 'VPC Pull',
+      title: 'VPC Sync',
       cancellable: false,
     },
     async (progress) => {
-      progress.report({ message: 'Fetching schema changes...' });
+      progress.report({ message: 'Pulling schema changes...' });
 
       try {
-        const result = await client.fetchMigration(url, key);
+        const result = await client.pull(url, key);
 
         if (!result.migration) {
-          vscode.window.showInformationMessage('No new schema changes since last pull.');
+          vscode.window.showInformationMessage(result.message || 'No pending changes to pull.');
+          onComplete?.();
           return;
         }
 
-        progress.report({ message: `Writing ${result.change_count} changes...` });
+        progress.report({ message: `Saving migration v${result.migration.version}...` });
 
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!workspaceRoot) {
@@ -50,29 +51,19 @@ export async function pullCommand(client: PullApiClient): Promise<void> {
           fs.mkdirSync(outDir, { recursive: true });
         }
 
-        const filePath = path.join(outDir, result.migration.filename);
-        fs.writeFileSync(filePath, result.migration.content);
-
-        // Acknowledge the pull
-        await client.ackPull(url, key, result.latest_id!);
+        const filename = `${String(result.migration.version).padStart(4, '0')}_${result.migration.name || 'migration'}.sql`;
+        const filePath = path.join(outDir, filename);
+        fs.writeFileSync(filePath, result.migration.sql_up);
 
         // Open the migration file
         const doc = await vscode.workspace.openTextDocument(filePath);
         await vscode.window.showTextDocument(doc);
 
         vscode.window.showInformationMessage(
-          `Pulled ${result.change_count} changes → ${result.migration.filename}`
+          `Pulled ${result.change_count} changes → ${filename}`
         );
 
-        if (result.has_more) {
-          const again = await vscode.window.showWarningMessage(
-            'More changes available.',
-            'Pull Again'
-          );
-          if (again === 'Pull Again') {
-            pullCommand(client);
-          }
-        }
+        onComplete?.();
       } catch (err: any) {
         vscode.window.showErrorMessage(`Pull failed: ${err.message}`);
       }

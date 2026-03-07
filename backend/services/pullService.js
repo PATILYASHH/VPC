@@ -39,7 +39,7 @@ BEGIN
     );
   END LOOP;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Event trigger function for DROP
 CREATE OR REPLACE FUNCTION _vpc_capture_drop() RETURNS event_trigger AS $$
@@ -62,7 +62,7 @@ BEGIN
     );
   END LOOP;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Install event triggers
 DROP EVENT TRIGGER IF EXISTS _vpc_ddl_trigger;

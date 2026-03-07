@@ -33,15 +33,14 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.pullCommand = pullCommand;
+exports.pushCommand = pushCommand;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-async function pullCommand(client, onComplete) {
+async function pushCommand(client, onComplete, filePath) {
     const config = vscode.workspace.getConfiguration('vpcSync');
     const url = config.get('serverUrl');
     const key = config.get('apiKey');
-    const outFolder = config.get('outputFolder') || './migrations';
     if (!url || !key) {
         const action = await vscode.window.showErrorMessage('VPC Sync not configured.', 'Configure Now');
         if (action === 'Configure Now') {
@@ -49,41 +48,54 @@ async function pullCommand(client, onComplete) {
         }
         return;
     }
+    // If no file path provided, let user pick a .sql file
+    if (!filePath) {
+        const outFolder = config.get('outputFolder') || './migrations';
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('No workspace folder open.');
+            return;
+        }
+        const dir = path.resolve(workspaceRoot, outFolder);
+        if (!fs.existsSync(dir)) {
+            vscode.window.showWarningMessage('No migrations folder found.');
+            return;
+        }
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
+        if (files.length === 0) {
+            vscode.window.showWarningMessage('No SQL migration files found.');
+            return;
+        }
+        const selected = await vscode.window.showQuickPick(files, {
+            placeHolder: 'Select a migration file to push',
+        });
+        if (!selected) {
+            return;
+        }
+        filePath = path.join(dir, selected);
+    }
+    // Confirm push
+    const fileName = path.basename(filePath);
+    const confirm = await vscode.window.showWarningMessage(`Push "${fileName}" to remote database? This will execute the SQL.`, { modal: true }, 'Push');
+    if (confirm !== 'Push') {
+        return;
+    }
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'VPC Sync',
         cancellable: false,
     }, async (progress) => {
-        progress.report({ message: 'Pulling schema changes...' });
+        progress.report({ message: `Pushing ${fileName}...` });
         try {
-            const result = await client.pull(url, key);
-            if (!result.migration) {
-                vscode.window.showInformationMessage(result.message || 'No pending changes to pull.');
-                onComplete?.();
-                return;
-            }
-            progress.report({ message: `Saving migration v${result.migration.version}...` });
-            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!workspaceRoot) {
-                vscode.window.showErrorMessage('No workspace folder open.');
-                return;
-            }
-            const outDir = path.resolve(workspaceRoot, outFolder);
-            if (!fs.existsSync(outDir)) {
-                fs.mkdirSync(outDir, { recursive: true });
-            }
-            const filename = `${String(result.migration.version).padStart(4, '0')}_${result.migration.name || 'migration'}.sql`;
-            const filePath = path.join(outDir, filename);
-            fs.writeFileSync(filePath, result.migration.sql_up);
-            // Open the migration file
-            const doc = await vscode.workspace.openTextDocument(filePath);
-            await vscode.window.showTextDocument(doc);
-            vscode.window.showInformationMessage(`Pulled ${result.change_count} changes → ${filename}`);
+            const sql = fs.readFileSync(filePath, 'utf-8');
+            const name = path.basename(filePath, '.sql');
+            const result = await client.push(url, key, sql, name);
+            vscode.window.showInformationMessage(`Pushed migration v${result.version} — ${result.status}`);
             onComplete?.();
         }
         catch (err) {
-            vscode.window.showErrorMessage(`Pull failed: ${err.message}`);
+            vscode.window.showErrorMessage(`Push failed: ${err.message}`);
         }
     });
 }
-//# sourceMappingURL=pull.js.map
+//# sourceMappingURL=push.js.map
