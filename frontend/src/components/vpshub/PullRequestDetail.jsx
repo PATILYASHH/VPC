@@ -27,10 +27,10 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
       const { data } = await api.post(
         `/admin/sync/projects/${project.id}/pull-requests/${prNumber}/test`
       );
-      if (data.sandbox?.success) {
+      if (data.sandbox_result?.success) {
         toast.success('Sandbox test passed!');
       } else {
-        toast.error(`Sandbox test failed: ${data.sandbox?.error || 'Unknown error'}`);
+        toast.error(`Sandbox test failed: ${data.sandbox_result?.error || 'Unknown error'}`);
       }
       refetch();
     } catch (err) {
@@ -224,14 +224,51 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
               </>
             )}
           </div>
+
+          {/* Success details */}
+          {pr.sandbox_result.success && (
+            <div className="space-y-1 mt-2">
+              {pr.sandbox_result.tables_added?.length > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-emerald-400 font-medium">Tables created:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {pr.sandbox_result.tables_added.map((t) => (
+                      <Badge key={t} variant="outline" className="text-emerald-300 border-emerald-500/30 text-[11px]">
+                        + {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {pr.sandbox_result.tables_removed?.length > 0 && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-red-400 font-medium">Tables dropped:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {pr.sandbox_result.tables_removed.map((t) => (
+                      <Badge key={t} variant="outline" className="text-red-300 border-red-500/30 text-[11px]">
+                        - {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {pr.sandbox_result.tables_after != null && (
+                <span className="text-xs text-muted-foreground">
+                  Total tables after apply: {pr.sandbox_result.tables_after}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Error details */}
           {pr.sandbox_result.error && (
-            <pre className="text-xs font-mono text-red-300 bg-red-500/10 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+            <pre className="text-xs font-mono text-red-300 bg-red-500/10 rounded p-2 mt-2 overflow-x-auto whitespace-pre-wrap">
               {pr.sandbox_result.error}
             </pre>
           )}
-          {pr.sandbox_result.tested_at && (
-            <span className="text-xs text-muted-foreground mt-1 block">
-              Tested {timeAgo(pr.sandbox_result.tested_at)}
+          {pr.sandbox_result.position && (
+            <span className="text-xs text-red-300/70 mt-1 block">
+              Error at position: {pr.sandbox_result.position}
             </span>
           )}
         </div>
@@ -249,7 +286,7 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
               <div key={i} className="text-xs text-amber-300 font-mono flex items-center gap-2">
                 <span className="text-amber-400">{c.type}</span>
                 <span>{c.object}</span>
-                <span className="text-muted-foreground">- {c.reason}</span>
+                <span className="text-muted-foreground">- {c.message}</span>
               </div>
             ))}
           </div>

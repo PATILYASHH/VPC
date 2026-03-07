@@ -1,5 +1,12 @@
 const { Pool } = require('pg');
 
+/**
+ * Safely quote a PostgreSQL identifier (prevents SQL injection in GRANT statements).
+ */
+function pgIdent(name) {
+  return '"' + name.replace(/"/g, '""') + '"';
+}
+
 // SQL to install DDL tracking in a project database
 const TRACKING_SETUP_SQL = `
 -- Schema change tracking table
@@ -100,11 +107,24 @@ function getAdminProjectPool(project) {
 
 /**
  * Install DDL tracking (event triggers + _vpc_schema_changes table) in a project DB.
+ * Also grants INSERT/SELECT on the tracking table to the project's service user
+ * so the DDL trigger can log changes regardless of which user runs DDL.
  */
 async function installPullTracking(mainPool, project) {
   const adminPool = getAdminProjectPool(project);
   try {
     await adminPool.query(TRACKING_SETUP_SQL);
+
+    // Grant permissions to the project's service user so the DDL trigger
+    // can INSERT into _vpc_schema_changes when DDL is run by the project user.
+    // Without this, "permission denied for table _vpc_schema_changes" occurs.
+    if (project.db_user) {
+      await adminPool.query(`
+        GRANT INSERT, SELECT ON _vpc_schema_changes TO ${pgIdent(project.db_user)};
+        GRANT USAGE, SELECT ON SEQUENCE _vpc_schema_changes_id_seq TO ${pgIdent(project.db_user)};
+      `);
+    }
+
     if (mainPool) {
       await mainPool.query(
         `UPDATE bana_projects SET pull_tracking_enabled = true, pull_tracking_installed_at = NOW(), updated_at = NOW() WHERE id = $1`,
@@ -112,6 +132,25 @@ async function installPullTracking(mainPool, project) {
       );
     }
     return { enabled: true };
+  } finally {
+    await adminPool.end();
+  }
+}
+
+/**
+ * Repair DDL tracking permissions for an existing project.
+ * Call this to fix "permission denied for table _vpc_schema_changes" on projects
+ * where tracking was installed before the GRANT fix.
+ */
+async function repairTrackingPermissions(project) {
+  if (!project.db_user) throw new Error('Project has no db_user');
+  const adminPool = getAdminProjectPool(project);
+  try {
+    await adminPool.query(`
+      GRANT INSERT, SELECT ON _vpc_schema_changes TO ${pgIdent(project.db_user)};
+      GRANT USAGE, SELECT ON SEQUENCE _vpc_schema_changes_id_seq TO ${pgIdent(project.db_user)};
+    `);
+    return { repaired: true };
   } finally {
     await adminPool.end();
   }
@@ -237,6 +276,7 @@ function generateMigrationFile(changes, sequenceNumber) {
 module.exports = {
   installPullTracking,
   uninstallPullTracking,
+  repairTrackingPermissions,
   getPullTrackingStatus,
   getSchemaChanges,
   getTotalChangeCount,

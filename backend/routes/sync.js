@@ -138,7 +138,16 @@ router.post('/projects/:id/pull-requests/:num/reopen', resolveProject, async (re
 router.post('/projects/:id/tracking/reinstall', resolveProject, async (req, res) => {
   try {
     await pullService.installPullTracking(req.app.locals.pool, req.project);
-    res.json({ success: true, message: 'DDL tracking reinstalled with SECURITY DEFINER' });
+    res.json({ success: true, message: 'DDL tracking reinstalled with permissions granted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/tracking/repair', resolveProject, async (req, res) => {
+  try {
+    await pullService.repairTrackingPermissions(req.project);
+    res.json({ success: true, message: 'Tracking permissions repaired for ' + req.project.db_user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

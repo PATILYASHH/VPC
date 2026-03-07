@@ -112,7 +112,32 @@ async function pushMigration(pool, project, migrationId) {
   });
 
   try {
+    // Disable DDL event triggers before executing migration SQL.
+    // The migration is already tracked in vpc_migrations, so the DDL trigger
+    // would only create duplicate records. More importantly, the trigger's
+    // INSERT into _vpc_schema_changes can fail with permission denied
+    // depending on the PostgreSQL event trigger security context.
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger DISABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger DISABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL; -- triggers don't exist yet, that's fine
+      END $$;
+    `);
+
     await execPool.query(migration.sql_up);
+
+    // Re-enable DDL triggers
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger ENABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `);
+
     await pool.query(
       `UPDATE vpc_migrations SET status = 'applied', applied_at = NOW() WHERE id = $1`,
       [migrationId]
@@ -124,6 +149,16 @@ async function pushMigration(pool, project, migrationId) {
 
     return { ...migration, status: 'applied' };
   } catch (err) {
+    // Re-enable DDL triggers even on failure
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger ENABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `).catch(() => {});
+
     await pool.query(
       `UPDATE vpc_migrations SET status = 'failed' WHERE id = $1`,
       [migrationId]
@@ -155,13 +190,43 @@ async function rollbackMigration(pool, project, migrationId) {
   });
 
   try {
+    // Disable DDL triggers to avoid permission denied on _vpc_schema_changes
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger DISABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger DISABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `);
+
     await execPool.query(migration.sql_down);
+
+    // Re-enable DDL triggers
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger ENABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `);
+
     await pool.query(
       `UPDATE vpc_migrations SET status = 'rolled_back', rolled_back_at = NOW() WHERE id = $1`,
       [migrationId]
     );
     return { ...migration, status: 'rolled_back' };
   } catch (err) {
+    // Re-enable DDL triggers even on failure
+    await execPool.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger ENABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `).catch(() => {});
     throw new Error(`Rollback failed: ${err.message}`);
   } finally {
     await execPool.end();
@@ -327,6 +392,16 @@ async function testMigrationInSandbox(project, sql) {
   const client = await adminPool.connect();
 
   try {
+    // Disable DDL triggers to avoid permission denied on _vpc_schema_changes
+    await client.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger DISABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger DISABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `);
+
     await client.query('BEGIN');
 
     // Snapshot tables before
@@ -364,6 +439,15 @@ async function testMigrationInSandbox(project, sql) {
       position: err.position || null,
     };
   } finally {
+    // Re-enable DDL triggers
+    await client.query(`
+      DO $$ BEGIN
+        ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
+        ALTER EVENT TRIGGER _vpc_drop_trigger ENABLE;
+      EXCEPTION WHEN undefined_object THEN
+        NULL;
+      END $$;
+    `).catch(() => {});
     client.release();
     await adminPool.end();
   }
