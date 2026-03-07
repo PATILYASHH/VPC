@@ -281,12 +281,190 @@ async function deleteRow(pool, schema, table, primaryKey, pkValue) {
   return { deleted: rowCount > 0 };
 }
 
+// ─── SQL Editor: multi-statement support ───────────────
+
+function splitStatements(sql) {
+  const stmts = [];
+  let cur = '';
+  let i = 0;
+
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1] || '';
+
+    // Single-quoted string
+    if (ch === "'") {
+      cur += ch;
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") { cur += "''"; i += 2; }
+        else if (sql[i] === "'") { cur += "'"; i++; break; }
+        else { cur += sql[i]; i++; }
+      }
+      continue;
+    }
+
+    // Double-quoted identifier
+    if (ch === '"') {
+      cur += ch;
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === '"' && sql[i + 1] === '"') { cur += '""'; i += 2; }
+        else if (sql[i] === '"') { cur += '"'; i++; break; }
+        else { cur += sql[i]; i++; }
+      }
+      continue;
+    }
+
+    // Dollar-quoted string ($$...$$)
+    if (ch === '$') {
+      let tag = '$';
+      let j = i + 1;
+      while (j < sql.length && (/[a-zA-Z0-9_]/.test(sql[j]) || sql[j] === '$')) {
+        tag += sql[j];
+        if (sql[j] === '$') { j++; break; }
+        j++;
+      }
+      if (tag.length >= 2 && tag.endsWith('$')) {
+        cur += tag;
+        i = j;
+        const closeIdx = sql.indexOf(tag, i);
+        if (closeIdx >= 0) {
+          cur += sql.substring(i, closeIdx + tag.length);
+          i = closeIdx + tag.length;
+        } else {
+          cur += sql.substring(i);
+          i = sql.length;
+        }
+        continue;
+      }
+      cur += ch;
+      i++;
+      continue;
+    }
+
+    // Line comment
+    if (ch === '-' && next === '-') {
+      const nlIdx = sql.indexOf('\n', i);
+      if (nlIdx >= 0) { cur += sql.substring(i, nlIdx + 1); i = nlIdx + 1; }
+      else { cur += sql.substring(i); i = sql.length; }
+      continue;
+    }
+
+    // Block comment
+    if (ch === '/' && next === '*') {
+      const closeIdx = sql.indexOf('*/', i + 2);
+      if (closeIdx >= 0) { cur += sql.substring(i, closeIdx + 2); i = closeIdx + 2; }
+      else { cur += sql.substring(i); i = sql.length; }
+      continue;
+    }
+
+    // Semicolon — statement separator
+    if (ch === ';') {
+      const stmt = cur.trim();
+      if (stmt) stmts.push(stmt);
+      cur = '';
+      i++;
+      continue;
+    }
+
+    cur += ch;
+    i++;
+  }
+
+  const last = cur.trim();
+  if (last) stmts.push(last);
+  return stmts;
+}
+
+function isWriteStatement(sql) {
+  const stripped = sql
+    .replace(/--[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trim();
+  return (
+    /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|DO)\b/i.test(stripped) ||
+    /\bSELECT\b[\s\S]+\bINTO\s+(?!STRICT\b)(?!TEMPORARY\b\s+STRICT\b)\w/i.test(stripped) ||
+    /^\s*WITH\b[\s\S]+\b(INSERT|UPDATE|DELETE)\b/i.test(stripped)
+  );
+}
+
+async function executeEditorQuery(pool, sql, confirm = false) {
+  const trimmed = sql.trim();
+  if (!trimmed) return { results: [] };
+
+  const statements = splitStatements(trimmed);
+  if (statements.length === 0) return { results: [] };
+
+  const hasWrite = statements.some(isWriteStatement);
+
+  if (hasWrite && !confirm) {
+    return { requiresConfirmation: true, queryType: 'write' };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("SET statement_timeout = '30000'");
+
+    // Read-only batch: wrap in read-only transaction
+    if (!hasWrite) {
+      await client.query('BEGIN');
+      await client.query('SET TRANSACTION READ ONLY');
+    }
+
+    const results = [];
+    const totalStart = Date.now();
+
+    for (const stmt of statements) {
+      const start = Date.now();
+      try {
+        const result = await client.query(stmt);
+        results.push({
+          rows: result.rows || [],
+          fields: (result.fields || []).map((f) => ({ name: f.name, dataTypeID: f.dataTypeID })),
+          rowCount: result.rowCount,
+          command: result.command,
+          duration_ms: Date.now() - start,
+          sql: stmt.length > 300 ? stmt.substring(0, 300) + '...' : stmt,
+          success: true,
+        });
+      } catch (err) {
+        results.push({
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          command: null,
+          duration_ms: Date.now() - start,
+          sql: stmt.length > 300 ? stmt.substring(0, 300) + '...' : stmt,
+          success: false,
+          error: err.message,
+        });
+        break; // stop on first error
+      }
+    }
+
+    if (!hasWrite) {
+      await client.query('ROLLBACK');
+    }
+
+    return { results, duration_ms: Date.now() - totalStart };
+  } catch (err) {
+    if (!hasWrite) {
+      try { await client.query('ROLLBACK'); } catch {}
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getSchemas,
   getTables,
   getColumns,
   getTableData,
   executeQuery,
+  executeEditorQuery,
   insertRow,
   updateRow,
   deleteRow,

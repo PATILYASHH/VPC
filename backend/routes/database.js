@@ -88,21 +88,13 @@ router.get('/table/:name', async (req, res) => {
 router.post('/query', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
-    const { sql, params, confirm } = req.body;
+    const { sql, confirm } = req.body;
 
     if (!sql || typeof sql !== 'string') {
       return res.status(400).json({ error: 'SQL query is required' });
     }
 
-    const result = await dbBrowser.executeQuery(pool, sql, params || [], !!confirm);
-
-    if (result.requiresConfirmation) {
-      return res.status(200).json({
-        requiresConfirmation: true,
-        message: 'This is a write operation. Send again with confirm: true to execute.',
-      });
-    }
-
+    const result = await dbBrowser.executeEditorQuery(pool, sql, !!confirm);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });

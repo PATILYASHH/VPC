@@ -173,7 +173,7 @@ router.post('/projects/:id/query', resolveProject, enforceStorageLimit, async (r
   try {
     const { sql, confirm } = req.body;
     if (!sql) return res.status(400).json({ error: 'SQL is required' });
-    const result = await dbBrowser.executeQuery(req.banaPool, sql, [], confirm);
+    const result = await dbBrowser.executeEditorQuery(req.banaPool, sql, !!confirm);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
