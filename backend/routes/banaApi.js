@@ -1,7 +1,11 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const { banaApiAuth, banaStorageCheck } = require('../middleware/banaApiAuth');
 const banadbService = require('../services/banadbService');
+const banaStorage = require('../services/banaStorageService');
 const dbBrowser = require('../services/dbBrowserService');
 const { signToken, verifyToken } = require('../utils/jwt');
 const { validateIdentifier, quoteIdentifier } = require('../utils/sanitize');
@@ -213,6 +217,168 @@ router.post('/:slug/sql', banaStorageCheck, async (req, res) => {
     if (!sql) return res.status(400).json({ error: 'SQL is required' });
 
     const result = await dbBrowser.executeQuery(req.banaPool, sql, [], true);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Storage / Buckets API ────────────────────────────────
+
+// Multer for API uploads
+function createApiUpload() {
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = banaStorage.ensureUploadDir(req.banaProject.slug, req._bucketName);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${uuidv4()}${ext}`);
+    },
+  });
+  return multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } });
+}
+
+const apiUpload = createApiUpload();
+
+// List buckets
+router.get('/:slug/storage/buckets', async (req, res) => {
+  try {
+    const buckets = await banaStorage.listBuckets(req.banaPool);
+    res.json(buckets);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create bucket (service key only)
+router.post('/:slug/storage/buckets', async (req, res) => {
+  try {
+    if (req.banaKeyRole !== 'service') {
+      return res.status(403).json({ error: 'Bucket management requires a service key' });
+    }
+    const { name, isPublic, fileSizeLimit, allowedMimeTypes } = req.body;
+    if (!name) return res.status(400).json({ error: 'Bucket name is required' });
+    const bucket = await banaStorage.createBucket(req.banaPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
+    res.status(201).json(bucket);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Bucket already exists' });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete bucket (service key only)
+router.delete('/:slug/storage/buckets/:bucketId', async (req, res) => {
+  try {
+    if (req.banaKeyRole !== 'service') {
+      return res.status(403).json({ error: 'Bucket management requires a service key' });
+    }
+    const result = await banaStorage.deleteBucket(req.banaPool, req.params.bucketId, req.banaProject.slug);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List objects in bucket
+router.get('/:slug/storage/:bucketName/objects', async (req, res) => {
+  try {
+    const bucket = await banaStorage.getBucketByName(req.banaPool, req.params.bucketName);
+    if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
+    const { prefix, search, limit, offset } = req.query;
+    const data = await banaStorage.listObjects(req.banaPool, bucket.id, { prefix, search, limit, offset });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload file to bucket
+router.post('/:slug/storage/:bucketName/upload', banaStorageCheck, async (req, res) => {
+  try {
+    const bucket = await banaStorage.getBucketByName(req.banaPool, req.params.bucketName);
+    if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
+
+    // Auth check: service key = full access, anon key = needs Bearer token
+    if (req.banaKeyRole === 'anon') {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Upload requires user authentication' });
+      }
+      try {
+        const decoded = verifyToken(authHeader.slice(7));
+        if (decoded.project !== req.banaProject.id) {
+          return res.status(403).json({ error: 'Token does not match project' });
+        }
+      } catch {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+      }
+    }
+
+    // Attach bucket name for multer destination
+    req._bucketName = bucket.name;
+
+    // Process upload via multer
+    await new Promise((resolve, reject) => {
+      apiUpload.single('file')(req, res, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    if (!req.file) return res.status(400).json({ error: 'File is required (use form field "file")' });
+
+    // Validate mime type
+    if (bucket.allowed_mime_types && bucket.allowed_mime_types.length > 0) {
+      if (!bucket.allowed_mime_types.includes(req.file.mimetype)) {
+        try { require('fs').unlinkSync(req.file.path); } catch {}
+        return res.status(400).json({ error: `File type ${req.file.mimetype} not allowed` });
+      }
+    }
+
+    // Validate file size
+    if (bucket.file_size_limit && req.file.size > bucket.file_size_limit) {
+      try { require('fs').unlinkSync(req.file.path); } catch {}
+      return res.status(400).json({ error: 'File exceeds bucket size limit' });
+    }
+
+    const objectName = req.body.path
+      ? `${req.body.path.replace(/^\/|\/$/g, '')}/${req.file.originalname}`
+      : req.file.originalname;
+
+    const obj = await banaStorage.uploadObject(req.banaPool, {
+      bucketId: bucket.id,
+      name: objectName,
+      file: req.file,
+      projectSlug: req.banaProject.slug,
+      bucketName: bucket.name,
+    });
+
+    res.status(201).json(obj);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete object
+router.delete('/:slug/storage/objects/:objectId', async (req, res) => {
+  try {
+    if (req.banaKeyRole === 'anon') {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Delete requires user authentication' });
+      }
+      try {
+        const decoded = verifyToken(authHeader.slice(7));
+        if (decoded.project !== req.banaProject.id) {
+          return res.status(403).json({ error: 'Token does not match project' });
+        }
+      } catch {
+        return res.status(401).json({ error: 'Invalid or expired token' });
+      }
+    }
+    const result = await banaStorage.deleteObject(req.banaPool, req.params.objectId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,9 +1,13 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const banadbService = require('../services/banadbService');
 const dbBrowser = require('../services/dbBrowserService');
 const supabaseImport = require('../services/supabaseImportService');
 const syncService = require('../services/syncService');
+const banaStorage = require('../services/banaStorageService');
 
 // ─── Projects ──────────────────────────────────────────────
 
@@ -417,6 +421,167 @@ router.delete('/projects/:id/import/disconnect', async (req, res) => {
   try {
     await supabaseImport.removeConnection(req.app.locals.pool, req.params.id);
     res.json({ disconnected: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Storage / Buckets ────────────────────────────────────
+
+// Multer config for bucket uploads (dynamic destination per project/bucket)
+function createBucketUpload() {
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      const dir = banaStorage.ensureUploadDir(req.banaProject.slug, req._bucketName);
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${uuidv4()}${ext}`);
+    },
+  });
+  return multer({ storage, limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
+}
+
+const bucketUpload = createBucketUpload();
+
+// Middleware: resolve bucket and attach name for multer
+async function resolveBucket(req, res, next) {
+  try {
+    const bucket = await banaStorage.getBucket(req.banaPool, req.params.bucketId);
+    if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
+    req._bucket = bucket;
+    req._bucketName = bucket.name;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// List buckets
+router.get('/projects/:id/storage/buckets', resolveProject, async (req, res) => {
+  try {
+    const buckets = await banaStorage.listBuckets(req.banaPool);
+    res.json({ buckets });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create bucket
+router.post('/projects/:id/storage/buckets', resolveProject, async (req, res) => {
+  try {
+    const { name, isPublic, fileSizeLimit, allowedMimeTypes } = req.body;
+    if (!name) return res.status(400).json({ error: 'Bucket name is required' });
+    const bucket = await banaStorage.createBucket(req.banaPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
+    res.status(201).json({ bucket });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Bucket name already exists' });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update bucket
+router.patch('/projects/:id/storage/buckets/:bucketId', resolveProject, async (req, res) => {
+  try {
+    const bucket = await banaStorage.updateBucket(req.banaPool, req.params.bucketId, req.body);
+    if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
+    res.json({ bucket });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete bucket
+router.delete('/projects/:id/storage/buckets/:bucketId', resolveProject, async (req, res) => {
+  try {
+    const result = await banaStorage.deleteBucket(req.banaPool, req.params.bucketId, req.banaProject.slug);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List objects in bucket
+router.get('/projects/:id/storage/buckets/:bucketId/objects', resolveProject, resolveBucket, async (req, res) => {
+  try {
+    const { prefix, search, limit, offset } = req.query;
+    const data = await banaStorage.listObjects(req.banaPool, req.params.bucketId, { prefix, search, limit, offset });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload file to bucket
+router.post('/projects/:id/storage/buckets/:bucketId/upload', resolveProject, enforceStorageLimit, resolveBucket,
+  bucketUpload.single('file'),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'File is required' });
+
+      // Check bucket mime type restrictions
+      const bucket = req._bucket;
+      if (bucket.allowed_mime_types && bucket.allowed_mime_types.length > 0) {
+        if (!bucket.allowed_mime_types.includes(req.file.mimetype)) {
+          // Remove uploaded file
+          try { require('fs').unlinkSync(req.file.path); } catch {}
+          return res.status(400).json({ error: `File type ${req.file.mimetype} not allowed in this bucket` });
+        }
+      }
+
+      // Check bucket file size limit
+      if (bucket.file_size_limit && req.file.size > bucket.file_size_limit) {
+        try { require('fs').unlinkSync(req.file.path); } catch {}
+        return res.status(400).json({ error: `File exceeds bucket size limit of ${Math.round(bucket.file_size_limit / (1024 * 1024))}MB` });
+      }
+
+      const objectName = req.body.path
+        ? `${req.body.path.replace(/^\/|\/$/g, '')}/${req.file.originalname}`
+        : req.file.originalname;
+
+      const obj = await banaStorage.uploadObject(req.banaPool, {
+        bucketId: req.params.bucketId,
+        name: objectName,
+        file: req.file,
+        projectSlug: req.banaProject.slug,
+        bucketName: bucket.name,
+      });
+
+      res.status(201).json({ object: obj });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// Download object
+router.get('/projects/:id/storage/objects/:objectId/download', resolveProject, async (req, res) => {
+  try {
+    const obj = await banaStorage.getObject(req.banaPool, req.params.objectId);
+    if (!obj) return res.status(404).json({ error: 'Object not found' });
+    if (!require('fs').existsSync(obj.storage_path)) return res.status(404).json({ error: 'File not found on disk' });
+    res.download(obj.storage_path, path.basename(obj.name));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete object
+router.delete('/projects/:id/storage/objects/:objectId', resolveProject, async (req, res) => {
+  try {
+    const result = await banaStorage.deleteObject(req.banaPool, req.params.objectId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Storage stats
+router.get('/projects/:id/storage/stats', resolveProject, async (req, res) => {
+  try {
+    const stats = await banaStorage.getStorageStats(req.banaPool);
+    res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

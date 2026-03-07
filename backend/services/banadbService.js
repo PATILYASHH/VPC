@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const banaStorage = require('./banaStorageService');
 
 // In-memory pool cache for project databases
 const projectPools = new Map();
@@ -208,6 +209,9 @@ async function createProject(pool, { name, slug, storageLimitMb, maxConnections,
       )
     `);
 
+    // Set up storage tables
+    await banaStorage.ensureStorageTables(projectPool);
+
     return project;
   } catch (err) {
     // Cleanup on failure
@@ -225,6 +229,9 @@ async function deleteProject(pool, projectId) {
 
   // Close cached pool
   removeProjectPool(projectId);
+
+  // Clean up storage files from disk
+  banaStorage.deleteProjectDir(project.slug);
 
   const escapedDb = project.db_name.replace(/"/g, '""');
   const escapedUser = project.db_user.replace(/"/g, '""');
@@ -510,19 +517,30 @@ async function getStorageSummary(pool) {
   };
 }
 
-// Check if a project has exceeded its storage limit
+// Check if a project has exceeded its storage limit (DB + file storage)
 async function checkStorageLimit(pool, project) {
   try {
     const sizeResult = await pool.query(
       `SELECT pg_database_size($1) AS size_bytes`, [project.db_name]
     );
-    const usedMb = Math.round(parseInt(sizeResult.rows[0]?.size_bytes || 0) / (1024 * 1024));
+    const dbUsedBytes = parseInt(sizeResult.rows[0]?.size_bytes || 0);
+
+    // Include file storage on disk
+    let fileUsedBytes = 0;
+    try {
+      const projectPool = getProjectPool(project);
+      fileUsedBytes = await banaStorage.getFileSizeTotal(projectPool);
+    } catch {}
+
+    const totalUsedMb = Math.round((dbUsedBytes + fileUsedBytes) / (1024 * 1024));
     const limitMb = project.storage_limit_mb || 500;
     return {
-      used_mb: usedMb,
+      used_mb: totalUsedMb,
+      db_used_mb: Math.round(dbUsedBytes / (1024 * 1024)),
+      file_used_mb: Math.round(fileUsedBytes / (1024 * 1024)),
       limit_mb: limitMb,
-      exceeded: usedMb >= limitMb,
-      remaining_mb: Math.max(0, limitMb - usedMb),
+      exceeded: totalUsedMb >= limitMb,
+      remaining_mb: Math.max(0, limitMb - totalUsedMb),
     };
   } catch {
     return { used_mb: 0, limit_mb: project.storage_limit_mb || 500, exceeded: false, remaining_mb: project.storage_limit_mb || 500 };

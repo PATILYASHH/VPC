@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table2, Code2, Users, Key, Settings, CloudDownload, Download } from 'lucide-react';
+import { Table2, Code2, Users, Key, Settings, CloudDownload, Download, HardDrive } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import BanaTableEditor from './BanaTableEditor';
 import BanaSqlEditor from './BanaSqlEditor';
@@ -8,6 +8,7 @@ import BanaApiKeys from './BanaApiKeys';
 import BanaSettings from './BanaSettings';
 import BanaPullKeys from './BanaPullKeys';
 import BanaSupabaseImport from './BanaSupabaseImport';
+import BanaBuckets from './BanaBuckets';
 
 const NAV_ITEMS = [
   { id: 'tables', label: 'Table Editor', icon: Table2 },
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { id: 'auth', label: 'Auth', icon: Users },
   { id: 'api', label: 'API Keys', icon: Key },
   { id: 'pull', label: 'Pull Keys', icon: Download },
+  { id: 'storage', label: 'Buckets', icon: HardDrive },
   { id: 'import', label: 'Import', icon: CloudDownload },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -55,6 +57,7 @@ export default function ProjectDashboard({ project }) {
         {activeSection === 'auth' && <BanaAuth project={project} />}
         {activeSection === 'api' && <BanaApiKeys project={project} />}
         {activeSection === 'pull' && <BanaPullKeys project={project} />}
+        {activeSection === 'storage' && <BanaBuckets project={project} />}
         {activeSection === 'import' && <BanaSupabaseImport project={project} />}
         {activeSection === 'settings' && <BanaSettings project={project} />}
       </div>

@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 8001;
 // Serve gallery uploads for preview (before auth, images need direct access)
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads', 'gallery')));
 
+// Serve public BanaDB storage files (no auth required)
+app.use('/storage/v1', require('./backend/routes/banaStoragePublic'));
+
 // Serve downloadable files (VS Code extension, etc.)
 app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
 
