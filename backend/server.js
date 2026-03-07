@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const pool = require('./db/pool');
-const { authenticateAdmin } = require('./middleware/auth');
+const { authenticateAdmin, checkPermission } = require('./middleware/auth');
 const actionLogger = require('./middleware/actionLogger');
 const ipRestriction = require('./middleware/ipRestriction');
 // Rate limiters removed — private system, no throttling needed
@@ -63,6 +63,7 @@ adminRouter.use('/auth', require('./routes/auth'));
 // All routes below require JWT authentication
 adminRouter.use(authenticateAdmin);
 adminRouter.use(ipRestriction);
+adminRouter.use(checkPermission);
 adminRouter.use(actionLogger);
 
 // Mount route files
@@ -78,7 +79,7 @@ adminRouter.use('/users', require('./routes/users'));
 adminRouter.use('/gallery', require('./routes/gallery'));
 adminRouter.use('/sync', require('./routes/sync'));
 
-// Placeholder authenticated route for testing
+// Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {
   res.json({ admin: req.admin });
 });

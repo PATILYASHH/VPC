@@ -18,7 +18,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     const pool = req.app.locals.pool;
 
     const { rows } = await pool.query(
-      `SELECT id, username, email, display_name, password_hash, totp_enabled, totp_secret
+      `SELECT id, username, email, display_name, password_hash, totp_enabled, totp_secret, permissions
        FROM vpc_admins WHERE (email = $1 OR username = $1) AND is_active = true`,
       [identifier]
     );
@@ -58,6 +58,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         username: admin.username,
         email: admin.email,
         display_name: admin.display_name,
+        permissions: admin.permissions || { all: true },
       },
     });
   } catch (error) {
@@ -87,7 +88,7 @@ router.post('/login/totp', loginLimiter, async (req, res) => {
 
     const pool = req.app.locals.pool;
     const { rows } = await pool.query(
-      'SELECT id, username, email, display_name, totp_secret FROM vpc_admins WHERE id = $1 AND is_active = true',
+      'SELECT id, username, email, display_name, totp_secret, permissions FROM vpc_admins WHERE id = $1 AND is_active = true',
       [decoded.id]
     );
 
@@ -116,6 +117,7 @@ router.post('/login/totp', loginLimiter, async (req, res) => {
         username: admin.username,
         email: admin.email,
         display_name: admin.display_name,
+        permissions: admin.permissions || { all: true },
       },
     });
   } catch (error) {

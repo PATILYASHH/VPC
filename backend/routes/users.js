@@ -5,13 +5,32 @@ const QRCode = require('qrcode');
 
 const router = express.Router();
 
+// Available permission keys for the frontend
+const PERMISSION_KEYS = [
+  { key: 'servers', label: 'Server Manager' },
+  { key: 'databases', label: 'Databases' },
+  { key: 'banadb', label: 'BanaDB' },
+  { key: 'api_keys', label: 'API Keys' },
+  { key: 'integrations', label: 'Integrations' },
+  { key: 'backups', label: 'Backups' },
+  { key: 'logs', label: 'Logs' },
+  { key: 'terminal', label: 'Terminal' },
+  { key: 'users', label: 'User Management' },
+  { key: 'gallery', label: 'Gallery' },
+];
+
+// GET /permissions — return available permission keys
+router.get('/permissions', (req, res) => {
+  res.json({ permissions: PERMISSION_KEYS });
+});
+
 // GET / — list all admins
 router.get('/', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
     const { rows } = await pool.query(
       `SELECT id, username, email, display_name, is_active, totp_enabled,
-              last_login_at, created_at, updated_at
+              permissions, last_login_at, created_at, updated_at
        FROM vpc_admins ORDER BY created_at DESC`
     );
     res.json({ users: rows });
@@ -24,7 +43,7 @@ router.get('/', async (req, res) => {
 // POST / — create admin
 router.post('/', async (req, res) => {
   try {
-    const { username, email, password, display_name } = req.body;
+    const { username, email, password, display_name, permissions } = req.body;
 
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
@@ -38,12 +57,13 @@ router.post('/', async (req, res) => {
 
     const pool = req.app.locals.pool;
     const password_hash = await bcrypt.hash(password, 10);
+    const perms = permissions || { all: true };
 
     const { rows } = await pool.query(
-      `INSERT INTO vpc_admins (username, email, password_hash, display_name)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, username, email, display_name, is_active, totp_enabled, created_at`,
-      [username, email, password_hash, display_name || username]
+      `INSERT INTO vpc_admins (username, email, password_hash, display_name, permissions)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, username, email, display_name, is_active, totp_enabled, permissions, created_at`,
+      [username, email, password_hash, display_name || username, JSON.stringify(perms)]
     );
 
     res.status(201).json({ user: rows[0] });
@@ -59,7 +79,7 @@ router.post('/', async (req, res) => {
 // PUT /:id — update admin
 router.put('/:id', async (req, res) => {
   try {
-    const { username, email, display_name, is_active, password } = req.body;
+    const { username, email, display_name, is_active, password, permissions } = req.body;
     const pool = req.app.locals.pool;
 
     const sets = [];
@@ -70,6 +90,7 @@ router.put('/:id', async (req, res) => {
     if (email !== undefined) { sets.push(`email = $${idx++}`); values.push(email); }
     if (display_name !== undefined) { sets.push(`display_name = $${idx++}`); values.push(display_name); }
     if (is_active !== undefined) { sets.push(`is_active = $${idx++}`); values.push(is_active); }
+    if (permissions !== undefined) { sets.push(`permissions = $${idx++}`); values.push(JSON.stringify(permissions)); }
     if (password) {
       const hash = await bcrypt.hash(password, 10);
       sets.push(`password_hash = $${idx++}`);
@@ -85,7 +106,7 @@ router.put('/:id', async (req, res) => {
 
     const { rows } = await pool.query(
       `UPDATE vpc_admins SET ${sets.join(', ')} WHERE id = $${idx}
-       RETURNING id, username, email, display_name, is_active, totp_enabled, updated_at`,
+       RETURNING id, username, email, display_name, is_active, totp_enabled, permissions, updated_at`,
       values
     );
 

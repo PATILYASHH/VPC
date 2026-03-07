@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react';
 import useDesktopStore from '@/stores/useDesktopStore';
+import useAuthStore from '@/stores/useAuthStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import AppIcon from './AppIcon';
 
 export default function AppLauncher() {
   const closeLauncher = useDesktopStore((s) => s.closeLauncher);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -25,7 +27,11 @@ export default function AppLauncher() {
     };
   }, [closeLauncher]);
 
-  const appIds = Object.keys(APP_REGISTRY);
+  const appIds = Object.keys(APP_REGISTRY).filter((id) => {
+    const app = APP_REGISTRY[id];
+    if (!app.permission) return true;
+    return hasPermission(app.permission);
+  });
 
   return (
     <div

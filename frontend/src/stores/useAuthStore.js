@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import api from '@/lib/api';
 
-const useAuthStore = create((set) => ({
+const useAuthStore = create((set, get) => ({
   admin: null,
   token: localStorage.getItem('vpc-token'),
   isAuthenticated: false,
@@ -34,7 +34,15 @@ const useAuthStore = create((set) => ({
     set({ admin: null, token: null, isAuthenticated: false });
   },
 
-  checkAuth: () => {
+  // Check if current admin has a specific permission
+  hasPermission: (perm) => {
+    const admin = get().admin;
+    if (!admin?.permissions) return true; // default: allow if no permissions set
+    if (admin.permissions.all === true) return true;
+    return admin.permissions[perm] === true;
+  },
+
+  checkAuth: async () => {
     const token = localStorage.getItem('vpc-token');
     if (!token) {
       set({ isLoading: false });
@@ -45,12 +53,24 @@ const useAuthStore = create((set) => ({
       if (payload.exp * 1000 < Date.now()) {
         throw new Error('Token expired');
       }
-      set({
-        admin: { id: payload.id, username: payload.username },
-        token,
-        isAuthenticated: true,
-        isLoading: false,
-      });
+      // Fetch full admin info including permissions from server
+      try {
+        const { data } = await api.get('/admin/me');
+        set({
+          admin: data.admin,
+          token,
+          isAuthenticated: true,
+          isLoading: false,
+        });
+      } catch {
+        // Fallback to JWT payload if /me fails
+        set({
+          admin: { id: payload.id, username: payload.username, permissions: { all: true } },
+          token,
+          isAuthenticated: true,
+          isLoading: false,
+        });
+      }
     } catch {
       localStorage.removeItem('vpc-token');
       set({ admin: null, token: null, isAuthenticated: false, isLoading: false });

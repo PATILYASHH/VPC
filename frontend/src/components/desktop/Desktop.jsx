@@ -1,4 +1,5 @@
 import useDesktopStore from '@/stores/useDesktopStore';
+import useAuthStore from '@/stores/useAuthStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import WindowManager from './WindowManager';
 import Taskbar from './Taskbar';
@@ -7,7 +8,14 @@ import AppIcon from './AppIcon';
 
 export default function Desktop() {
   const launcherOpen = useDesktopStore((s) => s.launcherOpen);
-  const appIds = Object.keys(APP_REGISTRY);
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const allAppIds = Object.keys(APP_REGISTRY);
+  const appIds = allAppIds.filter((id) => {
+    const app = APP_REGISTRY[id];
+    // Apps without a permission key are always visible
+    if (!app.permission) return true;
+    return hasPermission(app.permission);
+  });
 
   return (
     <div className="h-screen w-screen overflow-hidden relative bg-gradient-to-br from-[hsl(222,47%,8%)] via-[hsl(222,47%,11%)] to-[hsl(220,40%,13%)]">

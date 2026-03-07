@@ -93,6 +93,7 @@ async function resolveProject(req, res, next) {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     req.banaProject = project;
     req.banaPool = banadbService.getProjectPool(project);
+    req.banaAdminPool = banadbService.getProjectAdminPool(project);
     next();
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -448,7 +449,7 @@ const bucketUpload = createBucketUpload();
 // Middleware: resolve bucket and attach name for multer
 async function resolveBucket(req, res, next) {
   try {
-    const bucket = await banaStorage.getBucket(req.banaPool, req.params.bucketId);
+    const bucket = await banaStorage.getBucket(req.banaAdminPool, req.params.bucketId);
     if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
     req._bucket = bucket;
     req._bucketName = bucket.name;
@@ -461,7 +462,7 @@ async function resolveBucket(req, res, next) {
 // List buckets
 router.get('/projects/:id/storage/buckets', resolveProject, async (req, res) => {
   try {
-    const buckets = await banaStorage.listBuckets(req.banaPool);
+    const buckets = await banaStorage.listBuckets(req.banaAdminPool);
     res.json({ buckets });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -473,7 +474,7 @@ router.post('/projects/:id/storage/buckets', resolveProject, async (req, res) =>
   try {
     const { name, isPublic, fileSizeLimit, allowedMimeTypes } = req.body;
     if (!name) return res.status(400).json({ error: 'Bucket name is required' });
-    const bucket = await banaStorage.createBucket(req.banaPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
+    const bucket = await banaStorage.createBucket(req.banaAdminPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
     res.status(201).json({ bucket });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Bucket name already exists' });
@@ -484,7 +485,7 @@ router.post('/projects/:id/storage/buckets', resolveProject, async (req, res) =>
 // Update bucket
 router.patch('/projects/:id/storage/buckets/:bucketId', resolveProject, async (req, res) => {
   try {
-    const bucket = await banaStorage.updateBucket(req.banaPool, req.params.bucketId, req.body);
+    const bucket = await banaStorage.updateBucket(req.banaAdminPool, req.params.bucketId, req.body);
     if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
     res.json({ bucket });
   } catch (err) {
@@ -495,7 +496,7 @@ router.patch('/projects/:id/storage/buckets/:bucketId', resolveProject, async (r
 // Delete bucket
 router.delete('/projects/:id/storage/buckets/:bucketId', resolveProject, async (req, res) => {
   try {
-    const result = await banaStorage.deleteBucket(req.banaPool, req.params.bucketId, req.banaProject.slug);
+    const result = await banaStorage.deleteBucket(req.banaAdminPool, req.params.bucketId, req.banaProject.slug);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -506,7 +507,7 @@ router.delete('/projects/:id/storage/buckets/:bucketId', resolveProject, async (
 router.get('/projects/:id/storage/buckets/:bucketId/objects', resolveProject, resolveBucket, async (req, res) => {
   try {
     const { prefix, search, limit, offset } = req.query;
-    const data = await banaStorage.listObjects(req.banaPool, req.params.bucketId, { prefix, search, limit, offset });
+    const data = await banaStorage.listObjects(req.banaAdminPool, req.params.bucketId, { prefix, search, limit, offset });
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -540,7 +541,7 @@ router.post('/projects/:id/storage/buckets/:bucketId/upload', resolveProject, en
         ? `${req.body.path.replace(/^\/|\/$/g, '')}/${req.file.originalname}`
         : req.file.originalname;
 
-      const obj = await banaStorage.uploadObject(req.banaPool, {
+      const obj = await banaStorage.uploadObject(req.banaAdminPool, {
         bucketId: req.params.bucketId,
         name: objectName,
         file: req.file,
@@ -558,7 +559,7 @@ router.post('/projects/:id/storage/buckets/:bucketId/upload', resolveProject, en
 // Download object
 router.get('/projects/:id/storage/objects/:objectId/download', resolveProject, async (req, res) => {
   try {
-    const obj = await banaStorage.getObject(req.banaPool, req.params.objectId);
+    const obj = await banaStorage.getObject(req.banaAdminPool, req.params.objectId);
     if (!obj) return res.status(404).json({ error: 'Object not found' });
     if (!require('fs').existsSync(obj.storage_path)) return res.status(404).json({ error: 'File not found on disk' });
     res.download(obj.storage_path, path.basename(obj.name));
@@ -570,7 +571,7 @@ router.get('/projects/:id/storage/objects/:objectId/download', resolveProject, a
 // Delete object
 router.delete('/projects/:id/storage/objects/:objectId', resolveProject, async (req, res) => {
   try {
-    const result = await banaStorage.deleteObject(req.banaPool, req.params.objectId);
+    const result = await banaStorage.deleteObject(req.banaAdminPool, req.params.objectId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -580,7 +581,7 @@ router.delete('/projects/:id/storage/objects/:objectId', resolveProject, async (
 // Storage stats
 router.get('/projects/:id/storage/stats', resolveProject, async (req, res) => {
   try {
-    const stats = await banaStorage.getStorageStats(req.banaPool);
+    const stats = await banaStorage.getStorageStats(req.banaAdminPool);
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });

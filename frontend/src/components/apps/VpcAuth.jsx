@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Trash2, ShieldCheck, ShieldOff, QrCode, Pencil } from 'lucide-react';
+import { Plus, Trash2, ShieldCheck, ShieldOff, QrCode, Pencil, Crown, Lock } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,13 +12,28 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 
+const PERMISSION_OPTIONS = [
+  { key: 'servers', label: 'Server Manager' },
+  { key: 'databases', label: 'Databases' },
+  { key: 'banadb', label: 'BanaDB' },
+  { key: 'api_keys', label: 'API Keys' },
+  { key: 'integrations', label: 'Integrations' },
+  { key: 'backups', label: 'Backups' },
+  { key: 'logs', label: 'Logs' },
+  { key: 'terminal', label: 'Terminal' },
+  { key: 'users', label: 'User Management' },
+  { key: 'gallery', label: 'Gallery' },
+];
+
 export default function VpcAuth() {
   const [showCreate, setShowCreate] = useState(false);
   const [editUser, setEditUser] = useState(null);
+  const [permUser, setPermUser] = useState(null);
   const [totpSetup, setTotpSetup] = useState(null);
   const [verifyCode, setVerifyCode] = useState('');
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ username: '', email: '', password: '', display_name: '' });
+  const [permForm, setPermForm] = useState({ all: true });
 
   const queryClient = useQueryClient();
   const { data, isLoading } = useApiQuery('admin-users', '/admin/users');
@@ -28,6 +43,40 @@ export default function VpcAuth() {
   const openEdit = (user) => {
     setForm({ username: user.username, email: user.email, password: '', display_name: user.display_name || '' });
     setEditUser(user);
+  };
+
+  const openPerms = (user) => {
+    setPermForm(user.permissions || { all: true });
+    setPermUser(user);
+  };
+
+  const toggleAllPermissions = (checked) => {
+    if (checked) {
+      setPermForm({ all: true });
+    } else {
+      // Switch to specific permissions - enable all by default
+      const perms = {};
+      PERMISSION_OPTIONS.forEach((p) => { perms[p.key] = true; });
+      setPermForm(perms);
+    }
+  };
+
+  const togglePermission = (key) => {
+    setPermForm((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleSavePerms = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/admin/users/${permUser.id}`, { permissions: permForm });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      toast.success('Permissions updated');
+      setPermUser(null);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update permissions');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCreate = async () => {
@@ -108,6 +157,14 @@ export default function VpcAuth() {
     }
   };
 
+  const getPermissionSummary = (permissions) => {
+    if (!permissions || permissions.all) return 'Full Access';
+    const enabled = PERMISSION_OPTIONS.filter((p) => permissions[p.key]);
+    if (enabled.length === 0) return 'No Access';
+    if (enabled.length === PERMISSION_OPTIONS.length) return 'Full Access';
+    return `${enabled.length}/${PERMISSION_OPTIONS.length} permissions`;
+  };
+
   if (isLoading) return <LoadingSpinner />;
 
   return (
@@ -138,6 +195,17 @@ export default function VpcAuth() {
                     <span className="flex items-center gap-1"><ShieldOff className="w-3 h-3" /> No 2FA</span>
                   )}
                 </Badge>
+                <Badge
+                  variant={user.permissions?.all ? 'default' : 'secondary'}
+                  className="text-[10px] cursor-pointer"
+                  onClick={() => openPerms(user)}
+                >
+                  {user.permissions?.all ? (
+                    <span className="flex items-center gap-1"><Crown className="w-3 h-3" /> Full Access</span>
+                  ) : (
+                    <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> {getPermissionSummary(user.permissions)}</span>
+                  )}
+                </Badge>
               </div>
               <div className="flex items-center gap-1">
                 {user.totp_enabled ? (
@@ -149,6 +217,9 @@ export default function VpcAuth() {
                     <QrCode className="w-3.5 h-3.5 mr-1" /> Setup 2FA
                   </Button>
                 )}
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => openPerms(user)}>
+                  <Lock className="w-3.5 h-3.5 mr-1" /> Permissions
+                </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(user)}>
                   <Pencil className="w-3.5 h-3.5" />
                 </Button>
@@ -236,6 +307,64 @@ export default function VpcAuth() {
             <Button variant="outline" onClick={() => { setEditUser(null); resetForm(); }}>Cancel</Button>
             <Button onClick={handleUpdate} disabled={saving}>
               {saving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permissions Dialog */}
+      <Dialog open={!!permUser} onOpenChange={() => setPermUser(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Permissions — {permUser?.display_name || permUser?.username}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Full Access Toggle */}
+            <label className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-accent/50 transition-colors">
+              <input
+                type="checkbox"
+                checked={!!permForm.all}
+                onChange={(e) => toggleAllPermissions(e.target.checked)}
+                className="w-4 h-4 rounded accent-primary"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <Crown className="w-4 h-4 text-yellow-500" />
+                  <span className="text-sm font-medium">Full Access</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Grants access to all features without restrictions
+                </p>
+              </div>
+            </label>
+
+            {/* Individual Permissions */}
+            {!permForm.all && (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground font-medium px-1 mb-2">Specific Permissions</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {PERMISSION_OPTIONS.map((perm) => (
+                    <label
+                      key={perm.key}
+                      className="flex items-center gap-2.5 px-3 py-2 rounded-md border cursor-pointer hover:bg-accent/50 transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!permForm[perm.key]}
+                        onChange={() => togglePermission(perm.key)}
+                        className="w-3.5 h-3.5 rounded accent-primary"
+                      />
+                      <span className="text-xs">{perm.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPermUser(null)}>Cancel</Button>
+            <Button onClick={handleSavePerms} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Permissions'}
             </Button>
           </DialogFooter>
         </DialogContent>
