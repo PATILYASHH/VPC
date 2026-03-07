@@ -3,6 +3,9 @@ const terminalService = require('../services/terminalService');
 
 const router = express.Router();
 
+// Dynamic command prefixes that accept arguments
+const DYNAMIC_PREFIXES = ['vpc bana ', 'vpc db query '];
+
 // GET /api/admin/terminal/commands
 router.get('/commands', async (req, res) => {
   try {
@@ -24,17 +27,23 @@ router.post('/execute', async (req, res) => {
 
     if (!command) return res.status(400).json({ error: 'Command is required' });
 
-    // Exact-match validation against whitelist
+    const trimmed = command.trim();
+
+    // Check exact match first
     const { rows } = await pool.query(
       'SELECT * FROM allowed_commands WHERE command = $1 AND is_active = true',
-      [command.trim()]
+      [trimmed]
     );
 
+    // If no exact match, check if it matches a dynamic prefix
     if (rows.length === 0) {
-      return res.status(403).json({ error: `Command not allowed: "${command}"` });
+      const isDynamic = DYNAMIC_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+      if (!isDynamic) {
+        return res.status(403).json({ error: `Command not allowed: "${trimmed}"` });
+      }
     }
 
-    const result = await terminalService.execute(command.trim(), pool);
+    const result = await terminalService.execute(trimmed, pool);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

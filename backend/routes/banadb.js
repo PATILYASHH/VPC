@@ -3,6 +3,7 @@ const router = express.Router();
 const banadbService = require('../services/banadbService');
 const dbBrowser = require('../services/dbBrowserService');
 const supabaseImport = require('../services/supabaseImportService');
+const syncService = require('../services/syncService');
 
 // ─── Projects ──────────────────────────────────────────────
 
@@ -154,6 +155,15 @@ router.get('/projects/:id/table/:name', resolveProject, async (req, res) => {
       filters,
     });
     res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/fix-ownership', resolveProject, async (req, res) => {
+  try {
+    await syncService.fixOwnership(req.banaProject);
+    res.json({ success: true, message: 'Table ownership reassigned to project user' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

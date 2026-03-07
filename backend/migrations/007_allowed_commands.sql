@@ -20,8 +20,15 @@ INSERT INTO allowed_commands (command, description, category, risk_level) VALUES
     ('vpc restart nginx',  'Restart nginx web server',        'system',   'medium'),
     ('vpc db status',      'Show PostgreSQL connection info',  'database', 'low'),
     ('vpc db size',        'Show database size',              'database', 'low'),
+    ('vpc db query <sql>', 'Run SQL on the main VPC database', 'database', 'high'),
     ('vpc backup now',     'Run an immediate database backup', 'database', 'medium'),
-    ('vpc network ports',  'List open ports',                 'network',  'low')
+    ('vpc network ports',  'List open ports',                 'network',  'low'),
+    ('vpc bana list',                    'List all BanaDB projects',              'banadb', 'low'),
+    ('vpc bana <slug> info',             'Show project info and DB size',         'banadb', 'low'),
+    ('vpc bana <slug> tables',           'List tables with sizes and owners',     'banadb', 'low'),
+    ('vpc bana <slug> size',             'Show table sizes in project',           'banadb', 'low'),
+    ('vpc bana <slug> sql <query>',      'Run SQL on a BanaDB project database', 'banadb', 'high'),
+    ('vpc bana <slug> fix-ownership',    'Fix table ownership for project',       'banadb', 'medium')
 ON CONFLICT (command) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_commands_active ON allowed_commands(is_active) WHERE is_active = true;

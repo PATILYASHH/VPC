@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pushCommand = pushCommand;
+exports.pushAllCommand = pushAllCommand;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -100,6 +101,49 @@ async function pushCommand(client, onComplete, filePath) {
         catch (err) {
             vscode.window.showErrorMessage(`Push failed: ${err.message}`);
         }
+    });
+}
+/**
+ * Push all staged migrations as PRs. Uses the SCM input box text as PR title.
+ */
+async function pushAllCommand(client, scmProvider, onComplete) {
+    const config = vscode.workspace.getConfiguration('vpcSync');
+    const url = config.get('serverUrl');
+    const key = config.get('apiKey');
+    if (!url || !key) {
+        vscode.window.showErrorMessage('VPC Sync not configured.');
+        return;
+    }
+    const staged = scmProvider.getStagedFiles();
+    if (staged.length === 0) {
+        vscode.window.showWarningMessage('No migrations staged for push. Stage files first using the + button.');
+        return;
+    }
+    const title = scmProvider.getInputBoxValue().trim();
+    if (!title) {
+        vscode.window.showWarningMessage('Enter a PR title in the input box above the file list.');
+        return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'VPC Sync', cancellable: false }, async (progress) => {
+        let pushed = 0;
+        for (const file of staged) {
+            const prTitle = staged.length === 1 ? title : `${title} — ${file.name}`;
+            progress.report({ message: `Pushing ${file.name} (${++pushed}/${staged.length})...` });
+            try {
+                const result = await client.push(url, key, file.sql, prTitle);
+                if (result.pull_request) {
+                    vscode.window.showInformationMessage(`PR #${result.pull_request.pr_number} created: "${result.pull_request.title}"`);
+                }
+            }
+            catch (err) {
+                vscode.window.showErrorMessage(`Push failed for ${file.name}: ${err.message}`);
+                return;
+            }
+        }
+        scmProvider.clearInputBox();
+        scmProvider.clearStaged();
+        vscode.window.showInformationMessage(`Pushed ${staged.length} migration(s) as PR(s).`);
+        onComplete?.();
     });
 }
 //# sourceMappingURL=push.js.map

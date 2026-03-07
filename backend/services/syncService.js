@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const pullService = require('./pullService');
 const banadbService = require('./banadbService');
+const { quoteIdentifier } = require('../utils/sanitize');
 
 /**
  * List migrations for a project with pagination/filtering.
@@ -126,7 +127,15 @@ async function pushMigration(pool, project, migrationId) {
       END $$;
     `);
 
+    // Execute migration as the project user so created objects are owned correctly
+    if (project.db_user) {
+      await execPool.query(`SET ROLE ${quoteIdentifier(project.db_user)}`);
+    }
+
     await execPool.query(migration.sql_up);
+
+    // Reset role back to admin
+    await execPool.query('RESET ROLE');
 
     // Re-enable DDL triggers
     await execPool.query(`
@@ -137,6 +146,12 @@ async function pushMigration(pool, project, migrationId) {
         NULL;
       END $$;
     `);
+
+    // Reassign any remaining objects to the project user
+    if (project.db_user) {
+      const dbUser = quoteIdentifier(project.db_user);
+      await execPool.query(`REASSIGN OWNED BY CURRENT_USER TO ${dbUser}`);
+    }
 
     await pool.query(
       `UPDATE vpc_migrations SET status = 'applied', applied_at = NOW() WHERE id = $1`,
@@ -149,7 +164,8 @@ async function pushMigration(pool, project, migrationId) {
 
     return { ...migration, status: 'applied' };
   } catch (err) {
-    // Re-enable DDL triggers even on failure
+    // Reset role and re-enable DDL triggers even on failure
+    await execPool.query('RESET ROLE').catch(() => {});
     await execPool.query(`
       DO $$ BEGIN
         ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
@@ -200,7 +216,14 @@ async function rollbackMigration(pool, project, migrationId) {
       END $$;
     `);
 
+    // Execute rollback as the project user
+    if (project.db_user) {
+      await execPool.query(`SET ROLE ${quoteIdentifier(project.db_user)}`);
+    }
+
     await execPool.query(migration.sql_down);
+
+    await execPool.query('RESET ROLE');
 
     // Re-enable DDL triggers
     await execPool.query(`
@@ -218,7 +241,8 @@ async function rollbackMigration(pool, project, migrationId) {
     );
     return { ...migration, status: 'rolled_back' };
   } catch (err) {
-    // Re-enable DDL triggers even on failure
+    // Reset role and re-enable DDL triggers even on failure
+    await execPool.query('RESET ROLE').catch(() => {});
     await execPool.query(`
       DO $$ BEGIN
         ALTER EVENT TRIGGER _vpc_ddl_trigger ENABLE;
@@ -460,6 +484,25 @@ async function reinstallTracking(project) {
   return pullService.installPullTracking(null, project);
 }
 
+/**
+ * Fix ownership of all public-schema objects in a project database.
+ * Reassigns tables/sequences/functions owned by the admin user to the project user.
+ */
+async function fixOwnership(project) {
+  if (!project.db_user) throw new Error('Project has no db_user');
+
+  const adminPool = getAdminPool(project);
+  try {
+    const dbUser = quoteIdentifier(project.db_user);
+    const adminUser = quoteIdentifier(process.env.DB_USER);
+
+    // Reassign all objects owned by the admin user to the project user
+    await adminPool.query(`REASSIGN OWNED BY ${adminUser} TO ${dbUser}`);
+  } finally {
+    await adminPool.end();
+  }
+}
+
 module.exports = {
   getMigrations,
   getMigration,
@@ -474,4 +517,5 @@ module.exports = {
   getNextVersion,
   testMigrationInSandbox,
   getAdminPool,
+  fixOwnership,
 };
