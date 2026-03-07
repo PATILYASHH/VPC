@@ -3,9 +3,9 @@ import { SyncApiClient } from './api/client';
 import { ChangesProvider } from './views/changesProvider';
 import { MigrationsProvider } from './views/migrationsProvider';
 import { HistoryProvider } from './views/historyProvider';
+import { ConfigViewProvider } from './views/configViewProvider';
 import { pullCommand } from './commands/pull';
 import { pushCommand } from './commands/push';
-import { configureCommand } from './commands/configure';
 
 let statusBar: vscode.StatusBarItem;
 
@@ -16,6 +16,20 @@ export function activate(context: vscode.ExtensionContext) {
   const changesProvider = new ChangesProvider(client);
   const migrationsProvider = new MigrationsProvider();
   const historyProvider = new HistoryProvider(client);
+
+  function refreshAll() {
+    changesProvider.refresh();
+    migrationsProvider.refresh();
+    historyProvider.refresh();
+    configViewProvider.refresh();
+    refreshStatusBar(client);
+  }
+
+  // Config webview provider (sidebar UI for entering URL + API key)
+  const configViewProvider = new ConfigViewProvider(client, () => refreshAll());
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ConfigViewProvider.viewType, configViewProvider),
+  );
 
   // Register tree views
   context.subscriptions.push(
@@ -32,7 +46,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('vpcSync.configure', () => configureCommand()),
+    vscode.commands.registerCommand('vpcSync.configure', () => {
+      // Focus the config webview in the sidebar
+      vscode.commands.executeCommand('vpcSync.config.focus');
+    }),
     vscode.commands.registerCommand('vpcSync.pull', () => pullCommand(client, () => refreshAll())),
     vscode.commands.registerCommand('vpcSync.pullAll', () => pullCommand(client, () => refreshAll())),
     vscode.commands.registerCommand('vpcSync.push', () => pushCommand(client, () => refreshAll())),
@@ -42,13 +59,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('vpcSync.selectFolder', () => selectOutputFolder()),
     vscode.commands.registerCommand('vpcSync.showSQL', (sql: string) => showSQL(sql)),
   );
-
-  function refreshAll() {
-    changesProvider.refresh();
-    migrationsProvider.refresh();
-    historyProvider.refresh();
-    refreshStatusBar(client);
-  }
 
   // Auto-refresh
   const intervalSec = vscode.workspace.getConfiguration('vpcSync').get<number>('autoRefreshInterval') || 30;

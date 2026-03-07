@@ -28,6 +28,11 @@
     "views": {
       "vpcSync": [
         {
+          "id": "vpcSync.config",
+          "name": "Connection",
+          "type": "webview"
+        },
+        {
           "id": "vpcSync.changes",
           "name": "Pending Changes"
         },
@@ -41,6 +46,23 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "vpcSync.changes",
+        "contents": "Not connected.\n[Configure Connection](command:vpcSync.configure)",
+        "when": "!config.vpcSync.serverUrl"
+      },
+      {
+        "view": "vpcSync.migrations",
+        "contents": "Not connected.\n[Configure Connection](command:vpcSync.configure)",
+        "when": "!config.vpcSync.serverUrl"
+      },
+      {
+        "view": "vpcSync.history",
+        "contents": "Not connected.\n[Configure Connection](command:vpcSync.configure)",
+        "when": "!config.vpcSync.serverUrl"
+      }
+    ],
     "commands": [
       {
         "command": "vpcSync.configure",

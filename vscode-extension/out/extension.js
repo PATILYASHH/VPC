@@ -40,9 +40,9 @@ const client_1 = require("./api/client");
 const changesProvider_1 = require("./views/changesProvider");
 const migrationsProvider_1 = require("./views/migrationsProvider");
 const historyProvider_1 = require("./views/historyProvider");
+const configViewProvider_1 = require("./views/configViewProvider");
 const pull_1 = require("./commands/pull");
 const push_1 = require("./commands/push");
-const configure_1 = require("./commands/configure");
 let statusBar;
 function activate(context) {
     const client = new client_1.SyncApiClient();
@@ -50,6 +50,16 @@ function activate(context) {
     const changesProvider = new changesProvider_1.ChangesProvider(client);
     const migrationsProvider = new migrationsProvider_1.MigrationsProvider();
     const historyProvider = new historyProvider_1.HistoryProvider(client);
+    function refreshAll() {
+        changesProvider.refresh();
+        migrationsProvider.refresh();
+        historyProvider.refresh();
+        configViewProvider.refresh();
+        refreshStatusBar(client);
+    }
+    // Config webview provider (sidebar UI for entering URL + API key)
+    const configViewProvider = new configViewProvider_1.ConfigViewProvider(client, () => refreshAll());
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(configViewProvider_1.ConfigViewProvider.viewType, configViewProvider));
     // Register tree views
     context.subscriptions.push(vscode.window.registerTreeDataProvider('vpcSync.changes', changesProvider), vscode.window.registerTreeDataProvider('vpcSync.migrations', migrationsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider));
     // Status bar
@@ -58,13 +68,10 @@ function activate(context) {
     statusBar.tooltip = 'VPC Sync: Click to pull schema changes';
     context.subscriptions.push(statusBar);
     // Commands
-    context.subscriptions.push(vscode.commands.registerCommand('vpcSync.configure', () => (0, configure_1.configureCommand)()), vscode.commands.registerCommand('vpcSync.pull', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pullAll', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.push', () => (0, push_1.pushCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pushFile', (item) => (0, push_1.pushCommand)(client, () => refreshAll(), item?.filePath)), vscode.commands.registerCommand('vpcSync.status', () => showStatus(client)), vscode.commands.registerCommand('vpcSync.refresh', () => refreshAll()), vscode.commands.registerCommand('vpcSync.selectFolder', () => selectOutputFolder()), vscode.commands.registerCommand('vpcSync.showSQL', (sql) => showSQL(sql)));
-    function refreshAll() {
-        changesProvider.refresh();
-        migrationsProvider.refresh();
-        historyProvider.refresh();
-        refreshStatusBar(client);
-    }
+    context.subscriptions.push(vscode.commands.registerCommand('vpcSync.configure', () => {
+        // Focus the config webview in the sidebar
+        vscode.commands.executeCommand('vpcSync.config.focus');
+    }), vscode.commands.registerCommand('vpcSync.pull', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pullAll', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.push', () => (0, push_1.pushCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pushFile', (item) => (0, push_1.pushCommand)(client, () => refreshAll(), item?.filePath)), vscode.commands.registerCommand('vpcSync.status', () => showStatus(client)), vscode.commands.registerCommand('vpcSync.refresh', () => refreshAll()), vscode.commands.registerCommand('vpcSync.selectFolder', () => selectOutputFolder()), vscode.commands.registerCommand('vpcSync.showSQL', (sql) => showSQL(sql)));
     // Auto-refresh
     const intervalSec = vscode.workspace.getConfiguration('vpcSync').get('autoRefreshInterval') || 30;
     if (intervalSec > 0) {
