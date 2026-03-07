@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export default function BanaApiKeys({ project }) {
   const [showAnon, setShowAnon] = useState(false);
@@ -31,10 +32,7 @@ export default function BanaApiKeys({ project }) {
 
   const apiUrl = `${window.location.origin}/api/bana/v1/${project.slug}`;
 
-  const copyText = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
-  };
+  const copyText = copyToClipboard;
 
   const handleRegenerate = async (role) => {
     const label = role === 'service' ? 'service_role' : 'anon';

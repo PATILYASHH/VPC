@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export default function BanaSettings({ project }) {
   const [storageLimitMb, setStorageLimitMb] = useState(project.storage_limit_mb);
@@ -58,10 +59,7 @@ export default function BanaSettings({ project }) {
     }
   };
 
-  const copyText = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
-  };
+  const copyText = copyToClipboard;
 
   if (isLoading) return <LoadingSpinner />;
 

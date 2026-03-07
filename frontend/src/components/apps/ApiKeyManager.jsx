@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import { format } from 'date-fns';
 
 export default function ApiKeyManager() {
@@ -53,10 +54,7 @@ export default function ApiKeyManager() {
     }
   };
 
-  const copyKey = (key) => {
-    navigator.clipboard.writeText(key);
-    toast.success('Copied to clipboard');
-  };
+  const copyKey = copyToClipboard;
 
   if (isLoading) return <LoadingSpinner />;
 

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export default function BanaPullKeys({ project }) {
   const [showPullKey, setShowPullKey] = useState(false);
@@ -36,10 +37,7 @@ export default function BanaPullKeys({ project }) {
   const trackingEnabled = pullStatus?.enabled || false;
   const totalChanges = pullStatus?.total_changes || 0;
 
-  const copyText = (text) => {
-    navigator.clipboard.writeText(text);
-    toast.success('Copied to clipboard');
-  };
+  const copyText = copyToClipboard;
 
   const maskKey = (key) => {
     if (!key) return '••••••••••••••••••••••••••••••••••••••••';
