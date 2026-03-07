@@ -57,6 +57,24 @@ export interface MigrationsListResult {
   limit: number;
 }
 
+export interface SchemaColumn {
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
+}
+
+export interface SchemaTable {
+  name: string;
+  columns: SchemaColumn[];
+  constraints: any[];
+  indexes: any[];
+}
+
+export interface SchemaSnapshot {
+  tables: SchemaTable[];
+}
+
 function request(url: string, options: { method?: string; headers?: Record<string, string>; body?: string }): Promise<any> {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
@@ -143,8 +161,14 @@ export class SyncApiClient {
     });
   }
 
-  async getMigrations(url: string, key: string, page = 1): Promise<MigrationsListResult> {
-    return request(`${url}/sync/migrations?page=${page}&limit=50`, {
+  async getMigrations(url: string, key: string, page = 1, limit = 50): Promise<MigrationsListResult> {
+    return request(`${url}/sync/migrations?page=${page}&limit=${limit}`, {
+      headers: { apikey: key },
+    });
+  }
+
+  async getSchema(url: string, key: string): Promise<SchemaSnapshot> {
+    return request(`${url}/sync/schema`, {
       headers: { apikey: key },
     });
   }

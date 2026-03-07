@@ -191,8 +191,17 @@ async function getTableData(pool, { schema, table, page, pageSize, offset, sortB
 async function executeQuery(pool, sql, params = [], confirm = false) {
   const trimmed = sql.trim();
 
+  // Strip SQL comments before detecting write operations
+  const stripped = trimmed
+    .replace(/--[^\n]*/g, '')       // single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
+    .trim();
+
   // Detect if it's a write operation
-  const isWrite = /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY)\b/i.test(trimmed);
+  const isWrite =
+    /^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|COPY|DO)\b/i.test(stripped) ||
+    /\bSELECT\b[\s\S]+\bINTO\s+(?!STRICT\b)(?!TEMPORARY\b\s+STRICT\b)\w/i.test(stripped) ||
+    /^\s*WITH\b[\s\S]+\b(INSERT|UPDATE|DELETE)\b/i.test(stripped);
 
   if (isWrite && !confirm) {
     return { requiresConfirmation: true, queryType: 'write' };
@@ -225,6 +234,10 @@ async function executeQuery(pool, sql, params = [], confirm = false) {
   } catch (err) {
     if (!isWrite) {
       try { await client.query('ROLLBACK'); } catch {}
+    }
+    // If query failed due to read-only restriction, prompt for write confirmation
+    if (!confirm && err.message && err.message.includes('read-only transaction')) {
+      return { requiresConfirmation: true, queryType: 'write' };
     }
     throw err;
   } finally {

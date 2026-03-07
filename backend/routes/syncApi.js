@@ -155,6 +155,16 @@ router.post('/:slug/sync/ack', requirePullKey, async (req, res) => {
   }
 });
 
+// GET /:slug/sync/schema — current database schema (tables, columns, indexes)
+router.get('/:slug/sync/schema', requirePullKey, async (req, res) => {
+  try {
+    const snapshot = await syncService.getSchemaSnapshot(req.banaPool);
+    res.json(snapshot);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /:slug/sync/migrations — list migration history
 router.get('/:slug/sync/migrations', requirePullKey, async (req, res) => {
   try {

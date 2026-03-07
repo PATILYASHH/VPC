@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 const client_1 = require("./api/client");
 const changesProvider_1 = require("./views/changesProvider");
 const migrationsProvider_1 = require("./views/migrationsProvider");
@@ -49,7 +51,7 @@ function activate(context) {
     const client = new client_1.SyncApiClient();
     // Tree view providers
     const changesProvider = new changesProvider_1.ChangesProvider(client);
-    const migrationsProvider = new migrationsProvider_1.MigrationsProvider();
+    const migrationsProvider = new migrationsProvider_1.MigrationsProvider(client);
     const historyProvider = new historyProvider_1.HistoryProvider(client);
     const pullRequestsProvider = new pullRequestsProvider_1.PullRequestsProvider(client);
     function refreshAll() {
@@ -67,9 +69,55 @@ function activate(context) {
     context.subscriptions.push(vscode.window.registerTreeDataProvider('vpcSync.changes', changesProvider), vscode.window.registerTreeDataProvider('vpcSync.migrations', migrationsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider), vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider));
     // File system watcher for local migration files
     const migrationWatcher = vscode.workspace.createFileSystemWatcher('**/migrations/*.sql');
-    migrationWatcher.onDidCreate(() => migrationsProvider.refresh());
-    migrationWatcher.onDidDelete(() => migrationsProvider.refresh());
     migrationWatcher.onDidChange(() => migrationsProvider.refresh());
+    migrationWatcher.onDidDelete(() => migrationsProvider.refresh());
+    // Auto-detect new .sql files and prompt to push
+    migrationWatcher.onDidCreate(async (uri) => {
+        const config = vscode.workspace.getConfiguration('vpcSync');
+        const url = config.get('serverUrl');
+        const key = config.get('apiKey');
+        if (!url || !key) {
+            migrationsProvider.refresh();
+            return;
+        }
+        // Wait briefly for the file write to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        migrationsProvider.refresh();
+        const fileName = path.basename(uri.fsPath);
+        // Check if this file's content already matches a remote migration or PR
+        // (i.e., it was pulled from the server, not created locally)
+        try {
+            const sql = fs.readFileSync(uri.fsPath, 'utf-8');
+            const crypto = await Promise.resolve().then(() => __importStar(require('crypto')));
+            const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+            const [migrationsResult, prResult] = await Promise.all([
+                client.getMigrations(url, key, 1, 500),
+                client.getPullRequests(url, key),
+            ]);
+            // Check if content matches any existing migration
+            for (const m of migrationsResult.migrations || []) {
+                const mHash = crypto.createHash('sha256').update(m.sql_up).digest('hex');
+                if (mHash === checksum) {
+                    return;
+                } // pulled file, no prompt
+            }
+            // Check if content matches any existing PR
+            for (const pr of prResult.pull_requests || []) {
+                const prHash = crypto.createHash('sha256').update(pr.sql_content).digest('hex');
+                if (prHash === checksum) {
+                    return;
+                } // already pushed
+            }
+        }
+        catch {
+            // Comparison failed, still show prompt
+        }
+        // This is a genuinely new file — prompt user
+        const action = await vscode.window.showInformationMessage(`New migration detected: "${fileName}". Push to VPSHub as a Pull Request?`, 'Push Now', 'Ignore');
+        if (action === 'Push Now') {
+            (0, push_1.pushCommand)(client, () => refreshAll(), uri.fsPath);
+        }
+    });
     context.subscriptions.push(migrationWatcher);
     // Status bar
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -80,7 +128,7 @@ function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('vpcSync.configure', () => {
         // Focus the config webview in the sidebar
         vscode.commands.executeCommand('vpcSync.config.focus');
-    }), vscode.commands.registerCommand('vpcSync.pull', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pullAll', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.push', () => (0, push_1.pushCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pushFile', (item) => (0, push_1.pushCommand)(client, () => refreshAll(), item?.filePath)), vscode.commands.registerCommand('vpcSync.status', () => showStatus(client)), vscode.commands.registerCommand('vpcSync.refresh', () => refreshAll()), vscode.commands.registerCommand('vpcSync.selectFolder', () => selectOutputFolder()), vscode.commands.registerCommand('vpcSync.showSQL', (sql) => showSQL(sql)));
+    }), vscode.commands.registerCommand('vpcSync.pull', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pullAll', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.push', () => (0, push_1.pushCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.pushFile', (item) => (0, push_1.pushCommand)(client, () => refreshAll(), item?.filePath)), vscode.commands.registerCommand('vpcSync.status', () => showStatus(client)), vscode.commands.registerCommand('vpcSync.refresh', () => refreshAll()), vscode.commands.registerCommand('vpcSync.selectFolder', () => selectOutputFolder()), vscode.commands.registerCommand('vpcSync.showSQL', (sql) => showSQL(sql)), vscode.commands.registerCommand('vpcSync.detectChanges', () => detectChanges(client, migrationsProvider, () => refreshAll())));
     // Auto-refresh
     const intervalSec = vscode.workspace.getConfiguration('vpcSync').get('autoRefreshInterval') || 30;
     if (intervalSec > 0) {
@@ -150,6 +198,141 @@ async function selectOutputFolder() {
 async function showSQL(sql) {
     const doc = await vscode.workspace.openTextDocument({ content: sql, language: 'sql' });
     await vscode.window.showTextDocument(doc, { preview: true });
+}
+/**
+ * Detect schema changes by comparing local SQL files with the remote database.
+ * Shows which tables exist in local migrations but not in DB (and vice versa).
+ */
+async function detectChanges(client, migrationsProvider, onComplete) {
+    const config = vscode.workspace.getConfiguration('vpcSync');
+    const url = config.get('serverUrl');
+    const key = config.get('apiKey');
+    if (!url || !key) {
+        vscode.window.showWarningMessage('VPC Sync not configured.');
+        return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'VPC Sync', cancellable: false }, async (progress) => {
+        progress.report({ message: 'Comparing local files with database schema...' });
+        try {
+            // Fetch remote schema and migrations
+            const [schema, migrationsResult] = await Promise.all([
+                client.getSchema(url, key),
+                client.getMigrations(url, key, 1, 500),
+            ]);
+            const dbTableNames = new Set(schema.tables.map(t => t.name));
+            const appliedMigrations = (migrationsResult.migrations || []).filter(m => m.status === 'applied');
+            // Parse local SQL files for CREATE TABLE statements
+            const outFolder = config.get('outputFolder') || './migrations';
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (!workspaceRoot) {
+                return;
+            }
+            const dir = path.resolve(workspaceRoot, outFolder);
+            if (!fs.existsSync(dir)) {
+                vscode.window.showInformationMessage('No local migrations folder found.');
+                return;
+            }
+            const sqlFiles = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
+            const localTableCreates = new Map(); // table → file
+            const localTableDrops = new Set();
+            const localAlters = new Map(); // table → [file, ...]
+            for (const file of sqlFiles) {
+                const sql = fs.readFileSync(path.join(dir, file), 'utf-8');
+                const upper = sql.toUpperCase().replace(/\s+/g, ' ');
+                // Find CREATE TABLE statements
+                const createMatches = upper.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?(\S+)/g);
+                for (const match of createMatches) {
+                    const tableName = match[1].toLowerCase().replace(/^public\./, '').replace(/"/g, '');
+                    if (!tableName.startsWith('_vpc_')) {
+                        localTableCreates.set(tableName, file);
+                    }
+                }
+                // Find DROP TABLE statements
+                const dropMatches = upper.matchAll(/DROP TABLE (?:IF EXISTS )?(\S+)/g);
+                for (const match of dropMatches) {
+                    localTableDrops.add(match[1].toLowerCase().replace(/^public\./, '').replace(/"/g, ''));
+                }
+                // Find ALTER TABLE statements
+                const alterMatches = upper.matchAll(/ALTER TABLE (\S+)/g);
+                for (const match of alterMatches) {
+                    const tableName = match[1].toLowerCase().replace(/^public\./, '').replace(/"/g, '');
+                    if (!localAlters.has(tableName)) {
+                        localAlters.set(tableName, []);
+                    }
+                    localAlters.get(tableName).push(file);
+                }
+            }
+            // Build diff report
+            const lines = [
+                '-- VPC Sync: Schema Comparison Report',
+                `-- Generated: ${new Date().toISOString()}`,
+                `-- Database tables: ${dbTableNames.size}`,
+                `-- Local CREATE TABLE statements: ${localTableCreates.size}`,
+                '',
+            ];
+            // Tables in local SQL but not in DB (need to be pushed/applied)
+            const missingInDb = [];
+            for (const [table, file] of localTableCreates) {
+                if (!dbTableNames.has(table) && !localTableDrops.has(table)) {
+                    missingInDb.push(`--   ${table}  (from ${file})`);
+                }
+            }
+            if (missingInDb.length > 0) {
+                lines.push(`-- TABLES IN LOCAL SQL BUT NOT IN DATABASE (${missingInDb.length}):`);
+                lines.push('-- These need to be pushed and merged in VPSHub.');
+                lines.push(...missingInDb);
+                lines.push('');
+            }
+            // Tables in DB but not in any local SQL (created directly on DB)
+            const missingInLocal = [];
+            for (const table of dbTableNames) {
+                if (!localTableCreates.has(table) && !table.startsWith('_vpc_')) {
+                    missingInLocal.push(`--   ${table}`);
+                }
+            }
+            if (missingInLocal.length > 0) {
+                lines.push(`-- TABLES IN DATABASE BUT NOT IN LOCAL SQL (${missingInLocal.length}):`);
+                lines.push('-- These exist in the DB but have no local migration file.');
+                lines.push('-- Use "Pull Schema Changes" to sync them locally.');
+                lines.push(...missingInLocal);
+                lines.push('');
+            }
+            // Unpushed local files
+            const newFiles = migrationsProvider.getNewFiles();
+            if (newFiles.length > 0) {
+                lines.push(`-- UNPUSHED LOCAL FILES (${newFiles.length}):`);
+                for (const f of newFiles) {
+                    lines.push(`--   ${f.name}`);
+                }
+                lines.push('');
+            }
+            // Applied migration count
+            lines.push(`-- APPLIED MIGRATIONS: ${appliedMigrations.length}`);
+            if (missingInDb.length === 0 && missingInLocal.length === 0 && newFiles.length === 0) {
+                lines.push('');
+                lines.push('-- Everything is in sync! No differences detected.');
+            }
+            // Show the report
+            const doc = await vscode.workspace.openTextDocument({
+                content: lines.join('\n'),
+                language: 'sql',
+            });
+            await vscode.window.showTextDocument(doc, { preview: true });
+            if (missingInDb.length > 0) {
+                vscode.window.showWarningMessage(`${missingInDb.length} table(s) found in local SQL but not in database. Push your migrations to sync.`);
+            }
+            else if (missingInLocal.length > 0) {
+                vscode.window.showInformationMessage(`${missingInLocal.length} table(s) in DB have no local migration. Pull to sync.`);
+            }
+            else {
+                vscode.window.showInformationMessage('Schema is in sync!');
+            }
+            onComplete();
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Detect failed: ${err.message}`);
+        }
+    });
 }
 function deactivate() { }
 //# sourceMappingURL=extension.js.map

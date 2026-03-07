@@ -110,8 +110,13 @@ class SyncApiClient {
             body: JSON.stringify({ change_id: changeId }),
         });
     }
-    async getMigrations(url, key, page = 1) {
-        return request(`${url}/sync/migrations?page=${page}&limit=50`, {
+    async getMigrations(url, key, page = 1, limit = 50) {
+        return request(`${url}/sync/migrations?page=${page}&limit=${limit}`, {
+            headers: { apikey: key },
+        });
+    }
+    async getSchema(url, key) {
+        return request(`${url}/sync/schema`, {
             headers: { apikey: key },
         });
     }
