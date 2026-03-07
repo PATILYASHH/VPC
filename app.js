@@ -24,6 +24,12 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// Auto-apply pending migrations on startup
+const pool = app.locals.pool;
+pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"all": true}'`)
+  .then(() => pool.query(`UPDATE vpc_admins SET permissions = '{"all": true}' WHERE permissions IS NULL`))
+  .catch(() => {});
+
 app.listen(PORT, () => {
   console.log(`[VPC] Server running on port ${PORT}`);
   console.log(`[VPC] Environment: ${process.env.NODE_ENV || 'development'}`);
