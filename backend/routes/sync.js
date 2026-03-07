@@ -5,6 +5,7 @@ const fs = require('fs');
 const syncService = require('../services/syncService');
 const pullService = require('../services/pullService');
 const banadbService = require('../services/banadbService');
+const prService = require('../services/prService');
 
 /**
  * Resolve project by ID and attach to req.
@@ -20,7 +21,140 @@ async function resolveProject(req, res, next) {
   }
 }
 
-// GET /projects/:id/migrations — list migrations
+// ─── Summary (landing page) ────────────────────────────────
+
+router.get('/summary', async (req, res) => {
+  try {
+    const { rows } = await req.app.locals.pool.query(`
+      SELECT project_id,
+        COUNT(*) FILTER (WHERE status = 'open') AS open_prs,
+        COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+        COUNT(*) FILTER (WHERE status = 'conflict') AS conflict_prs
+      FROM vpc_pull_requests GROUP BY project_id
+    `);
+    res.json({ summaries: rows });
+  } catch (err) {
+    // Table may not exist yet
+    res.json({ summaries: [] });
+  }
+});
+
+// ─── Pull Requests ─────────────────────────────────────────
+
+router.get('/projects/:id/pull-requests', resolveProject, async (req, res) => {
+  try {
+    const { status, page, limit } = req.query;
+    const result = await prService.getPullRequests(req.app.locals.pool, req.project.id, {
+      status,
+      page: parseInt(page) || 1,
+      limit: Math.min(parseInt(limit) || 50, 200),
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/projects/:id/pull-requests/:num', resolveProject, async (req, res) => {
+  try {
+    const pr = await prService.getPullRequestByNumber(req.app.locals.pool, req.project.id, req.params.num);
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+    res.json(pr);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull-requests', resolveProject, async (req, res) => {
+  try {
+    const { title, description, sql_content } = req.body;
+    if (!title || !sql_content) return res.status(400).json({ error: 'title and sql_content are required' });
+
+    const pr = await prService.createPullRequest(req.app.locals.pool, {
+      projectId: req.project.id,
+      title,
+      description,
+      sqlContent: sql_content,
+      submittedBy: req.admin?.username || 'vpshub',
+    });
+    res.status(201).json(pr);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull-requests/:num/test', resolveProject, async (req, res) => {
+  try {
+    const pr = await prService.getPullRequestByNumber(req.app.locals.pool, req.project.id, req.params.num);
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+
+    const result = await prService.testPullRequest(req.app.locals.pool, req.project, pr.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull-requests/:num/merge', resolveProject, async (req, res) => {
+  try {
+    const pr = await prService.getPullRequestByNumber(req.app.locals.pool, req.project.id, req.params.num);
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+
+    const result = await prService.mergePullRequest(
+      req.app.locals.pool, req.project, pr.id, req.admin?.username || 'vpshub'
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull-requests/:num/close', resolveProject, async (req, res) => {
+  try {
+    const pr = await prService.getPullRequestByNumber(req.app.locals.pool, req.project.id, req.params.num);
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+
+    const result = await prService.closePullRequest(req.app.locals.pool, pr.id, req.admin?.username || 'vpshub');
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/projects/:id/pull-requests/:num/reopen', resolveProject, async (req, res) => {
+  try {
+    const pr = await prService.getPullRequestByNumber(req.app.locals.pool, req.project.id, req.params.num);
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+
+    const result = await prService.reopenPullRequest(req.app.locals.pool, pr.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Tracking Management ───────────────────────────────────
+
+router.post('/projects/:id/tracking/reinstall', resolveProject, async (req, res) => {
+  try {
+    await pullService.installPullTracking(req.app.locals.pool, req.project);
+    res.json({ success: true, message: 'DDL tracking reinstalled with SECURITY DEFINER' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/projects/:id/tracking/status', resolveProject, async (req, res) => {
+  try {
+    const status = await pullService.getPullTrackingStatus(req.app.locals.pool, req.project);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Migrations ────────────────────────────────────────────
+
 router.get('/projects/:id/migrations', resolveProject, async (req, res) => {
   try {
     const { page, limit, status } = req.query;
@@ -35,7 +169,6 @@ router.get('/projects/:id/migrations', resolveProject, async (req, res) => {
   }
 });
 
-// GET /projects/:id/migrations/:mid — single migration
 router.get('/projects/:id/migrations/:mid', resolveProject, async (req, res) => {
   try {
     const migration = await syncService.getMigration(req.app.locals.pool, req.params.mid);
@@ -46,7 +179,15 @@ router.get('/projects/:id/migrations/:mid', resolveProject, async (req, res) => 
   }
 });
 
-// GET /projects/:id/changes — pending schema changes
+router.post('/projects/:id/migrations/:mid/rollback', resolveProject, async (req, res) => {
+  try {
+    const result = await syncService.rollbackMigration(req.app.locals.pool, req.project, req.params.mid);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/projects/:id/changes', resolveProject, async (req, res) => {
   try {
     if (!req.project.pull_tracking_enabled) {
@@ -61,60 +202,6 @@ router.get('/projects/:id/changes', resolveProject, async (req, res) => {
   }
 });
 
-// POST /projects/:id/migrations — create migration from pending changes
-router.post('/projects/:id/migrations', resolveProject, async (req, res) => {
-  try {
-    const { sinceId, sql, name } = req.body;
-
-    let migration;
-    if (sql) {
-      // Manual SQL provided
-      migration = await syncService.createMigration(req.app.locals.pool, {
-        projectId: req.project.id,
-        sqlUp: sql,
-        name: name || undefined,
-        source: 'manual',
-        appliedBy: req.admin?.username || 'vpshub',
-      });
-    } else {
-      // Create from pending changes
-      const result = await syncService.createMigrationFromChanges(
-        req.app.locals.pool, req.project, {
-          sinceId: parseInt(sinceId) || 0,
-          appliedBy: req.admin?.username || 'vpshub',
-        }
-      );
-      if (!result) return res.json({ message: 'No pending changes' });
-      migration = result.migration;
-    }
-
-    res.status(201).json(migration);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /projects/:id/migrations/:mid/push — apply migration
-router.post('/projects/:id/migrations/:mid/push', resolveProject, async (req, res) => {
-  try {
-    const result = await syncService.pushMigration(req.app.locals.pool, req.project, req.params.mid);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /projects/:id/migrations/:mid/rollback — rollback migration
-router.post('/projects/:id/migrations/:mid/rollback', resolveProject, async (req, res) => {
-  try {
-    const result = await syncService.rollbackMigration(req.app.locals.pool, req.project, req.params.mid);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /projects/:id/schema — current schema snapshot
 router.get('/projects/:id/schema', resolveProject, async (req, res) => {
   try {
     const projectPool = banadbService.getProjectPool(req.project);
@@ -125,7 +212,8 @@ router.get('/projects/:id/schema', resolveProject, async (req, res) => {
   }
 });
 
-// GET /extension/download — download VS Code extension .vsix
+// ─── Extension Download ────────────────────────────────────
+
 router.get('/extension/download', (req, res) => {
   const vsixPath = path.join(__dirname, '..', '..', 'downloads', 'vpc-sync.vsix');
   if (!fs.existsSync(vsixPath)) {

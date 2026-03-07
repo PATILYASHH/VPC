@@ -3,6 +3,7 @@ const router = express.Router();
 const { banaApiAuth } = require('../middleware/banaApiAuth');
 const pullService = require('../services/pullService');
 const syncService = require('../services/syncService');
+const prService = require('../services/prService');
 
 // All routes require API key auth (pull key)
 router.use(banaApiAuth);
@@ -93,26 +94,40 @@ router.post('/:slug/sync/pull', requirePullKey, async (req, res) => {
   }
 });
 
-// POST /:slug/sync/push — push: receive SQL, apply to DB, record migration
+// POST /:slug/sync/push — creates a Pull Request (reviewed in VPSHub before merge)
 router.post('/:slug/sync/push', requirePullKey, async (req, res) => {
   try {
-    const { sql, name } = req.body;
+    const { sql, name, title, description } = req.body;
     if (!sql) return res.status(400).json({ error: 'sql is required' });
 
-    // Create migration record
-    const migration = await syncService.createMigration(req.app.locals.pool, {
+    const prTitle = title || name || `Migration from VS Code: ${new Date().toISOString().slice(0, 16)}`;
+
+    const pr = await prService.createPullRequest(req.app.locals.pool, {
       projectId: req.banaProject.id,
-      sqlUp: sql,
-      name,
-      source: 'push',
-      appliedBy: 'vpcsync',
+      title: prTitle,
+      description: description || 'Submitted via VPC Sync extension',
+      sqlContent: sql,
+      submittedBy: 'vpcsync',
     });
 
-    // Apply it
-    const result = await syncService.pushMigration(
-      req.app.locals.pool, req.banaProject, migration.id
-    );
+    res.status(201).json({
+      pull_request: pr,
+      message: `Pull request #${pr.pr_number} created. Review and merge in VPSHub.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
+// GET /:slug/sync/pull-requests — list PRs (for extension sidebar)
+router.get('/:slug/sync/pull-requests', requirePullKey, async (req, res) => {
+  try {
+    const { status, page, limit } = req.query;
+    const result = await prService.getPullRequests(req.app.locals.pool, req.banaProject.id, {
+      status,
+      page: parseInt(page) || 1,
+      limit: Math.min(parseInt(limit) || 20, 100),
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

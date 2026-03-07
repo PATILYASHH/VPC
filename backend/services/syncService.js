@@ -100,11 +100,6 @@ async function pushMigration(pool, project, migrationId) {
   if (!migration) throw new Error('Migration not found');
   if (migration.status === 'applied') throw new Error('Migration already applied');
 
-  const adminPool = pullService.getAdminProjectPool
-    ? (() => { throw new Error('need admin pool'); })()
-    : null;
-
-  // Use the project pool with admin credentials for DDL operations
   const { Pool } = require('pg');
   const execPool = new Pool({
     host: process.env.DB_HOST || 'localhost',
@@ -307,6 +302,80 @@ async function getLatestSnapshot(pool, projectId) {
   return rows[0] || null;
 }
 
+/**
+ * Get admin pool for a project DB (superuser credentials).
+ */
+function getAdminPool(project) {
+  const { Pool } = require('pg');
+  return new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: project.db_name,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    max: 2,
+    idleTimeoutMillis: 10000,
+  });
+}
+
+/**
+ * Test migration SQL in a sandbox (transaction that gets rolled back).
+ * Returns { success, error, tables_affected }.
+ */
+async function testMigrationInSandbox(project, sql) {
+  const adminPool = getAdminPool(project);
+  const client = await adminPool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Snapshot tables before
+    const { rows: beforeTables } = await client.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+    );
+    const beforeSet = new Set(beforeTables.map(t => t.table_name));
+
+    // Execute the SQL
+    await client.query(sql);
+
+    // Snapshot tables after
+    const { rows: afterTables } = await client.query(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+    );
+    const afterSet = new Set(afterTables.map(t => t.table_name));
+
+    const added = [...afterSet].filter(t => !beforeSet.has(t));
+    const removed = [...beforeSet].filter(t => !afterSet.has(t));
+
+    // Always rollback — this is a sandbox test
+    await client.query('ROLLBACK');
+
+    return {
+      success: true,
+      tables_added: added,
+      tables_removed: removed,
+      tables_after: afterTables.length,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return {
+      success: false,
+      error: err.message,
+      position: err.position || null,
+    };
+  } finally {
+    client.release();
+    await adminPool.end();
+  }
+}
+
+/**
+ * Re-apply DDL tracking (for when SECURITY DEFINER fix needs deployment).
+ */
+async function reinstallTracking(project) {
+  return pullService.installPullTracking(null, project);
+}
+
 module.exports = {
   getMigrations,
   getMigration,
@@ -319,4 +388,6 @@ module.exports = {
   saveSnapshot,
   getLatestSnapshot,
   getNextVersion,
+  testMigrationInSandbox,
+  getAdminPool,
 };

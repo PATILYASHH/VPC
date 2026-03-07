@@ -67,17 +67,16 @@ async function pushCommand(client, onComplete, filePath) {
             return;
         }
         const selected = await vscode.window.showQuickPick(files, {
-            placeHolder: 'Select a migration file to push',
+            placeHolder: 'Select a migration file to push as Pull Request',
         });
         if (!selected) {
             return;
         }
         filePath = path.join(dir, selected);
     }
-    // Confirm push
     const fileName = path.basename(filePath);
-    const confirm = await vscode.window.showWarningMessage(`Push "${fileName}" to remote database? This will execute the SQL.`, { modal: true }, 'Push');
-    if (confirm !== 'Push') {
+    const confirm = await vscode.window.showWarningMessage(`Create pull request for "${fileName}"? This submits for review in VPSHub, not direct apply.`, { modal: true }, 'Create PR');
+    if (confirm !== 'Create PR') {
         return;
     }
     await vscode.window.withProgress({
@@ -85,12 +84,17 @@ async function pushCommand(client, onComplete, filePath) {
         title: 'VPC Sync',
         cancellable: false,
     }, async (progress) => {
-        progress.report({ message: `Pushing ${fileName}...` });
+        progress.report({ message: `Creating pull request...` });
         try {
             const sql = fs.readFileSync(filePath, 'utf-8');
             const name = path.basename(filePath, '.sql');
             const result = await client.push(url, key, sql, name);
-            vscode.window.showInformationMessage(`Pushed migration v${result.version} — ${result.status}`);
+            if (result.pull_request) {
+                vscode.window.showInformationMessage(`PR #${result.pull_request.pr_number} created: "${result.pull_request.title}". Review and merge in VPSHub.`);
+            }
+            else {
+                vscode.window.showInformationMessage(result.message || 'Push completed');
+            }
             onComplete?.();
         }
         catch (err) {

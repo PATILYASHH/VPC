@@ -105,10 +105,12 @@ async function installPullTracking(mainPool, project) {
   const adminPool = getAdminProjectPool(project);
   try {
     await adminPool.query(TRACKING_SETUP_SQL);
-    await mainPool.query(
-      `UPDATE bana_projects SET pull_tracking_enabled = true, pull_tracking_installed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-      [project.id]
-    );
+    if (mainPool) {
+      await mainPool.query(
+        `UPDATE bana_projects SET pull_tracking_enabled = true, pull_tracking_installed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [project.id]
+      );
+    }
     return { enabled: true };
   } finally {
     await adminPool.end();

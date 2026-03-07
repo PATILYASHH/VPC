@@ -41,6 +41,7 @@ const changesProvider_1 = require("./views/changesProvider");
 const migrationsProvider_1 = require("./views/migrationsProvider");
 const historyProvider_1 = require("./views/historyProvider");
 const configViewProvider_1 = require("./views/configViewProvider");
+const pullRequestsProvider_1 = require("./views/pullRequestsProvider");
 const pull_1 = require("./commands/pull");
 const push_1 = require("./commands/push");
 let statusBar;
@@ -50,10 +51,12 @@ function activate(context) {
     const changesProvider = new changesProvider_1.ChangesProvider(client);
     const migrationsProvider = new migrationsProvider_1.MigrationsProvider();
     const historyProvider = new historyProvider_1.HistoryProvider(client);
+    const pullRequestsProvider = new pullRequestsProvider_1.PullRequestsProvider(client);
     function refreshAll() {
         changesProvider.refresh();
         migrationsProvider.refresh();
         historyProvider.refresh();
+        pullRequestsProvider.refresh();
         configViewProvider.refresh();
         refreshStatusBar(client);
     }
@@ -61,7 +64,13 @@ function activate(context) {
     const configViewProvider = new configViewProvider_1.ConfigViewProvider(client, () => refreshAll());
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(configViewProvider_1.ConfigViewProvider.viewType, configViewProvider));
     // Register tree views
-    context.subscriptions.push(vscode.window.registerTreeDataProvider('vpcSync.changes', changesProvider), vscode.window.registerTreeDataProvider('vpcSync.migrations', migrationsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider));
+    context.subscriptions.push(vscode.window.registerTreeDataProvider('vpcSync.changes', changesProvider), vscode.window.registerTreeDataProvider('vpcSync.migrations', migrationsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider), vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider));
+    // File system watcher for local migration files
+    const migrationWatcher = vscode.workspace.createFileSystemWatcher('**/migrations/*.sql');
+    migrationWatcher.onDidCreate(() => migrationsProvider.refresh());
+    migrationWatcher.onDidDelete(() => migrationsProvider.refresh());
+    migrationWatcher.onDidChange(() => migrationsProvider.refresh());
+    context.subscriptions.push(migrationWatcher);
     // Status bar
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.command = 'vpcSync.pull';

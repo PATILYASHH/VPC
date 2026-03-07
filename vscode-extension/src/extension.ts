@@ -4,6 +4,7 @@ import { ChangesProvider } from './views/changesProvider';
 import { MigrationsProvider } from './views/migrationsProvider';
 import { HistoryProvider } from './views/historyProvider';
 import { ConfigViewProvider } from './views/configViewProvider';
+import { PullRequestsProvider } from './views/pullRequestsProvider';
 import { pullCommand } from './commands/pull';
 import { pushCommand } from './commands/push';
 
@@ -16,11 +17,13 @@ export function activate(context: vscode.ExtensionContext) {
   const changesProvider = new ChangesProvider(client);
   const migrationsProvider = new MigrationsProvider();
   const historyProvider = new HistoryProvider(client);
+  const pullRequestsProvider = new PullRequestsProvider(client);
 
   function refreshAll() {
     changesProvider.refresh();
     migrationsProvider.refresh();
     historyProvider.refresh();
+    pullRequestsProvider.refresh();
     configViewProvider.refresh();
     refreshStatusBar(client);
   }
@@ -36,7 +39,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('vpcSync.changes', changesProvider),
     vscode.window.registerTreeDataProvider('vpcSync.migrations', migrationsProvider),
     vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider),
+    vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider),
   );
+
+  // File system watcher for local migration files
+  const migrationWatcher = vscode.workspace.createFileSystemWatcher('**/migrations/*.sql');
+  migrationWatcher.onDidCreate(() => migrationsProvider.refresh());
+  migrationWatcher.onDidDelete(() => migrationsProvider.refresh());
+  migrationWatcher.onDidChange(() => migrationsProvider.refresh());
+  context.subscriptions.push(migrationWatcher);
 
   // Status bar
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

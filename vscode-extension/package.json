@@ -41,6 +41,10 @@
           "name": "Local Migrations"
         },
         {
+          "id": "vpcSync.pullRequests",
+          "name": "Pull Requests"
+        },
+        {
           "id": "vpcSync.history",
           "name": "History"
         }

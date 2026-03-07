@@ -124,7 +124,14 @@ export class SyncApiClient {
     return request(`${url}/sync/push`, {
       method: 'POST',
       headers: this.getHeaders(key),
-      body: JSON.stringify({ sql, name }),
+      body: JSON.stringify({ sql, name, title: name }),
+    });
+  }
+
+  async getPullRequests(url: string, key: string, status?: string): Promise<any> {
+    const qs = status ? `?status=${status}` : '';
+    return request(`${url}/sync/pull-requests${qs}`, {
+      headers: { apikey: key },
     });
   }
 
