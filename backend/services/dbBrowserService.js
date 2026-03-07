@@ -402,7 +402,19 @@ async function executeEditorQuery(pool, sql, confirm = false) {
     return { requiresConfirmation: true, queryType: 'write' };
   }
 
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (err) {
+    return {
+      results: [{ rows: [], fields: [], rowCount: 0, command: null, duration_ms: 0, sql: trimmed, success: false, error: 'Database connection failed: ' + err.message }],
+      duration_ms: 0,
+    };
+  }
+
+  const totalStart = Date.now();
+  const results = [];
+
   try {
     await client.query("SET statement_timeout = '30000'");
 
@@ -411,9 +423,6 @@ async function executeEditorQuery(pool, sql, confirm = false) {
       await client.query('BEGIN');
       await client.query('SET TRANSACTION READ ONLY');
     }
-
-    const results = [];
-    const totalStart = Date.now();
 
     for (const stmt of statements) {
       const start = Date.now();
@@ -444,18 +453,25 @@ async function executeEditorQuery(pool, sql, confirm = false) {
     }
 
     if (!hasWrite) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK'); } catch {}
     }
-
-    return { results, duration_ms: Date.now() - totalStart };
   } catch (err) {
+    // Catch any setup errors (BEGIN, SET TRANSACTION, etc.) — never throw 500
     if (!hasWrite) {
       try { await client.query('ROLLBACK'); } catch {}
     }
-    throw err;
+    if (results.length === 0) {
+      results.push({
+        rows: [], fields: [], rowCount: 0, command: null,
+        duration_ms: Date.now() - totalStart, sql: trimmed,
+        success: false, error: err.message,
+      });
+    }
   } finally {
     client.release();
   }
+
+  return { results, duration_ms: Date.now() - totalStart };
 }
 
 module.exports = {

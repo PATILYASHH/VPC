@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 
 // In-memory pool cache for project databases
 const projectPools = new Map();
+const projectAdminPools = new Map();
 
 function getProjectPool(project) {
   if (projectPools.has(project.id)) {
@@ -29,11 +30,42 @@ function getProjectPool(project) {
   return pool;
 }
 
+// Admin pool: connects to the project DB as the main admin user (superuser).
+// Used by the SQL editor so it has full access like Supabase's SQL editor.
+function getProjectAdminPool(project) {
+  if (projectAdminPools.has(project.id)) {
+    return projectAdminPools.get(project.id);
+  }
+
+  const pool = new Pool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: project.db_name,
+    user: process.env.DB_USER || 'vpc_admin',
+    password: process.env.DB_PASSWORD,
+    max: 3,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 3000,
+  });
+
+  pool.on('error', (err) => {
+    console.error(`[BanaDB] Admin pool error for project ${project.slug}:`, err.message);
+  });
+
+  projectAdminPools.set(project.id, pool);
+  return pool;
+}
+
 function removeProjectPool(projectId) {
   const pool = projectPools.get(projectId);
   if (pool) {
     pool.end().catch(() => {});
     projectPools.delete(projectId);
+  }
+  const adminPool = projectAdminPools.get(projectId);
+  if (adminPool) {
+    adminPool.end().catch(() => {});
+    projectAdminPools.delete(projectId);
   }
 }
 
@@ -499,6 +531,7 @@ async function checkStorageLimit(pool, project) {
 
 module.exports = {
   getProjectPool,
+  getProjectAdminPool,
   removeProjectPool,
   getProjects,
   getProject,

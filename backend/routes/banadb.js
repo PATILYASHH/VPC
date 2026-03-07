@@ -173,7 +173,9 @@ router.post('/projects/:id/query', resolveProject, enforceStorageLimit, async (r
   try {
     const { sql, confirm } = req.body;
     if (!sql) return res.status(400).json({ error: 'SQL is required' });
-    const result = await dbBrowser.executeEditorQuery(req.banaPool, sql, !!confirm);
+    // Use admin pool (superuser) for SQL editor — full access like Supabase
+    const adminPool = banadbService.getProjectAdminPool(req.banaProject);
+    const result = await dbBrowser.executeEditorQuery(adminPool, sql, !!confirm);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
