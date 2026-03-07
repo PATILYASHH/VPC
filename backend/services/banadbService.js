@@ -323,6 +323,15 @@ async function toggleAuthUser(projectPool, userId) {
   return rows[0];
 }
 
+async function resetAuthUserPassword(projectPool, userId, newPassword) {
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const { rows } = await projectPool.query(
+    `UPDATE auth_users SET password_hash = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email, is_active`,
+    [passwordHash, userId]
+  );
+  return rows[0];
+}
+
 async function authenticateAuthUser(projectPool, email, password) {
   const { rows } = await projectPool.query(
     `SELECT * FROM auth_users WHERE email = $1 AND is_active = true`,
@@ -563,6 +572,7 @@ module.exports = {
   createAuthUser,
   deleteAuthUser,
   toggleAuthUser,
+  resetAuthUserPassword,
   authenticateAuthUser,
   generateApiKey,
   getApiKeys,

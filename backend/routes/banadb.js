@@ -262,6 +262,18 @@ router.delete('/projects/:id/auth/users/:userId', resolveProject, async (req, re
   }
 });
 
+router.put('/projects/:id/auth/users/:userId/password', resolveProject, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    const user = await banadbService.resetAuthUserPassword(req.banaPool, req.params.userId, password);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user, message: 'Password updated' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── API Keys ──────────────────────────────────────────────
 
 router.get('/projects/:id/api-keys', async (req, res) => {

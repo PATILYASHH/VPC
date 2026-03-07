@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Trash2, UserCheck, UserX } from 'lucide-react';
+import { Plus, Trash2, UserCheck, UserX, KeyRound } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,10 @@ export default function BanaAuth({ project }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [creating, setCreating] = useState(false);
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
   const baseUrl = `/admin/bana/projects/${project.id}`;
@@ -60,6 +64,29 @@ export default function BanaAuth({ project }) {
       toast.success('User deleted');
     } catch (err) {
       toast.error('Failed to delete user');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`${baseUrl}/auth/users/${resetPwUser.id}/password`, { password: newPassword });
+      toast.success(`Password updated for "${resetPwUser.email}"`);
+      setResetPwUser(null);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reset password');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -120,6 +147,15 @@ export default function BanaAuth({ project }) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7"
+                        onClick={() => { setResetPwUser(user); setNewPassword(''); setConfirmPassword(''); }}
+                        title="Reset Password"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
                         onClick={() => handleToggle(user.id)}
                         title={user.is_active ? 'Disable' : 'Enable'}
                       >
@@ -142,6 +178,7 @@ export default function BanaAuth({ project }) {
         )}
       </div>
 
+      {/* Create User Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
           <DialogHeader>
@@ -173,6 +210,34 @@ export default function BanaAuth({ project }) {
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
             <Button onClick={handleCreate} disabled={!email || !password || creating}>
               {creating ? 'Creating...' : 'Add User'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={!!resetPwUser} onOpenChange={() => { setResetPwUser(null); setNewPassword(''); setConfirmPassword(''); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Password — {resetPwUser?.email}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">New Password</Label>
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min 6 characters" className="text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Confirm Password</Label>
+              <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter password" className="text-sm" />
+            </div>
+            {newPassword && confirmPassword && newPassword !== confirmPassword && (
+              <p className="text-xs text-destructive">Passwords do not match</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setResetPwUser(null); setNewPassword(''); setConfirmPassword(''); }}>Cancel</Button>
+            <Button onClick={handleResetPassword} disabled={!newPassword || newPassword.length < 6 || newPassword !== confirmPassword || saving}>
+              {saving ? 'Saving...' : 'Reset Password'}
             </Button>
           </DialogFooter>
         </DialogContent>
