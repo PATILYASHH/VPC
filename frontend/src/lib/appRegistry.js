@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -8,6 +8,7 @@ import LogsViewer from '@/components/apps/LogsViewer';
 import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
 import BanaDB from '@/components/apps/BanaDB';
 import VpcAuth from '@/components/apps/VpcAuth';
+import Gallery from '@/components/apps/Gallery';
 
 const APP_REGISTRY = {
   'server-manager': {
@@ -99,6 +100,16 @@ const APP_REGISTRY = {
     defaultHeight: 600,
     minWidth: 600,
     minHeight: 400,
+  },
+  'gallery': {
+    id: 'gallery',
+    title: 'Gallery',
+    icon: FolderOpen,
+    component: Gallery,
+    defaultWidth: 1100,
+    defaultHeight: 700,
+    minWidth: 800,
+    minHeight: 500,
   },
 };
 
