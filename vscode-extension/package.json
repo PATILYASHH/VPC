@@ -2,6 +2,7 @@
   "name": "vpc-pull",
   "displayName": "VPC Pull - BanaDB Migrations",
   "description": "Pull schema migrations from BanaDB projects directly in VS Code",
+  "publisher": "vpc-admin",
   "version": "1.0.0",
   "engines": {
     "vscode": "^1.85.0"
