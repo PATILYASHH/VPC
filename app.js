@@ -14,6 +14,9 @@ app.use('/storage/v1', require('./backend/routes/banaStoragePublic'));
 // Serve downloadable files (VS Code extension, etc.)
 app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
 
+// Serve hosted websites (public, no auth — must be before SPA catch-all)
+app.use(require('./backend/routes/webHostingPublic'));
+
 // Serve frontend build in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'frontend', 'dist')));
@@ -29,6 +32,10 @@ const pool = app.locals.pool;
 pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"all": true}'`)
   .then(() => pool.query(`UPDATE vpc_admins SET permissions = '{"all": true}' WHERE permissions IS NULL`))
   .catch(() => {});
+
+// Refresh web hosting slug cache on startup
+const webHostingService = require('./backend/services/webHostingService');
+webHostingService.refreshSlugCache(pool);
 
 app.listen(PORT, () => {
   console.log(`[VPC] Server running on port ${PORT}`);

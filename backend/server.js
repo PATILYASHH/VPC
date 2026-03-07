@@ -78,6 +78,7 @@ adminRouter.use('/bana', require('./routes/banadb'));
 adminRouter.use('/users', require('./routes/users'));
 adminRouter.use('/gallery', require('./routes/gallery'));
 adminRouter.use('/sync', require('./routes/sync'));
+adminRouter.use('/web-hosting', require('./routes/webHosting'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {

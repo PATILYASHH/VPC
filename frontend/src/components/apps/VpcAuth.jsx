@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Trash2, ShieldCheck, ShieldOff, QrCode, Pencil, Crown, Lock } from 'lucide-react';
+import { Plus, Trash2, ShieldCheck, ShieldOff, QrCode, Pencil, Crown, Lock, KeyRound } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,6 +23,7 @@ const PERMISSION_OPTIONS = [
   { key: 'terminal', label: 'Terminal' },
   { key: 'users', label: 'User Management' },
   { key: 'gallery', label: 'Gallery' },
+  { key: 'web_hosting', label: 'Web Hosting' },
 ];
 
 export default function VpcAuth() {
@@ -34,6 +35,9 @@ export default function VpcAuth() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ username: '', email: '', password: '', display_name: '' });
   const [permForm, setPermForm] = useState({ all: true });
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const queryClient = useQueryClient();
   const { data, isLoading } = useApiQuery('admin-users', '/admin/users');
@@ -157,6 +161,29 @@ export default function VpcAuth() {
     }
   };
 
+  const handleResetPassword = async () => {
+    if (!newPassword || newPassword.length < 8) {
+      toast.error('Password must be at least 8 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/admin/users/${resetPwUser.id}`, { password: newPassword });
+      toast.success(`Password updated for "${resetPwUser.username}"`);
+      setResetPwUser(null);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to reset password');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const getPermissionSummary = (permissions) => {
     if (!permissions || permissions.all) return 'Full Access';
     const enabled = PERMISSION_OPTIONS.filter((p) => permissions[p.key]);
@@ -219,6 +246,9 @@ export default function VpcAuth() {
                 )}
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => openPerms(user)}>
                   <Lock className="w-3.5 h-3.5 mr-1" /> Permissions
+                </Button>
+                <Button variant="ghost" size="sm" className="text-xs" onClick={() => { setResetPwUser(user); setNewPassword(''); setConfirmPassword(''); }}>
+                  <KeyRound className="w-3.5 h-3.5 mr-1" /> Reset Password
                 </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(user)}>
                   <Pencil className="w-3.5 h-3.5" />
@@ -365,6 +395,34 @@ export default function VpcAuth() {
             <Button variant="outline" onClick={() => setPermUser(null)}>Cancel</Button>
             <Button onClick={handleSavePerms} disabled={saving}>
               {saving ? 'Saving...' : 'Save Permissions'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={!!resetPwUser} onOpenChange={() => { setResetPwUser(null); setNewPassword(''); setConfirmPassword(''); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Password — {resetPwUser?.display_name || resetPwUser?.username}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">New Password</Label>
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min 8 characters" className="text-sm" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Confirm Password</Label>
+              <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter password" className="text-sm" />
+            </div>
+            {newPassword && confirmPassword && newPassword !== confirmPassword && (
+              <p className="text-xs text-destructive">Passwords do not match</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setResetPwUser(null); setNewPassword(''); setConfirmPassword(''); }}>Cancel</Button>
+            <Button onClick={handleResetPassword} disabled={!newPassword || newPassword.length < 8 || newPassword !== confirmPassword || saving}>
+              {saving ? 'Saving...' : 'Reset Password'}
             </Button>
           </DialogFooter>
         </DialogContent>

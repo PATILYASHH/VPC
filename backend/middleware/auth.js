@@ -13,6 +13,7 @@ const ROUTE_PERMISSION_MAP = {
   '/users': 'users',
   '/gallery': 'gallery',
   '/sync': 'banadb',
+  '/web-hosting': 'web_hosting',
 };
 
 async function authenticateAdmin(req, res, next) {
