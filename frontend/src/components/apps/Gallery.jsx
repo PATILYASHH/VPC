@@ -481,7 +481,7 @@ export default function Gallery() {
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                 <HardDrive className="w-10 h-10 mb-3 opacity-30" />
                 <p className="text-sm">Select a bucket from the sidebar</p>
-                <p className="text-xs mt-1">Browse files from your BanaDB storage buckets</p>
+                <p className="text-xs mt-1">Browse files from your DB storage buckets</p>
               </div>
             ) : isLoading ? (
               <LoadingSpinner />

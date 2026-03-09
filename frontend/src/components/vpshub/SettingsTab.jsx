@@ -132,7 +132,7 @@ export default function SettingsTab({ project }) {
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground w-24">API Key:</span>
             <span className="text-xs text-muted-foreground italic">
-              Use your project's Pull Key (found in BanaDB &rarr; Pull Keys)
+              Use your project's Pull Key (found in DB &rarr; Pull Keys)
             </span>
           </div>
         </div>

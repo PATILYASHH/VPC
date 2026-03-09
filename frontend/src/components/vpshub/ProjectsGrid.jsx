@@ -23,7 +23,7 @@ export default function ProjectsGrid({ onSelectProject }) {
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <Database className="w-16 h-16 mb-4 opacity-30" />
         <p className="text-lg font-medium mb-1">No Projects</p>
-        <p className="text-sm">Create a BanaDB project first.</p>
+        <p className="text-sm">Create a DB project first.</p>
       </div>
     );
   }

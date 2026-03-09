@@ -92,7 +92,7 @@ const APP_REGISTRY = {
   },
   'bana-db': {
     id: 'bana-db',
-    title: 'BanaDB',
+    title: 'DB',
     icon: Layers,
     component: BanaDB,
     permission: 'banadb',

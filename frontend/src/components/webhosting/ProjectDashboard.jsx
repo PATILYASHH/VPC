@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Play, Square, RotateCcw, Rocket, GitBranch, Globe, Terminal, Settings, ExternalLink,
-  Loader2, Copy, ChevronDown, Plus, Trash2, Save, RefreshCw
+  Loader2, Copy, ChevronDown, Plus, Trash2, Save, RefreshCw, Link, CheckCircle2, AlertCircle,
+  Shield, Pencil
 } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
@@ -78,6 +79,7 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
           {isNode && <TabsTrigger value="logs">Logs</TabsTrigger>}
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="env">Environment</TabsTrigger>
+          <TabsTrigger value="domain">Domain</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -201,6 +203,11 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
         {/* Environment Variables */}
         <TabsContent value="env" className="flex-1 overflow-auto p-4">
           <EnvEditor project={project} onSaved={refetch} />
+        </TabsContent>
+
+        {/* Custom Domain */}
+        <TabsContent value="domain" className="flex-1 overflow-auto p-4">
+          <DomainSettings project={project} onSaved={refetch} />
         </TabsContent>
       </Tabs>
     </div>
@@ -378,6 +385,310 @@ function EnvEditor({ project, onSaved }) {
         {saving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
         Save Variables
       </Button>
+    </div>
+  );
+}
+
+function DomainSettings({ project, onSaved }) {
+  const [editing, setEditing] = useState(!project?.custom_domain);
+  const [domain, setDomain] = useState(project?.custom_domain || '');
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState(null);
+
+  useEffect(() => {
+    setDomain(project?.custom_domain || '');
+    setEditing(!project?.custom_domain);
+    setVerifyError(null);
+  }, [project?.id, project?.custom_domain]);
+
+  const handleSave = async () => {
+    const cleaned = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    setSaving(true);
+    try {
+      await api.put(`/admin/web-hosting/projects/${project.id}`, { customDomain: cleaned || null });
+      toast.success(cleaned ? `Domain "${cleaned}" saved` : 'Custom domain removed');
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save domain');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    try {
+      await api.delete(`/admin/web-hosting/projects/${project.id}/domain`);
+      toast.success('Custom domain removed');
+      setDomain('');
+      setEditing(true);
+      onSaved();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to remove domain');
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleGenerateToken = async () => {
+    setGenerating(true);
+    setVerifyError(null);
+    try {
+      await api.post(`/admin/web-hosting/projects/${project.id}/domain/verify-token`);
+      toast.success('Verification token generated');
+      onSaved();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to generate token');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      await api.post(`/admin/web-hosting/projects/${project.id}/domain/verify`);
+      toast.success('Domain verified successfully!');
+      onSaved();
+    } catch (err) {
+      setVerifyError(err.response?.data?.error || 'Verification failed');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const hasDomain = !!project?.custom_domain;
+  const isVerified = !!project?.domain_verified;
+  const token = project?.domain_verify_token;
+
+  const displayDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const isRootDomain = displayDomain && !displayDomain.startsWith('www.');
+  const rootDomain = isRootDomain ? displayDomain : displayDomain.replace(/^www\./, '');
+
+  return (
+    <div className="space-y-6 max-w-xl">
+      <div>
+        <h3 className="text-sm font-medium flex items-center gap-2 mb-1">
+          <Link className="w-4 h-4" /> Custom Domain
+        </h3>
+        <p className="text-xs text-muted-foreground">Point your own domain to this project.</p>
+      </div>
+
+      {/* Current domain status bar */}
+      {hasDomain && !editing && (
+        <div className="flex items-center gap-2 p-3 rounded-lg border bg-muted/30">
+          {isVerified
+            ? <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+            : <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+          }
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs font-mono truncate">{project.custom_domain}</p>
+              <Badge
+                variant="outline"
+                className={`text-[10px] ${isVerified ? 'border-emerald-500/50 text-emerald-500' : 'border-amber-500/50 text-amber-500'}`}
+              >
+                {isVerified ? 'Verified' : 'Unverified'}
+              </Badge>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <a href={`http://${project.custom_domain}`} target="_blank" rel="noopener noreferrer" title="Open site">
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+            </a>
+            <Button
+              variant="ghost" size="sm" className="h-7 text-xs px-2"
+              onClick={() => { setDomain(project.custom_domain); setEditing(true); setVerifyError(null); }}
+              title="Edit domain"
+            >
+              <Pencil className="w-3 h-3" />
+            </Button>
+            <Button
+              variant="ghost" size="sm" className="h-7 text-xs px-2 text-destructive hover:text-destructive"
+              onClick={handleRemove} disabled={removing} title="Remove domain"
+            >
+              {removing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Domain input (edit mode or no domain set) */}
+      {editing && (
+        <div className="space-y-2">
+          <Label className="text-xs">{hasDomain ? 'Edit Domain' : 'Domain'}</Label>
+          <div className="flex gap-2">
+            <Input
+              value={domain}
+              onChange={e => setDomain(e.target.value)}
+              placeholder="mysite.com or sub.mysite.com"
+              className="text-sm font-mono"
+              onKeyDown={e => e.key === 'Enter' && handleSave()}
+            />
+            <Button onClick={handleSave} disabled={saving} size="sm">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            </Button>
+            {hasDomain && (
+              <Button variant="outline" size="sm" onClick={() => { setEditing(false); setDomain(project.custom_domain); }}>
+                Cancel
+              </Button>
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground">Enter without https:// — e.g. <span className="font-mono">mysite.com</span></p>
+        </div>
+      )}
+
+      {/* Verification section — only shown when domain set, not editing, not verified */}
+      {hasDomain && !editing && !isVerified && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-muted/50 px-4 py-2 border-b">
+            <h4 className="text-xs font-semibold flex items-center gap-2">
+              <Shield className="w-3.5 h-3.5" /> Verify Domain Ownership
+            </h4>
+          </div>
+          <div className="p-4 space-y-3 text-xs text-muted-foreground">
+            <p>
+              Add a DNS TXT record to prove you own <span className="font-mono text-foreground">{project.custom_domain}</span>.
+            </p>
+
+            {!token ? (
+              <Button size="sm" variant="outline" onClick={handleGenerateToken} disabled={generating}>
+                {generating
+                  ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                }
+                Generate Verification Token
+              </Button>
+            ) : (
+              <>
+                <p>Add this TXT record in your DNS provider (Hostinger, GoDaddy, Cloudflare, etc.):</p>
+                <div className="bg-zinc-950 rounded-md p-3 font-mono space-y-2">
+                  <div className="grid grid-cols-[50px_1fr] gap-x-4 gap-y-1.5 text-[10px]">
+                    <span className="text-zinc-400">Type</span>
+                    <span className="text-blue-400">TXT</span>
+                    <span className="text-zinc-400">Name</span>
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-amber-400 break-all">_vpc-verify.{project.custom_domain}</span>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(`_vpc-verify.${project.custom_domain}`); toast.success('Copied'); }}
+                        className="shrink-0 ml-1"
+                      >
+                        <Copy className="w-3 h-3 text-zinc-500 hover:text-zinc-300" />
+                      </button>
+                    </div>
+                    <span className="text-zinc-400">Value</span>
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-emerald-400 break-all">{token}</span>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(token); toast.success('Copied'); }}
+                        className="shrink-0 ml-1"
+                      >
+                        <Copy className="w-3 h-3 text-zinc-500 hover:text-zinc-300" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {verifyError && (
+                  <div className="flex items-start gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-[11px]">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>{verifyError}</span>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" onClick={handleVerify} disabled={verifying}>
+                    {verifying
+                      ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      : <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                    }
+                    {verifying ? 'Checking DNS...' : 'Verify Now'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={handleGenerateToken} disabled={generating}>
+                    <RefreshCw className="w-3 h-3 mr-1.5" /> Regenerate
+                  </Button>
+                </div>
+                <p className="text-[10px]">DNS changes can take up to 48 hours to propagate. If verification fails, wait and try again.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Verified confirmation */}
+      {hasDomain && !editing && isVerified && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+          <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-xs font-medium text-emerald-500">Domain verified</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              DNS ownership confirmed. Your site is accessible at <span className="font-mono">{project.custom_domain}</span>.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* DNS Setup Instructions */}
+      <div className="border rounded-lg overflow-hidden">
+        <div className="bg-muted/50 px-4 py-2 border-b">
+          <h4 className="text-xs font-semibold flex items-center gap-2">
+            <Globe className="w-3.5 h-3.5" /> DNS Setup Instructions
+          </h4>
+        </div>
+        <div className="p-4 space-y-4 text-xs">
+          <p className="text-muted-foreground">
+            Log in to your DNS provider (Hostinger, GoDaddy, Cloudflare, etc.) and add these records:
+          </p>
+
+          <div className="space-y-2">
+            <p className="font-medium text-muted-foreground uppercase tracking-wider text-[10px]">
+              {displayDomain ? `For ${rootDomain || 'your-root-domain.com'}` : 'For root domain (e.g. mysite.com)'}
+            </p>
+            <div className="bg-zinc-950 rounded-md p-3 font-mono space-y-1.5">
+              <div className="grid grid-cols-[60px_50px_1fr_80px] gap-2 text-zinc-400 text-[10px] border-b border-zinc-800 pb-1.5">
+                <span>Type</span><span>Name</span><span>Value</span><span>TTL</span>
+              </div>
+              <div className="grid grid-cols-[60px_50px_1fr_80px] gap-2 text-zinc-100 text-[10px]">
+                <span className="text-blue-400">A</span>
+                <span>@</span>
+                <span className="text-amber-400">YOUR_SERVER_IP</span>
+                <span className="text-zinc-400">3600</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="font-medium text-muted-foreground uppercase tracking-wider text-[10px]">
+              {displayDomain ? `For www.${rootDomain || 'your-root-domain.com'} (optional)` : 'For www subdomain (optional)'}
+            </p>
+            <div className="bg-zinc-950 rounded-md p-3 font-mono space-y-1.5">
+              <div className="grid grid-cols-[60px_50px_1fr_80px] gap-2 text-zinc-400 text-[10px] border-b border-zinc-800 pb-1.5">
+                <span>Type</span><span>Name</span><span>Value</span><span>TTL</span>
+              </div>
+              <div className="grid grid-cols-[60px_50px_1fr_80px] gap-2 text-zinc-100 text-[10px]">
+                <span className="text-blue-400">CNAME</span>
+                <span>www</span>
+                <span className="text-amber-400">{rootDomain || 'your-root-domain.com'}</span>
+                <span className="text-zinc-400">3600</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-muted-foreground">
+              <p><span className="font-medium text-foreground">YOUR_SERVER_IP</span> — replace with your VPS public IP address.</p>
+              <p>DNS changes can take <span className="font-medium text-foreground">up to 48 hours</span> to propagate worldwide.</p>
+              <p>For SSL (HTTPS), use <span className="font-medium text-foreground">Cloudflare</span> as a proxy in front of your server.</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

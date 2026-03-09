@@ -64,6 +64,7 @@ router.delete('/projects/:id', async (req, res) => {
     const pool = req.app.locals.pool;
     await webHostingService.deleteProject(pool, req.params.id);
     webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
     res.json({ message: 'Project deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -80,6 +81,7 @@ router.post('/projects/:id/deploy', async (req, res) => {
 
     const result = await webHostingService.deploy(pool, project);
     webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -92,6 +94,7 @@ router.post('/projects/:id/redeploy', async (req, res) => {
     const pool = req.app.locals.pool;
     const result = await webHostingService.redeploy(pool, req.params.id);
     webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -106,6 +109,7 @@ router.post('/projects/:id/start', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     await webHostingService.startBackend(pool, project);
     webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
     res.json({ message: 'Started' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -120,6 +124,7 @@ router.post('/projects/:id/stop', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     await webHostingService.stopBackend(pool, project);
     webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
     res.json({ message: 'Stopped' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -158,6 +163,44 @@ router.get('/projects/:id/status', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
     const status = await webHostingService.getStatus(project);
     res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /projects/:id/domain/verify-token — generate verification token
+router.post('/projects/:id/domain/verify-token', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (!project.custom_domain) return res.status(400).json({ error: 'No custom domain configured. Save a domain first.' });
+    const updated = await webHostingService.generateDomainVerifyToken(pool, req.params.id);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /projects/:id/domain/verify — check DNS TXT record
+router.post('/projects/:id/domain/verify', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const updated = await webHostingService.verifyDomain(pool, req.params.id);
+    webHostingService.refreshDomainCache(pool);
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// DELETE /projects/:id/domain — remove custom domain
+router.delete('/projects/:id/domain', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const updated = await webHostingService.removeDomain(pool, req.params.id);
+    webHostingService.refreshDomainCache(pool);
+    res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

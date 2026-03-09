@@ -51,6 +51,19 @@ export default function Taskbar() {
           const Icon = appDef?.icon;
           const isActive = activeWindowId === win.id;
 
+          if (win.isMinimized) {
+            return (
+              <button
+                key={win.id}
+                onClick={() => handleWindowClick(win.id)}
+                title={win.title}
+                className="h-8 w-8 rounded flex items-center justify-center shrink-0 transition-all duration-150 bg-blue-600/20 border border-blue-500/40 text-blue-400 hover:bg-blue-600/40 hover:border-blue-400/70"
+              >
+                {Icon && <Icon className="w-4 h-4" />}
+              </button>
+            );
+          }
+
           return (
             <button
               key={win.id}
@@ -59,7 +72,7 @@ export default function Taskbar() {
                 isActive
                   ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-accent/50'
-              } ${win.isMinimized ? 'opacity-50' : ''}`}
+              }`}
             >
               {Icon && <Icon className="w-3.5 h-3.5" />}
               <span className="truncate max-w-[120px]">{win.title}</span>

@@ -8,7 +8,36 @@ const router = express.Router();
 
 // Middleware to serve hosted websites publicly
 router.use(async (req, res, next) => {
-  // Extract first path segment as potential slug
+  const pool = req.app.locals.pool;
+
+  // 1. Custom domain routing — check Host header against registered domains
+  const host = req.hostname; // hostname without port
+  const isExternalDomain = host
+    && !host.includes('localhost')
+    && !/^\d+\.\d+\.\d+\.\d+$/.test(host); // not a raw IP
+
+  if (isExternalDomain) {
+    let domainProject = webHostingService.getDomainCache()[host];
+    if (!domainProject) {
+      try {
+        domainProject = await webHostingService.getProjectByDomain(pool, host);
+      } catch {}
+    }
+
+    if (domainProject && domainProject.status !== 'stopped') {
+      const subPath = req.path || '/';
+      if ((domainProject.project_type === 'node' || domainProject.project_type === 'fullstack') && domainProject.node_port) {
+        if (domainProject.project_type === 'fullstack' && !subPath.startsWith('/api')) {
+          return serveStatic(domainProject, subPath, res, next);
+        }
+        const proxyPath = domainProject.project_type === 'fullstack' ? subPath.replace(/^\/api/, '') || '/' : subPath;
+        return proxyRequest(req, res, domainProject.node_port, proxyPath);
+      }
+      return serveStatic(domainProject, subPath, res, next);
+    }
+  }
+
+  // 2. Slug-based routing (path prefix)
   const pathParts = req.path.split('/').filter(Boolean);
   if (pathParts.length === 0) return next();
 
@@ -29,6 +58,11 @@ router.use(async (req, res, next) => {
   }
 
   if (!project || project.status === 'stopped') return next();
+
+  // Redirect /slug → /slug/ so relative asset paths (./assets/...) resolve correctly
+  if (pathParts.length === 1 && !req.path.endsWith('/')) {
+    return res.redirect(301, req.path + '/');
+  }
 
   const subPath = '/' + pathParts.slice(1).join('/');
 

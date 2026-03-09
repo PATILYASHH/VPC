@@ -36,6 +36,7 @@ pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DE
 // Refresh web hosting slug cache on startup
 const webHostingService = require('./backend/services/webHostingService');
 webHostingService.refreshSlugCache(pool);
+webHostingService.refreshDomainCache(pool);
 
 app.listen(PORT, () => {
   console.log(`[VPC] Server running on port ${PORT}`);

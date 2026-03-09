@@ -2,6 +2,8 @@ const { execFile, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
+const dns = require('dns').promises;
 
 const HOSTING_DIR = path.join(os.homedir(), 'web-hosting');
 const RESERVED_SLUGS = ['api', 'admin', 'storage', 'uploads', 'downloads', 'health', 'web-hosting', 'sites'];
@@ -78,7 +80,7 @@ async function updateProject(pool, id, data) {
   const values = [];
   let idx = 1;
 
-  const allowedFields = ['name', 'git_url', 'git_token', 'git_branch', 'build_command', 'install_command', 'output_dir', 'node_entry_point', 'env_vars', 'project_type'];
+  const allowedFields = ['name', 'git_url', 'git_token', 'git_branch', 'build_command', 'install_command', 'output_dir', 'node_entry_point', 'env_vars', 'project_type', 'custom_domain'];
 
   for (const [key, value] of Object.entries(data)) {
     const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
@@ -90,6 +92,12 @@ async function updateProject(pool, id, data) {
   }
 
   if (fields.length === 0) return getProject(pool, id);
+
+  // Reset verification when custom_domain changes
+  if (fields.some(f => f.startsWith('custom_domain'))) {
+    fields.push(`domain_verified = FALSE`);
+    fields.push(`domain_verify_token = NULL`);
+  }
 
   fields.push(`updated_at = NOW()`);
   values.push(id);
@@ -117,6 +125,53 @@ async function deleteProject(pool, id) {
 
   await pool.query('DELETE FROM web_hosting_projects WHERE id = $1', [id]);
   return project;
+}
+
+// --- Domain Verification ---
+
+async function generateDomainVerifyToken(pool, projectId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const { rows } = await pool.query(
+    `UPDATE web_hosting_projects SET domain_verify_token = $1, domain_verified = FALSE, updated_at = NOW() WHERE id = $2 RETURNING *`,
+    [token, projectId]
+  );
+  return rows[0];
+}
+
+async function verifyDomain(pool, projectId) {
+  const project = await getProject(pool, projectId);
+  if (!project) throw new Error('Project not found');
+  if (!project.custom_domain) throw new Error('No custom domain configured');
+  if (!project.domain_verify_token) throw new Error('No verification token. Generate one first.');
+
+  const txtHost = `_vpc-verify.${project.custom_domain}`;
+  let records;
+  try {
+    records = await dns.resolveTxt(txtHost);
+  } catch {
+    throw new Error(`Could not resolve TXT record for ${txtHost}. Make sure the record exists and DNS has propagated.`);
+  }
+
+  const flat = records.flat();
+  const found = flat.some(r => r === project.domain_verify_token);
+
+  if (!found) {
+    throw new Error('Verification TXT record not found or does not match. Check the record value and wait for DNS propagation.');
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE web_hosting_projects SET domain_verified = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [projectId]
+  );
+  return rows[0];
+}
+
+async function removeDomain(pool, projectId) {
+  const { rows } = await pool.query(
+    `UPDATE web_hosting_projects SET custom_domain = NULL, domain_verify_token = NULL, domain_verified = FALSE, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [projectId]
+  );
+  return rows[0];
 }
 
 // --- Port Management ---
@@ -294,8 +349,40 @@ function getSlugCache() {
   return slugCache;
 }
 
+// --- Custom domain cache for public serving ---
+let domainCache = {};
+
+async function refreshDomainCache(pool) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT slug, custom_domain, project_type, deploy_path, output_dir, node_port, status
+       FROM web_hosting_projects
+       WHERE status != 'stopped' AND custom_domain IS NOT NULL AND custom_domain != ''`
+    );
+    const cache = {};
+    for (const row of rows) {
+      cache[row.custom_domain] = row;
+    }
+    domainCache = cache;
+  } catch {}
+}
+
+function getDomainCache() {
+  return domainCache;
+}
+
+async function getProjectByDomain(pool, domain) {
+  const { rows } = await pool.query(
+    `SELECT * FROM web_hosting_projects WHERE custom_domain = $1`,
+    [domain]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   createProject, getProject, getProjectBySlug, listProjects, updateProject, deleteProject,
   deploy, redeploy, startBackend, stopBackend, restartBackend, getLogs, getStatus, getNextPort,
-  refreshSlugCache, getSlugCache, RESERVED_SLUGS, HOSTING_DIR, ensureHostingDir
+  refreshSlugCache, getSlugCache, refreshDomainCache, getDomainCache, getProjectByDomain,
+  generateDomainVerifyToken, verifyDomain, removeDomain,
+  RESERVED_SLUGS, HOSTING_DIR, ensureHostingDir
 };

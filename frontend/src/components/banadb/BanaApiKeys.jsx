@@ -66,7 +66,7 @@ export default function BanaApiKeys({ project }) {
       <div>
         <h2 className="text-sm font-semibold">API</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Connect to your BanaDB project using these credentials.
+          Connect to your DB project using these credentials.
         </p>
       </div>
 

@@ -82,7 +82,7 @@ export default function ProjectList({ onSelectProject }) {
       <div className="p-4 border-b flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-            BanaDB Projects ({data?.projects?.length || 0})
+            DB Projects ({data?.projects?.length || 0})
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">Manage your database projects</p>
         </div>
