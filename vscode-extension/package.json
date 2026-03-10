@@ -3,13 +3,13 @@
   "displayName": "VPC Sync - BanaDB Schema Management",
   "description": "Git-like schema sync for BanaDB projects. Pull & push database migrations directly from VS Code.",
   "publisher": "vpc-admin",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
   "activationEvents": [
-    "workspaceContains:.vpcpull"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -25,9 +25,15 @@
     "views": {
       "vpcSync": [
         {
+          "id": "vpcSync.syncActions",
+          "name": "Sync",
+          "type": "webview"
+        },
+        {
           "id": "vpcSync.config",
           "name": "Connection",
-          "type": "webview"
+          "type": "webview",
+          "visibility": "collapsed"
         },
         {
           "id": "vpcSync.pullRequests",
@@ -142,6 +148,21 @@
       {
         "command": "vpcSync.showSQL",
         "title": "Show SQL"
+      },
+      {
+        "command": "vpcSync.commitAndPush",
+        "title": "VPC Sync: Commit & Push to VPSHUB",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "vpcSync.pullDatabase",
+        "title": "VPC Sync: Pull from Database",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "vpcSync.compareSchema",
+        "title": "VPC Sync: Compare Schema",
+        "icon": "$(diff)"
       }
     ],
     "menus": {
@@ -223,14 +244,29 @@
       ],
       "view/title": [
         {
+          "command": "vpcSync.commitAndPush",
+          "when": "view == vpcSync.syncActions",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vpcSync.pullDatabase",
+          "when": "view == vpcSync.syncActions",
+          "group": "navigation@2"
+        },
+        {
+          "command": "vpcSync.compareSchema",
+          "when": "view == vpcSync.syncActions",
+          "group": "navigation@3"
+        },
+        {
           "command": "vpcSync.refresh",
           "when": "view =~ /vpcSync/",
-          "group": "navigation"
+          "group": "navigation@4"
         },
         {
           "command": "vpcSync.configure",
-          "when": "view =~ /vpcSync/",
-          "group": "navigation"
+          "when": "view =~ /vpcSync/ && view != vpcSync.syncActions",
+          "group": "navigation@5"
         }
       ]
     },

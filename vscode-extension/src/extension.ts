@@ -8,6 +8,7 @@ import { VpcQuickDiffProvider, VpcOriginalContentProvider } from './scm/quickDif
 import { HistoryProvider } from './views/historyProvider';
 import { ConfigViewProvider } from './views/configViewProvider';
 import { PullRequestsProvider } from './views/pullRequestsProvider';
+import { SyncActionsProvider } from './views/syncActionsProvider';
 import { pullCommand } from './commands/pull';
 import { pushCommand, pushAllCommand } from './commands/push';
 import { registerStageCommands } from './commands/stage';
@@ -31,8 +32,10 @@ export function activate(context: vscode.ExtensionContext) {
   const historyProvider = new HistoryProvider(client);
   const pullRequestsProvider = new PullRequestsProvider(client);
   const configViewProvider = new ConfigViewProvider(client, () => refreshAll());
+  const syncActionsProvider = new SyncActionsProvider(client, () => refreshAll());
 
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(SyncActionsProvider.viewType, syncActionsProvider),
     vscode.window.registerWebviewViewProvider(ConfigViewProvider.viewType, configViewProvider),
     vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider),
     vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider),
@@ -43,6 +46,7 @@ export function activate(context: vscode.ExtensionContext) {
     historyProvider.refresh();
     pullRequestsProvider.refresh();
     configViewProvider.refresh();
+    syncActionsProvider.refresh();
   }
 
   // ─── Stage/Unstage commands ───────────────────────────────
@@ -105,6 +109,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Detect changes
     vscode.commands.registerCommand('vpcSync.detectChanges', () => detectChanges(client, scmProvider, () => refreshAll())),
+
+    // Sync Actions panel commands
+    vscode.commands.registerCommand('vpcSync.commitAndPush', () => {
+      vscode.commands.executeCommand('vpcSync.syncActions.focus');
+    }),
+    vscode.commands.registerCommand('vpcSync.pullDatabase', () => pullCommand(client, () => refreshAll())),
+    vscode.commands.registerCommand('vpcSync.compareSchema', () => detectChanges(client, scmProvider, () => refreshAll())),
   );
 
   // ─── Auto-refresh ─────────────────────────────────────────

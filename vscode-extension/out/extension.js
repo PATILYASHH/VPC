@@ -45,6 +45,7 @@ const quickDiffProvider_1 = require("./scm/quickDiffProvider");
 const historyProvider_1 = require("./views/historyProvider");
 const configViewProvider_1 = require("./views/configViewProvider");
 const pullRequestsProvider_1 = require("./views/pullRequestsProvider");
+const syncActionsProvider_1 = require("./views/syncActionsProvider");
 const pull_1 = require("./commands/pull");
 const push_1 = require("./commands/push");
 const stage_1 = require("./commands/stage");
@@ -60,12 +61,14 @@ function activate(context) {
     const historyProvider = new historyProvider_1.HistoryProvider(client);
     const pullRequestsProvider = new pullRequestsProvider_1.PullRequestsProvider(client);
     const configViewProvider = new configViewProvider_1.ConfigViewProvider(client, () => refreshAll());
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider(configViewProvider_1.ConfigViewProvider.viewType, configViewProvider), vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider));
+    const syncActionsProvider = new syncActionsProvider_1.SyncActionsProvider(client, () => refreshAll());
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider(syncActionsProvider_1.SyncActionsProvider.viewType, syncActionsProvider), vscode.window.registerWebviewViewProvider(configViewProvider_1.ConfigViewProvider.viewType, configViewProvider), vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider), vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider));
     function refreshAll() {
         scmProvider.refresh();
         historyProvider.refresh();
         pullRequestsProvider.refresh();
         configViewProvider.refresh();
+        syncActionsProvider.refresh();
     }
     // ─── Stage/Unstage commands ───────────────────────────────
     (0, stage_1.registerStageCommands)(context, scmProvider);
@@ -104,7 +107,11 @@ function activate(context) {
         vscode.commands.executeCommand('vscode.open', resource.resourceUri);
     }), 
     // Detect changes
-    vscode.commands.registerCommand('vpcSync.detectChanges', () => detectChanges(client, scmProvider, () => refreshAll())));
+    vscode.commands.registerCommand('vpcSync.detectChanges', () => detectChanges(client, scmProvider, () => refreshAll())), 
+    // Sync Actions panel commands
+    vscode.commands.registerCommand('vpcSync.commitAndPush', () => {
+        vscode.commands.executeCommand('vpcSync.syncActions.focus');
+    }), vscode.commands.registerCommand('vpcSync.pullDatabase', () => (0, pull_1.pullCommand)(client, () => refreshAll())), vscode.commands.registerCommand('vpcSync.compareSchema', () => detectChanges(client, scmProvider, () => refreshAll())));
     // ─── Auto-refresh ─────────────────────────────────────────
     const intervalSec = vscode.workspace.getConfiguration('vpcSync').get('autoRefreshInterval') || 30;
     if (intervalSec > 0) {
