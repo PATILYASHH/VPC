@@ -1,13 +1,35 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
 let client = null;
+let currentApiKey = null;
+
+// Runtime model/token settings (loaded from DB)
+let runtimeModel = 'claude-sonnet-4-20250514';
+let runtimeMaxTokens = 4000;
 
 function getClient() {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!client) {
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  // Recreate client if API key changed
+  if (!client || currentApiKey !== apiKey) {
+    client = new Anthropic({ apiKey });
+    currentApiKey = apiKey;
   }
   return client;
+}
+
+/**
+ * Load model preferences from DB settings (called before AI operations).
+ */
+async function loadModelSettings(pool) {
+  try {
+    const { rows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'ai_agent_permissions'");
+    if (rows[0]?.value) {
+      const perms = JSON.parse(rows[0].value);
+      if (perms.model) runtimeModel = perms.model;
+      if (perms.max_tokens_per_request) runtimeMaxTokens = perms.max_tokens_per_request;
+    }
+  } catch {}
 }
 
 /**
@@ -18,9 +40,12 @@ async function reviewSQL(sqlContent, context = {}) {
   if (!ai) {
     return {
       available: false,
-      error: 'ANTHROPIC_API_KEY not configured. Add it to your .env file to enable AI review.',
+      error: 'ANTHROPIC_API_KEY not configured. Add it in AI Agent Settings to enable AI review.',
     };
   }
+
+  // Load latest model settings if pool is available
+  if (context.pool) await loadModelSettings(context.pool);
 
   const systemPrompt = `You are a PostgreSQL database expert reviewing SQL migration pull requests.
 Analyze the SQL and return a JSON object with:
@@ -41,8 +66,8 @@ Return ONLY valid JSON, no markdown fencing or explanation.`;
 
   try {
     const response = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      model: runtimeModel,
+      max_tokens: runtimeMaxTokens,
       messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt,
     });
@@ -50,9 +75,9 @@ Return ONLY valid JSON, no markdown fencing or explanation.`;
     const text = response.content[0]?.text || '';
     try {
       const review = JSON.parse(text);
-      return { available: true, review };
+      return { available: true, review, model: runtimeModel };
     } catch {
-      return { available: true, review: { summary: text, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: text } };
+      return { available: true, review: { summary: text, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: text }, model: runtimeModel };
     }
   } catch (err) {
     return { available: true, error: err.message };
@@ -65,6 +90,8 @@ Return ONLY valid JSON, no markdown fencing or explanation.`;
 async function reviewSmartMerge(prs, context = {}) {
   const ai = getClient();
   if (!ai) return { available: false };
+
+  if (context.pool) await loadModelSettings(context.pool);
 
   const sqlSummary = prs.map(pr =>
     `PR #${pr.pr_number} "${pr.title}":\n${pr.sql_content}`
@@ -81,21 +108,72 @@ Return ONLY valid JSON.`;
 
   try {
     const response = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      model: runtimeModel,
+      max_tokens: runtimeMaxTokens,
       messages: [{ role: 'user', content: `Review these PRs for sequential merge:\n\n${sqlSummary}` }],
       system: systemPrompt,
     });
 
     const text = response.content[0]?.text || '';
     try {
-      return { available: true, analysis: JSON.parse(text) };
+      return { available: true, analysis: JSON.parse(text), model: runtimeModel };
     } catch {
-      return { available: true, analysis: { notes: text, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null } };
+      return { available: true, analysis: { notes: text, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: runtimeModel };
     }
   } catch (err) {
     return { available: true, error: err.message };
   }
 }
 
-module.exports = { reviewSQL, reviewSmartMerge };
+/**
+ * Perform a comprehensive system analysis — checks schema health, PR status, and reports issues.
+ */
+async function analyzeSystem(pool, projects = []) {
+  const ai = getClient();
+  if (!ai) return { available: false, error: 'AI not configured' };
+
+  await loadModelSettings(pool);
+
+  const issues = [];
+
+  // Gather system state
+  for (const project of projects) {
+    try {
+      // Check for stuck/conflict PRs
+      const { rows: problemPRs } = await pool.query(
+        `SELECT pr_number, title, status, updated_at FROM vpc_pull_requests
+         WHERE project_id = $1 AND status IN ('conflict', 'testing')
+         AND updated_at < NOW() - INTERVAL '1 hour'`,
+        [project.id]
+      );
+
+      for (const pr of problemPRs) {
+        issues.push({
+          severity: pr.status === 'conflict' ? 'warning' : 'info',
+          project: project.name,
+          message: `PR #${pr.pr_number} "${pr.title}" stuck in "${pr.status}" since ${pr.updated_at}`,
+        });
+      }
+
+      // Check for failed migrations
+      const { rows: failedMigrations } = await pool.query(
+        `SELECT name, status, applied_at FROM vpc_migrations
+         WHERE project_id = $1 AND status = 'failed'
+         ORDER BY applied_at DESC LIMIT 5`,
+        [project.id]
+      );
+
+      for (const m of failedMigrations) {
+        issues.push({
+          severity: 'error',
+          project: project.name,
+          message: `Failed migration: ${m.name}`,
+        });
+      }
+    } catch {}
+  }
+
+  return { available: true, issues, checked_at: new Date().toISOString() };
+}
+
+module.exports = { reviewSQL, reviewSmartMerge, analyzeSystem, loadModelSettings };

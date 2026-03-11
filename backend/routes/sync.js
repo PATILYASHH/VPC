@@ -7,6 +7,24 @@ const pullService = require('../services/pullService');
 const banadbService = require('../services/banadbService');
 const prService = require('../services/prService');
 const aiReviewService = require('../services/aiReviewService');
+const telegramService = require('../services/telegramService');
+
+/**
+ * Helper: get decrypt function from settings route.
+ */
+function getDecrypt() {
+  try {
+    const settingsRoute = require('./settings');
+    return settingsRoute.decrypt;
+  } catch { return () => null; }
+}
+
+/**
+ * Fire-and-forget Telegram notification.
+ */
+function notify(pool, eventType, payload) {
+  telegramService.notifyIfEnabled(pool, getDecrypt(), eventType, payload).catch(() => {});
+}
 
 /**
  * Resolve project by ID and attach to req.
@@ -78,6 +96,12 @@ router.post('/projects/:id/pull-requests', resolveProject, async (req, res) => {
       sqlContent: sql_content,
       submittedBy: req.admin?.username || 'vpshub',
     });
+
+    // Notify via Telegram
+    notify(req.app.locals.pool, 'pr_created', {
+      event: 'created', pr, project: req.project,
+    });
+
     res.status(201).json(pr);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -90,6 +114,24 @@ router.post('/projects/:id/pull-requests/:num/test', resolveProject, async (req,
     if (!pr) return res.status(404).json({ error: 'Pull request not found' });
 
     const result = await prService.testPullRequest(req.app.locals.pool, req.project, pr.id);
+
+    // Notify via Telegram
+    if (result.sandbox_result?.success && !result.conflict_result?.has_conflicts) {
+      notify(req.app.locals.pool, 'pr_test_passed', {
+        event: 'test_passed', pr, project: req.project,
+      });
+    } else if (!result.sandbox_result?.success) {
+      notify(req.app.locals.pool, 'pr_test_failed', {
+        event: 'test_failed', pr, project: req.project,
+        extra: { error: result.sandbox_result?.error },
+      });
+    } else if (result.conflict_result?.has_conflicts) {
+      notify(req.app.locals.pool, 'pr_conflict', {
+        event: 'conflict', pr, project: req.project,
+        extra: { conflicts: result.conflict_result.conflicts },
+      });
+    }
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -122,6 +164,13 @@ router.post('/projects/:id/pull-requests/:num/merge', resolveProject, async (req
     const result = await prService.mergePullRequest(
       pool, req.project, pr.id, req.admin?.username || 'vpshub'
     );
+
+    // Notify via Telegram
+    notify(pool, 'pr_merged', {
+      event: 'merged', pr: result.pr || pr, project: req.project,
+      extra: { mergedBy: req.admin?.username },
+    });
+
     res.json(result);
   } catch (err) {
     // Return 400 for user-fixable errors, 500 for server errors
@@ -137,6 +186,11 @@ router.post('/projects/:id/pull-requests/:num/close', resolveProject, async (req
     if (!pr) return res.status(404).json({ error: 'Pull request not found' });
 
     const result = await prService.closePullRequest(req.app.locals.pool, pr.id, req.admin?.username || 'vpshub');
+
+    notify(req.app.locals.pool, 'pr_closed', {
+      event: 'closed', pr, project: req.project,
+    });
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -149,6 +203,11 @@ router.post('/projects/:id/pull-requests/:num/reopen', resolveProject, async (re
     if (!pr) return res.status(404).json({ error: 'Pull request not found' });
 
     const result = await prService.reopenPullRequest(req.app.locals.pool, pr.id);
+
+    notify(req.app.locals.pool, 'pr_reopened', {
+      event: 'reopened', pr, project: req.project,
+    });
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -219,6 +278,25 @@ router.post('/projects/:id/pull-requests/:num/review', resolveProject, async (re
       existingTables,
     });
 
+    // Notify via Telegram with review results
+    if (result.available && result.review) {
+      notify(req.app.locals.pool, 'pr_reviewed', {
+        event: 'reviewed', pr, project: req.project,
+        extra: { review: result.review },
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Fix stuck PRs (applied migration but status not updated) ─
+
+router.post('/projects/:id/pull-requests/fix-stuck', resolveProject, async (req, res) => {
+  try {
+    const result = await prService.fixStuckPRs(req.app.locals.pool, req.project.id);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -308,6 +386,12 @@ router.post('/projects/:id/smart-merge', resolveProject, async (req, res) => {
     results.message = results.merged.length > 0
       ? `Merged ${results.merged.length} PR(s)${results.failed.length > 0 ? `, ${results.failed.length} failed` : ''}`
       : 'No PRs could be merged';
+
+    // Notify via Telegram
+    notify(pool, 'smart_merge', {
+      event: 'smart_merge', pr: { pr_number: 0, title: 'Smart Merge' }, project: req.project,
+      extra: { results },
+    });
 
     res.json(results);
   } catch (err) {

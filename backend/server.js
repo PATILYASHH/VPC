@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const pool = require('./db/pool');
@@ -22,6 +23,7 @@ app.use(helmet({
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://148.230.66.133:8001',
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
@@ -89,6 +91,21 @@ adminRouter.get('/me', (req, res) => {
 
 app.use('/api/admin', adminRouter);
 
+// Web hosting: serve hosted projects by slug or custom domain
+// Must come BEFORE the SPA catch-all so /koperp/ etc. are handled correctly
+const webHostingPublic = require('./routes/webHostingPublic');
+const webHostingService = require('./services/webHostingService');
+app.use(webHostingPublic);
+
+// Serve frontend static files
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDist));
+
+// SPA fallback — serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDist, 'index.html'));
+});
+
 // Error handling
 app.use((err, req, res, _next) => {
   console.error('[Server] Unhandled error:', err.message);
@@ -96,8 +113,16 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 8001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`[Server] VPC backend running on port ${PORT}`);
+  // Initialize web-hosting slug & domain caches
+  try {
+    await webHostingService.refreshSlugCache(pool);
+    await webHostingService.refreshDomainCache(pool);
+    console.log('[Server] Web-hosting caches initialized');
+  } catch (err) {
+    console.error('[Server] Failed to init web-hosting caches:', err.message);
+  }
 });
 
 module.exports = app;

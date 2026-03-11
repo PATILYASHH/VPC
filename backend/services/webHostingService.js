@@ -100,6 +100,85 @@ function writeEnvFile(deployPath, envVars) {
   }
 }
 
+// Auto-patch frontend source files so SPA works under /{slug}/ subdirectory
+// Handles: BrowserRouter basename, API base URLs, login redirects
+function patchFrontendForSlug(deployPath, slug, detected) {
+  const frontendDir = detected.frontendDir;
+  const srcDir = frontendDir
+    ? path.join(deployPath, frontendDir, 'src')
+    : path.join(deployPath, 'src');
+
+  if (!fs.existsSync(srcDir)) return 0;
+
+  let patchCount = 0;
+
+  // Recursively find all .js, .jsx, .ts, .tsx files
+  const files = findSourceFiles(srcDir);
+
+  for (const filePath of files) {
+    let content;
+    try { content = fs.readFileSync(filePath, 'utf8'); } catch { continue; }
+    let modified = false;
+    let newContent = content;
+
+    // 1. Patch BrowserRouter without basename → add basename="/{slug}"
+    // Matches: <BrowserRouter> but NOT <BrowserRouter basename=
+    newContent = newContent.replace(
+      /(<BrowserRouter)(?!\s+basename)([\s>])/g,
+      `$1 basename="/${slug}"$2`
+    );
+
+    // 2. Patch common API base patterns
+    // const BASE = '/api' → const BASE = '/{slug}/api'
+    newContent = newContent.replace(
+      /const\s+BASE\s*=\s*['"]\/api['"]/g,
+      `const BASE = '/${slug}/api'`
+    );
+    // baseURL: '/api' → baseURL: '/{slug}/api'
+    newContent = newContent.replace(
+      /baseURL:\s*['"]\/api['"]/g,
+      `baseURL: '/${slug}/api'`
+    );
+    // axios.defaults.baseURL = '/api' or ""
+    newContent = newContent.replace(
+      /axios\.defaults\.baseURL\s*=\s*['"]\/api['"]/g,
+      `axios.defaults.baseURL = '/${slug}/api'`
+    );
+
+    // 3. Patch login redirect paths
+    // window.location.href = '/login' → '/{slug}/login'
+    newContent = newContent.replace(
+      /window\.location\.href\s*=\s*['"]\/login['"]/g,
+      `window.location.href = '/${slug}/login'`
+    );
+
+    if (newContent !== content) {
+      fs.writeFileSync(filePath, newContent, 'utf8');
+      patchCount++;
+      modified = true;
+    }
+  }
+
+  return patchCount;
+}
+
+function findSourceFiles(dir) {
+  const results = [];
+  const exts = new Set(['.js', '.jsx', '.ts', '.tsx']);
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== '.git') {
+        results.push(...findSourceFiles(fullPath));
+      } else if (entry.isFile() && exts.has(path.extname(entry.name))) {
+        results.push(fullPath);
+      }
+    }
+  } catch {}
+  return results;
+}
+
 // Bug #5: Generate PM2 ecosystem config file
 function writeEcosystemConfig(deployPath, pm2Name, entryPath, envVars, cwd) {
   const config = {
@@ -491,11 +570,21 @@ async function deploy(pool, project) {
     // Bug #2: Always run install command if set — don't gate on root package.json
     if (project.install_command) {
       log += `> ${project.install_command}\n`;
-      const installOut = await runCommand(project.install_command, deployPath);
+      const installOut = await runCommand(project.install_command, deployPath, { NODE_ENV: 'development' });
       log += installOut + '\n';
 
       // Bug #3: chmod +x node_modules/.bin after install
       chmodBinDirs(deployPath);
+    }
+
+    // Auto-patch frontend code for slug-based hosting
+    // Apps in repos assume they run at "/", but VPC hosts them at "/{slug}/"
+    // Patch common patterns so SPA routing and API calls work correctly
+    if (detected.frontendDir || detected.framework) {
+      const patchCount = patchFrontendForSlug(deployPath, project.slug, detected);
+      if (patchCount > 0) {
+        log += `> Auto-patched ${patchCount} frontend file(s) for /${project.slug}/ hosting\n`;
+      }
     }
 
     // Build

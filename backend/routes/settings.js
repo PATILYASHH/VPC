@@ -225,6 +225,151 @@ router.post('/ai-agent/test', async (req, res) => {
   }
 });
 
+// ─── Telegram Bot Settings ───────────────────────────────
+
+router.get('/telegram/config', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    await ensureTable(pool);
+
+    const { rows } = await pool.query(
+      "SELECT key, value, is_secret FROM vpc_settings WHERE key IN ('telegram_bot_token', 'telegram_chat_id', 'telegram_notifications')"
+    );
+
+    const config = { bot_token_set: false, chat_id: '', notifications: getDefaultTelegramNotifications() };
+    for (const row of rows) {
+      if (row.key === 'telegram_bot_token' && row.value) {
+        const decrypted = decrypt(row.value);
+        config.bot_token_set = !!decrypted;
+        config.bot_token_mask = decrypted ? maskSecret(decrypted) : '';
+      } else if (row.key === 'telegram_chat_id') {
+        config.chat_id = row.value || '';
+      } else if (row.key === 'telegram_notifications') {
+        try { config.notifications = { ...getDefaultTelegramNotifications(), ...JSON.parse(row.value) }; } catch {}
+      }
+    }
+
+    res.json(config);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/telegram/config', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    await ensureTable(pool);
+    const { bot_token, chat_id, notifications } = req.body;
+    const updatedBy = req.admin?.username || 'system';
+
+    // Save bot token (encrypted)
+    if (bot_token) {
+      const encToken = encrypt(bot_token);
+      await pool.query(`
+        INSERT INTO vpc_settings (key, value, is_secret, updated_at, updated_by)
+        VALUES ('telegram_bot_token', $1, TRUE, NOW(), $2)
+        ON CONFLICT (key) DO UPDATE SET value = $1, is_secret = TRUE, updated_at = NOW(), updated_by = $2
+      `, [encToken, updatedBy]);
+    }
+
+    // Save chat ID (not secret)
+    if (chat_id !== undefined) {
+      await pool.query(`
+        INSERT INTO vpc_settings (key, value, is_secret, updated_at, updated_by)
+        VALUES ('telegram_chat_id', $1, FALSE, NOW(), $2)
+        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2
+      `, [chat_id, updatedBy]);
+    }
+
+    // Save notification preferences
+    if (notifications) {
+      await pool.query(`
+        INSERT INTO vpc_settings (key, value, is_secret, updated_at, updated_by)
+        VALUES ('telegram_notifications', $1, FALSE, NOW(), $2)
+        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW(), updated_by = $2
+      `, [JSON.stringify(notifications), updatedBy]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/telegram/config', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    await ensureTable(pool);
+    await pool.query("DELETE FROM vpc_settings WHERE key IN ('telegram_bot_token', 'telegram_chat_id', 'telegram_notifications')");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/telegram/test', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    await ensureTable(pool);
+
+    // Get bot token
+    let botToken = null;
+    const { rows: tokenRows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'telegram_bot_token'");
+    if (tokenRows[0]?.value) {
+      botToken = decrypt(tokenRows[0].value);
+    }
+    // Allow override from request body for initial setup
+    if (req.body.bot_token) botToken = req.body.bot_token;
+
+    if (!botToken) return res.json({ success: false, error: 'No bot token configured' });
+
+    // Get chat ID
+    let chatId = req.body.chat_id;
+    if (!chatId) {
+      const { rows: chatRows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'telegram_chat_id'");
+      chatId = chatRows[0]?.value;
+    }
+
+    const telegramService = require('../services/telegramService');
+
+    // Test bot connection
+    const botInfo = await telegramService.testConnection(botToken);
+
+    // If chat ID provided, send a test message
+    if (chatId) {
+      await telegramService.sendMessage(botToken, chatId,
+        '🔗 <b>VPC OS Connected!</b>\n\nTelegram notifications are now active. You will receive PR status updates and system alerts here.'
+      );
+    }
+
+    res.json({
+      success: true,
+      bot: {
+        username: botInfo.username,
+        first_name: botInfo.first_name,
+      },
+      message_sent: !!chatId,
+    });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+function getDefaultTelegramNotifications() {
+  return {
+    pr_created: true,
+    pr_reviewed: true,
+    pr_merged: true,
+    pr_closed: false,
+    pr_reopened: false,
+    pr_conflict: true,
+    pr_test_passed: false,
+    pr_test_failed: true,
+    smart_merge: true,
+    system_alerts: true,
+  };
+}
+
 function getDefaultPermissions() {
   return {
     pr_review: true,
@@ -237,5 +382,8 @@ function getDefaultPermissions() {
     model: 'claude-sonnet-4-20250514',
   };
 }
+
+// Export decrypt for use by telegramService
+router.decrypt = decrypt;
 
 module.exports = router;

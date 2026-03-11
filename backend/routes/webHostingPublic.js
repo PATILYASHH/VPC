@@ -97,6 +97,12 @@ router.use(async (req, res, next) => {
   serveStatic(project, subPath, res, next);
 });
 
+// Detect paths that should always be proxied to the backend
+function isApiPath(subPath) {
+  const apiPrefixes = ['/api', '/auth', '/health', '/socket.io', '/graphql', '/rest', '/.netlify/functions'];
+  return apiPrefixes.some(p => subPath.startsWith(p));
+}
+
 // Bug #8: Helper to append query string to a path
 function appendQuery(targetPath, queryString) {
   if (!queryString) return targetPath;
@@ -158,6 +164,12 @@ function serveFullstack(req, res, next, project, subPath, queryString) {
     return proxyRequest(req, res, project.node_port, proxyPath);
   }
 
+  // API/backend paths should always be proxied, never SPA-fallback'd
+  if (isApiPath(subPath)) {
+    const proxyPath = appendQuery(subPath, queryString);
+    return proxyRequest(req, res, project.node_port, proxyPath);
+  }
+
   // No extension or .html — try SPA fallback (index.html)
   if (!ext || ext === '.html') {
     const indexPath = path.join(baseDir, 'index.html');
@@ -186,14 +198,19 @@ function proxyRequest(req, res, port, targetPath) {
   });
 
   proxyReq.on('error', () => {
-    res.status(502).json({ error: 'Backend is not responding' });
+    if (!res.headersSent) {
+      res.status(502).json({ error: 'Backend is not responding' });
+    }
   });
 
-  if (req.body && Object.keys(req.body).length > 0) {
-    proxyReq.write(JSON.stringify(req.body));
+  // If body was already parsed by express.json(), send it manually
+  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
+    const bodyData = JSON.stringify(req.body);
+    options.headers['content-length'] = Buffer.byteLength(bodyData);
+    proxyReq.end(bodyData);
+  } else {
+    req.pipe(proxyReq);
   }
-
-  req.pipe(proxyReq);
 }
 
 function serveStatic(project, subPath, res, next) {
