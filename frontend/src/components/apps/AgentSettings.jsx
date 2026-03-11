@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
   Zap, Key, Eye, EyeOff, Save, Loader2, CheckCircle2, XCircle,
-  Shield, RefreshCw, AlertTriangle, Settings, Brain,
+  Shield, RefreshCw, AlertTriangle, Settings, Brain, Send, Bell, Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +44,19 @@ const MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', description: 'Fastest, lowest cost' },
 ];
 
+const NOTIFICATION_OPTIONS = [
+  { key: 'pr_created', label: 'PR Created', description: 'When a new pull request is created' },
+  { key: 'pr_reviewed', label: 'AI Review Complete', description: 'When AI finishes reviewing a PR' },
+  { key: 'pr_merged', label: 'PR Merged', description: 'When a pull request is merged' },
+  { key: 'pr_closed', label: 'PR Closed', description: 'When a pull request is closed' },
+  { key: 'pr_reopened', label: 'PR Reopened', description: 'When a pull request is reopened' },
+  { key: 'pr_conflict', label: 'Conflicts Detected', description: 'When conflicts are found in a PR' },
+  { key: 'pr_test_passed', label: 'Sandbox Test Passed', description: 'When sandbox test passes' },
+  { key: 'pr_test_failed', label: 'Sandbox Test Failed', description: 'When sandbox test fails' },
+  { key: 'smart_merge', label: 'Smart Merge Results', description: 'When smart merge completes' },
+  { key: 'system_alerts', label: 'System Alerts', description: 'Critical system issues and alerts' },
+];
+
 export default function AgentSettings() {
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
@@ -56,6 +69,17 @@ export default function AgentSettings() {
   const [savingPerms, setSavingPerms] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Telegram state
+  const [tgBotToken, setTgBotToken] = useState('');
+  const [tgChatId, setTgChatId] = useState('');
+  const [tgShowToken, setTgShowToken] = useState(false);
+  const [tgTokenSet, setTgTokenSet] = useState(false);
+  const [tgTokenMask, setTgTokenMask] = useState('');
+  const [tgNotifications, setTgNotifications] = useState({});
+  const [tgSaving, setTgSaving] = useState(false);
+  const [tgTesting, setTgTesting] = useState(false);
+  const [tgTestResult, setTgTestResult] = useState(null);
+
   useEffect(() => {
     loadSettings();
   }, []);
@@ -63,18 +87,27 @@ export default function AgentSettings() {
   async function loadSettings() {
     setLoading(true);
     try {
-      const [settingsRes, permsRes] = await Promise.all([
+      const [settingsRes, permsRes, tgRes] = await Promise.all([
         api.get('/admin/settings/anthropic_api_key'),
         api.get('/admin/settings/ai-agent/permissions'),
+        api.get('/admin/settings/telegram/config').catch(() => ({ data: {} })),
       ]);
       if (settingsRes.data.is_set) {
         setKeyIsSet(true);
         setSavedKeyMask(settingsRes.data.value || '***');
       }
       setPermissions(permsRes.data.permissions);
+
+      // Telegram config
+      if (tgRes.data) {
+        setTgTokenSet(tgRes.data.bot_token_set || false);
+        setTgTokenMask(tgRes.data.bot_token_mask || '');
+        setTgChatId(tgRes.data.chat_id || '');
+        setTgNotifications(tgRes.data.notifications || getDefaultNotifications());
+      }
     } catch {
-      // Settings table might not exist yet, use defaults
       setPermissions(getDefaults());
+      setTgNotifications(getDefaultNotifications());
     } finally {
       setLoading(false);
     }
@@ -90,6 +123,21 @@ export default function AgentSettings() {
       auto_review_on_create: false,
       max_tokens_per_request: 4000,
       model: 'claude-sonnet-4-20250514',
+    };
+  }
+
+  function getDefaultNotifications() {
+    return {
+      pr_created: true,
+      pr_reviewed: true,
+      pr_merged: true,
+      pr_closed: false,
+      pr_reopened: false,
+      pr_conflict: true,
+      pr_test_passed: false,
+      pr_test_failed: true,
+      smart_merge: true,
+      system_alerts: true,
     };
   }
 
@@ -160,6 +208,74 @@ export default function AgentSettings() {
     }
   }
 
+  // ─── Telegram handlers ─────────────────────────────────────
+
+  async function handleSaveTelegram() {
+    setTgSaving(true);
+    try {
+      const payload = { notifications: tgNotifications };
+      if (tgBotToken.trim()) payload.bot_token = tgBotToken.trim();
+      if (tgChatId !== undefined) payload.chat_id = tgChatId.trim();
+
+      await api.put('/admin/settings/telegram/config', payload);
+      toast.success('Telegram settings saved');
+
+      if (tgBotToken.trim()) {
+        setTgTokenSet(true);
+        setTgTokenMask(tgBotToken.slice(0, 8) + '...' + tgBotToken.slice(-4));
+        setTgBotToken('');
+        setTgShowToken(false);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save Telegram settings');
+    } finally {
+      setTgSaving(false);
+    }
+  }
+
+  async function handleRemoveTelegram() {
+    if (!confirm('Remove Telegram integration? Notifications will stop.')) return;
+    try {
+      await api.delete('/admin/settings/telegram/config');
+      toast.success('Telegram integration removed');
+      setTgTokenSet(false);
+      setTgTokenMask('');
+      setTgBotToken('');
+      setTgChatId('');
+      setTgNotifications(getDefaultNotifications());
+      setTgTestResult(null);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to remove');
+    }
+  }
+
+  async function handleTestTelegram() {
+    setTgTesting(true);
+    setTgTestResult(null);
+    try {
+      const payload = {};
+      if (tgBotToken.trim()) payload.bot_token = tgBotToken.trim();
+      if (tgChatId.trim()) payload.chat_id = tgChatId.trim();
+
+      const { data } = await api.post('/admin/settings/telegram/test', payload);
+      setTgTestResult(data);
+      if (data.success) {
+        toast.success(`Connected to @${data.bot?.username}${data.message_sent ? ' — test message sent!' : ''}`);
+      } else {
+        toast.error(data.error || 'Connection failed');
+      }
+    } catch (err) {
+      setTgTestResult({ success: false, error: err.response?.data?.error || 'Test failed' });
+      toast.error('Telegram test failed');
+    } finally {
+      setTgTesting(false);
+    }
+  }
+
+  function toggleTgNotification(key) {
+    setTgNotifications(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -175,7 +291,7 @@ export default function AgentSettings() {
           <Brain className="w-5 h-5 text-purple-400" />
           <h1 className="text-sm font-semibold">AI Agent Settings</h1>
         </div>
-        <p className="text-xs text-muted-foreground mt-0.5">Configure Claude AI integration for PR review, smart merge, and SQL analysis</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Configure Claude AI integration, permissions, and Telegram notifications</p>
       </div>
 
       <Tabs defaultValue="connection" className="flex-1 flex flex-col overflow-hidden">
@@ -183,6 +299,10 @@ export default function AgentSettings() {
           <TabsTrigger value="connection">Connection</TabsTrigger>
           <TabsTrigger value="permissions">Permissions</TabsTrigger>
           <TabsTrigger value="model">Model</TabsTrigger>
+          <TabsTrigger value="telegram" className="flex items-center gap-1.5">
+            <Send className="w-3 h-3" />
+            Telegram
+          </TabsTrigger>
         </TabsList>
 
         {/* Connection Tab */}
@@ -416,6 +536,203 @@ export default function AgentSettings() {
               {savingPerms ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
               Save Model Selection
             </Button>
+          </div>
+        </TabsContent>
+
+        {/* Telegram Tab */}
+        <TabsContent value="telegram" className="flex-1 overflow-auto p-4">
+          <div className="max-w-lg space-y-6">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-medium flex items-center gap-2">
+                  <Send className="w-4 h-4 text-blue-400" /> Telegram Notifications
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Get instant PR status updates and system alerts via Telegram
+                </p>
+              </div>
+              {tgTokenSet && (
+                <Button variant="ghost" size="sm" className="text-xs text-destructive" onClick={handleRemoveTelegram}>
+                  <Trash2 className="w-3 h-3 mr-1" /> Remove
+                </Button>
+              )}
+            </div>
+
+            {/* Bot Token */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Bot Token</h3>
+              </div>
+
+              {tgTokenSet && (
+                <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-emerald-400">Bot token configured</p>
+                    <p className="text-xs font-mono text-muted-foreground">{tgTokenMask}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">{tgTokenSet ? 'Update Bot Token' : 'Bot Token'}</Label>
+                <div className="relative">
+                  <Input
+                    type={tgShowToken ? 'text' : 'password'}
+                    value={tgBotToken}
+                    onChange={e => setTgBotToken(e.target.value)}
+                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz..."
+                    className="text-sm font-mono pr-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setTgShowToken(!tgShowToken)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {tgShowToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Create a bot via{' '}
+                  <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    @BotFather
+                  </a>
+                  {' '}on Telegram and paste the token here.
+                </p>
+              </div>
+            </div>
+
+            {/* Chat ID / User ID */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Chat ID / User ID</h3>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Telegram Chat ID</Label>
+                <Input
+                  type="text"
+                  value={tgChatId}
+                  onChange={e => setTgChatId(e.target.value)}
+                  placeholder="123456789 or -100123456789"
+                  className="text-sm font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Your personal user ID or group chat ID. Send <code>/start</code> to{' '}
+                  <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    @userinfobot
+                  </a>
+                  {' '}to get your ID.
+                </p>
+              </div>
+            </div>
+
+            {/* Test Connection */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-muted-foreground" />
+                  <h3 className="text-sm font-medium">Test Connection</h3>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleTestTelegram}
+                  disabled={tgTesting || (!tgTokenSet && !tgBotToken.trim())}
+                >
+                  {tgTesting
+                    ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Testing...</>
+                    : <><Send className="w-3.5 h-3.5 mr-1.5" /> Test & Send Message</>
+                  }
+                </Button>
+              </div>
+
+              {tgTestResult && (
+                <div className={`flex items-start gap-2 p-3 rounded-lg border ${
+                  tgTestResult.success
+                    ? 'bg-emerald-500/5 border-emerald-500/20'
+                    : 'bg-red-500/5 border-red-500/20'
+                }`}>
+                  {tgTestResult.success ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-emerald-400">
+                          Connected to @{tgTestResult.bot?.username}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {tgTestResult.message_sent ? 'Test message sent to your chat' : 'Bot verified (add Chat ID to send messages)'}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-4 h-4 text-red-400 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-medium text-red-400">Connection failed</p>
+                        <p className="text-[10px] text-red-400/70 font-mono">{tgTestResult.error}</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Notification Preferences */}
+            <div className="border rounded-lg overflow-hidden">
+              <div className="bg-muted/50 px-4 py-2 border-b">
+                <h4 className="text-xs font-semibold">Notification Preferences</h4>
+                <p className="text-[10px] text-muted-foreground">Choose which events trigger Telegram notifications</p>
+              </div>
+              <div className="divide-y">
+                {NOTIFICATION_OPTIONS.map(opt => (
+                  <label
+                    key={opt.key}
+                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!tgNotifications[opt.key]}
+                      onChange={() => toggleTgNotification(opt.key)}
+                      className="rounded"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium block">{opt.label}</span>
+                      <span className="text-[10px] text-muted-foreground">{opt.description}</span>
+                    </div>
+                    <Badge variant="outline" className={`text-[9px] ${
+                      tgNotifications[opt.key] ? 'border-blue-500/40 text-blue-400' : 'border-zinc-500/40 text-zinc-500'
+                    }`}>
+                      {tgNotifications[opt.key] ? 'on' : 'off'}
+                    </Badge>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <Button size="sm" onClick={handleSaveTelegram} disabled={tgSaving}>
+              {tgSaving ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              Save Telegram Settings
+            </Button>
+
+            {/* Info */}
+            <div className="flex items-start gap-2 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg text-xs text-muted-foreground">
+              <Send className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p><b>How to set up:</b></p>
+                <ol className="list-decimal list-inside space-y-0.5 text-[10px]">
+                  <li>Open Telegram and search for <b>@BotFather</b></li>
+                  <li>Send <code>/newbot</code> and follow the prompts to create a bot</li>
+                  <li>Copy the bot token and paste it above</li>
+                  <li>Send <code>/start</code> to <b>@userinfobot</b> to get your Chat ID</li>
+                  <li>Paste your Chat ID above and click "Test & Send Message"</li>
+                </ol>
+                <p className="mt-1">The bot token is encrypted at rest. Notifications are sent in real-time for all enabled events.</p>
+              </div>
+            </div>
           </div>
         </TabsContent>
       </Tabs>

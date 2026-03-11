@@ -148,15 +148,59 @@ async function pushMigration(pool, project, migrationId) {
     `);
 
     // Reassign any remaining objects to the project user
+    // Cannot use REASSIGN OWNED BY because it tries to change ownership of
+    // event triggers (_vpc_ddl_trigger, _vpc_drop_trigger) which requires
+    // superuser privileges. Instead, reassign only tables, sequences, and functions.
     if (project.db_user) {
       const dbUser = quoteIdentifier(project.db_user);
-      await execPool.query(`REASSIGN OWNED BY CURRENT_USER TO ${dbUser}`);
+      await execPool.query(`
+        DO $$
+        DECLARE
+          r RECORD;
+        BEGIN
+          -- Reassign tables
+          FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tableowner = current_user
+          LOOP
+            EXECUTE format('ALTER TABLE public.%I OWNER TO ${project.db_user.replace(/'/g, "''")}', r.tablename);
+          END LOOP;
+          -- Reassign sequences
+          FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' AND sequenceowner = current_user
+          LOOP
+            EXECUTE format('ALTER SEQUENCE public.%I OWNER TO ${project.db_user.replace(/'/g, "''")}', r.sequencename);
+          END LOOP;
+          -- Reassign functions
+          FOR r IN SELECT p.oid::regprocedure AS func_signature
+                   FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+                   WHERE n.nspname = 'public' AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+                   AND p.proname NOT LIKE '_vpc_%'
+          LOOP
+            EXECUTE format('ALTER FUNCTION %s OWNER TO ${project.db_user.replace(/'/g, "''")}', r.func_signature);
+          END LOOP;
+        END $$;
+      `);
     }
 
     await pool.query(
       `UPDATE vpc_migrations SET status = 'applied', applied_at = NOW() WHERE id = $1`,
       [migrationId]
     );
+
+    // Mark any open PRs linked to this migration as merged
+    await pool.query(
+      `UPDATE vpc_pull_requests
+       SET status = 'merged', merged_at = NOW(), updated_at = NOW()
+       WHERE migration_id = $1 AND status IN ('open', 'testing', 'conflict')`,
+      [migrationId]
+    ).catch(() => {});
+
+    // Also mark open PRs whose sql_content matches this migration's sql_up
+    await pool.query(
+      `UPDATE vpc_pull_requests
+       SET status = 'merged', merged_at = NOW(), migration_id = $1, updated_at = NOW()
+       WHERE project_id = $2 AND status IN ('open', 'testing', 'conflict')
+         AND sql_content = $3`,
+      [migrationId, project.id, migration.sql_up]
+    ).catch(() => {});
 
     // Save schema snapshot after apply
     const snapshot = await getSchemaSnapshot(execPool);
@@ -487,17 +531,48 @@ async function reinstallTracking(project) {
 /**
  * Fix ownership of all public-schema objects in a project database.
  * Reassigns tables/sequences/functions owned by the admin user to the project user.
+ * Skips event triggers since only superusers can change their ownership.
  */
 async function fixOwnership(project) {
   if (!project.db_user) throw new Error('Project has no db_user');
 
   const adminPool = getAdminPool(project);
   try {
-    const dbUser = quoteIdentifier(project.db_user);
-    const adminUser = quoteIdentifier(process.env.DB_USER);
+    const safeUser = project.db_user.replace(/'/g, "''");
+    const adminDbUser = (process.env.DB_USER || 'vpc_admin').replace(/'/g, "''");
 
-    // Reassign all objects owned by the admin user to the project user
-    await adminPool.query(`REASSIGN OWNED BY ${adminUser} TO ${dbUser}`);
+    await adminPool.query(`
+      DO $$
+      DECLARE
+        r RECORD;
+      BEGIN
+        -- Reassign tables
+        FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tableowner = '${adminDbUser}'
+        LOOP
+          EXECUTE format('ALTER TABLE public.%I OWNER TO ${safeUser}', r.tablename);
+        END LOOP;
+        -- Reassign sequences
+        FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public' AND sequenceowner = '${adminDbUser}'
+        LOOP
+          EXECUTE format('ALTER SEQUENCE public.%I OWNER TO ${safeUser}', r.sequencename);
+        END LOOP;
+        -- Reassign functions (skip internal _vpc_ functions used by event triggers)
+        FOR r IN SELECT p.oid::regprocedure AS func_signature
+                 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+                 WHERE n.nspname = 'public' AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = '${adminDbUser}')
+                 AND p.proname NOT LIKE '_vpc_%'
+        LOOP
+          EXECUTE format('ALTER FUNCTION %s OWNER TO ${safeUser}', r.func_signature);
+        END LOOP;
+        -- Reassign types/domains
+        FOR r IN SELECT typname FROM pg_type t JOIN pg_namespace n ON t.typnamespace = n.oid
+                 WHERE n.nspname = 'public' AND t.typowner = (SELECT oid FROM pg_roles WHERE rolname = '${adminDbUser}')
+                 AND t.typtype IN ('c','e','d')
+        LOOP
+          EXECUTE format('ALTER TYPE public.%I OWNER TO ${safeUser}', r.typname);
+        END LOOP;
+      END $$;
+    `);
   } finally {
     await adminPool.end();
   }

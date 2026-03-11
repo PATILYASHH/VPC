@@ -323,6 +323,34 @@ async function mergePullRequest(pool, project, prId, mergedBy) {
   return { pr: merged.rows[0], migration };
 }
 
+/**
+ * Fix PRs stuck in 'open' or 'testing' status whose migrations were already applied.
+ * This handles cases where pushMigration succeeded but the status update failed
+ * (e.g. due to the event trigger permission error).
+ */
+async function fixStuckPRs(pool, projectId) {
+  const { rows: stuckPRs } = await pool.query(
+    `SELECT pr.id, pr.pr_number, pr.title, pr.status, m.id AS migration_id, m.status AS migration_status
+     FROM vpc_pull_requests pr
+     JOIN vpc_migrations m ON m.id = pr.migration_id
+     WHERE pr.project_id = $1
+       AND pr.status IN ('open', 'testing', 'conflict')
+       AND m.status = 'applied'`,
+    [projectId]
+  );
+
+  const fixed = [];
+  for (const pr of stuckPRs) {
+    await pool.query(
+      `UPDATE vpc_pull_requests SET status = 'merged', merged_at = COALESCE(merged_at, NOW()), updated_at = NOW() WHERE id = $1`,
+      [pr.id]
+    );
+    fixed.push({ id: pr.id, pr_number: pr.pr_number, title: pr.title });
+  }
+
+  return { fixed_count: fixed.length, fixed };
+}
+
 module.exports = {
   createPullRequest,
   getPullRequests,
@@ -335,4 +363,5 @@ module.exports = {
   reopenPullRequest,
   mergePullRequest,
   parseDDLOperations,
+  fixStuckPRs,
 };
