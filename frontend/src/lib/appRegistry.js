@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -11,6 +11,7 @@ import VpcAuth from '@/components/apps/VpcAuth';
 import Gallery from '@/components/apps/Gallery';
 import WebHosting from '@/components/apps/WebHosting';
 import VPSHub from '@/components/apps/VPSHub';
+import AgentSettings from '@/components/apps/AgentSettings';
 
 const APP_REGISTRY = {
   'server-manager': {
@@ -143,6 +144,17 @@ const APP_REGISTRY = {
     defaultHeight: 700,
     minWidth: 800,
     minHeight: 500,
+  },
+  'agent-settings': {
+    id: 'agent-settings',
+    title: 'AI Agent',
+    icon: Brain,
+    component: AgentSettings,
+    permission: 'ai_agent',
+    defaultWidth: 850,
+    defaultHeight: 600,
+    minWidth: 500,
+    minHeight: 400,
   },
 };
 

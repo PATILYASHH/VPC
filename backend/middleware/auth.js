@@ -14,6 +14,7 @@ const ROUTE_PERMISSION_MAP = {
   '/gallery': 'gallery',
   '/sync': 'banadb',
   '/web-hosting': 'web_hosting',
+  '/settings': 'ai_agent',
 };
 
 async function authenticateAdmin(req, res, next) {

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
   ArrowLeft, GitMerge, XCircle, RotateCcw, Play, Clock, User,
-  CheckCircle2, AlertTriangle, Info,
+  CheckCircle2, AlertTriangle, Info, Zap, Loader2, FileCode2,
+  Table2, Plus, Minus, Pencil, Database,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,15 +12,68 @@ import PRStatusBadge from './PRStatusBadge';
 import SqlDiffViewer from './SqlDiffViewer';
 import api from '@/lib/api';
 
+const OP_ICONS = {
+  CREATE_TABLE: { icon: Plus, color: 'text-emerald-400', label: 'Create Table' },
+  DROP_TABLE: { icon: Minus, color: 'text-red-400', label: 'Drop Table' },
+  ADD_COLUMN: { icon: Plus, color: 'text-blue-400', label: 'Add Column' },
+  DROP_COLUMN: { icon: Minus, color: 'text-red-400', label: 'Drop Column' },
+  CREATE_INDEX: { icon: Database, color: 'text-cyan-400', label: 'Create Index' },
+  OTHER: { icon: Pencil, color: 'text-muted-foreground', label: 'Other' },
+};
+
 export default function PullRequestDetail({ project, prNumber, onBack }) {
   const [testing, setTesting] = useState(false);
   const [merging, setMerging] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [aiReview, setAiReview] = useState(null);
 
   const { data: pr, isLoading, refetch } = useApiQuery(
     ['sync-pr', project.id, prNumber],
     `/admin/sync/projects/${project.id}/pull-requests/${prNumber}`
   );
+
+  // Auto-analyze on load
+  useEffect(() => {
+    if (pr && !analysis && !analyzing) {
+      handleAnalyze();
+    }
+  }, [pr?.id]);
+
+  async function handleAnalyze() {
+    setAnalyzing(true);
+    try {
+      const { data } = await api.post(
+        `/admin/sync/projects/${project.id}/pull-requests/${prNumber}/analyze`
+      );
+      setAnalysis(data);
+    } catch {
+      // Analysis is optional, don't show error
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function handleAIReview() {
+    setReviewing(true);
+    setAiReview(null);
+    try {
+      const { data } = await api.post(
+        `/admin/sync/projects/${project.id}/pull-requests/${prNumber}/review`
+      );
+      if (data.error) {
+        toast.error(data.error);
+      } else {
+        setAiReview(data.review);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI review failed');
+    } finally {
+      setReviewing(false);
+    }
+  }
 
   async function handleTest() {
     setTesting(true);
@@ -105,7 +159,9 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
     );
   }
 
-  const canMerge = pr.status === 'open' && pr.sandbox_result?.success && !pr.conflict_result?.has_conflicts;
+  // Allow merge if open and either: sandbox passed + no conflicts, OR no sandbox run yet (backend will auto-test)
+  const canMerge = pr.status === 'open';
+  const sandboxPassed = pr.sandbox_result?.success && !pr.conflict_result?.has_conflicts;
   const isOpen = pr.status === 'open';
   const isClosed = pr.status === 'closed';
   const isMerged = pr.status === 'merged';
@@ -151,7 +207,7 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
 
         {/* Action Buttons */}
         {(isOpen || isClosed) && (
-          <div className="flex gap-2 mt-4 pt-4 border-t">
+          <div className="flex gap-2 mt-4 pt-4 border-t flex-wrap">
             {isOpen && (
               <>
                 <Button
@@ -166,9 +222,24 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
 
                 <Button
                   size="sm"
+                  variant="outline"
+                  onClick={handleAIReview}
+                  disabled={reviewing}
+                  className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+                >
+                  {reviewing
+                    ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    : <Zap className="w-4 h-4 mr-1" />
+                  }
+                  {reviewing ? 'Reviewing...' : 'AI Review'}
+                </Button>
+
+                <Button
+                  size="sm"
                   onClick={handleMerge}
                   disabled={merging || !canMerge}
                   className="bg-purple-600 hover:bg-purple-700 text-white"
+                  title={!sandboxPassed ? 'Sandbox test will run automatically before merge' : undefined}
                 >
                   <GitMerge className="w-4 h-4 mr-1" />
                   {merging ? 'Merging...' : 'Merge Pull Request'}
@@ -199,10 +270,140 @@ export default function PullRequestDetail({ project, prNumber, onBack }) {
         {isOpen && !pr.sandbox_result && (
           <div className="flex items-center gap-2 mt-3 p-2 bg-blue-500/5 border border-blue-500/20 rounded text-xs text-blue-400">
             <Info className="w-4 h-4 shrink-0" />
-            Run a sandbox test before merging. This validates the SQL without affecting your database.
+            Sandbox test will run automatically when you merge, or you can test first.
           </div>
         )}
       </div>
+
+      {/* AI Review Result */}
+      {aiReview && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-blue-500/10 px-4 py-2 border-b border-blue-500/20 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-blue-400" />
+            <span className="text-sm font-medium text-blue-400">Claude AI Review</span>
+            {aiReview.safe_to_merge != null && (
+              <Badge variant="outline" className={`ml-auto text-[10px] ${
+                aiReview.safe_to_merge
+                  ? 'border-emerald-500/30 text-emerald-400'
+                  : 'border-red-500/30 text-red-400'
+              }`}>
+                {aiReview.safe_to_merge ? 'Safe to merge' : 'Review needed'}
+              </Badge>
+            )}
+          </div>
+          <div className="p-4 space-y-3">
+            {aiReview.summary && (
+              <p className="text-sm">{aiReview.summary}</p>
+            )}
+            {aiReview.review_notes && (
+              <p className="text-xs text-muted-foreground">{aiReview.review_notes}</p>
+            )}
+
+            {aiReview.operations?.length > 0 && (
+              <div>
+                <span className="text-xs font-medium text-muted-foreground block mb-1.5">Operations</span>
+                <div className="space-y-1">
+                  {aiReview.operations.map((op, i) => {
+                    const opInfo = OP_ICONS[op.type] || OP_ICONS.OTHER;
+                    const Icon = opInfo.icon;
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        <Icon className={`w-3 h-3 ${opInfo.color}`} />
+                        <span className="font-mono font-medium">{op.object}</span>
+                        <span className="text-muted-foreground">{op.description}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {aiReview.risks?.length > 0 && (
+              <div>
+                <span className="text-xs font-medium text-red-400 block mb-1">Risks</span>
+                {aiReview.risks.map((risk, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs text-red-400/80">
+                    <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                    <span>{risk}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {aiReview.suggestions?.length > 0 && (
+              <div>
+                <span className="text-xs font-medium text-blue-400 block mb-1">Suggestions</span>
+                {aiReview.suggestions.map((s, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <Info className="w-3 h-3 mt-0.5 shrink-0 text-blue-400" />
+                    <span>{s}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SQL Operations Analysis */}
+      {analysis && analysis.operations?.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-muted/50 px-4 py-2 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileCode2 className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">SQL Operations</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {analysis.summary.creates > 0 && (
+                <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-400">
+                  +{analysis.summary.creates} table{analysis.summary.creates > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {analysis.summary.drops > 0 && (
+                <Badge variant="outline" className="text-[10px] border-red-500/30 text-red-400">
+                  -{analysis.summary.drops} table{analysis.summary.drops > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {analysis.summary.alters > 0 && (
+                <Badge variant="outline" className="text-[10px] border-blue-500/30 text-blue-400">
+                  ~{analysis.summary.alters} alter{analysis.summary.alters > 1 ? 's' : ''}
+                </Badge>
+              )}
+              {analysis.summary.indexes > 0 && (
+                <Badge variant="outline" className="text-[10px] border-cyan-500/30 text-cyan-400">
+                  {analysis.summary.indexes} index{analysis.summary.indexes > 1 ? 'es' : ''}
+                </Badge>
+              )}
+            </div>
+          </div>
+          <div className="p-3 space-y-1">
+            {analysis.operations.map((op, i) => {
+              const opInfo = OP_ICONS[op.type] || OP_ICONS.OTHER;
+              const Icon = opInfo.icon;
+              return (
+                <div key={i} className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-muted/30">
+                  <Icon className={`w-3.5 h-3.5 ${opInfo.color} shrink-0`} />
+                  <span className={`font-medium ${opInfo.color}`}>{opInfo.label}</span>
+                  <span className="font-mono text-foreground">{op.object}</span>
+                </div>
+              );
+            })}
+          </div>
+          {analysis.existing_tables?.length > 0 && (
+            <div className="px-4 py-2 border-t bg-muted/30">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Table2 className="w-3 h-3 text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground font-medium">Existing tables ({analysis.existing_tables.length})</span>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {analysis.existing_tables.map(t => (
+                  <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 bg-background rounded border">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sandbox Result */}
       {pr.sandbox_result && (

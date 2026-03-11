@@ -334,4 +334,5 @@ module.exports = {
   closePullRequest,
   reopenPullRequest,
   mergePullRequest,
+  parseDDLOperations,
 };

@@ -24,6 +24,7 @@ const PERMISSION_OPTIONS = [
   { key: 'users', label: 'User Management' },
   { key: 'gallery', label: 'Gallery' },
   { key: 'web_hosting', label: 'Web Hosting' },
+  { key: 'ai_agent', label: 'AI Agent' },
 ];
 
 export default function VpcAuth() {

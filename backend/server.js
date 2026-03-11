@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -79,6 +80,7 @@ adminRouter.use('/users', require('./routes/users'));
 adminRouter.use('/gallery', require('./routes/gallery'));
 adminRouter.use('/sync', require('./routes/sync'));
 adminRouter.use('/web-hosting', require('./routes/webHosting'));
+adminRouter.use('/settings', require('./routes/settings'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {
@@ -91,6 +93,11 @@ app.use('/api/admin', adminRouter);
 app.use((err, req, res, _next) => {
   console.error('[Server] Unhandled error:', err.message);
   res.status(500).json({ error: 'Internal server error' });
+});
+
+const PORT = process.env.PORT || 8001;
+app.listen(PORT, () => {
+  console.log(`[Server] VPC backend running on port ${PORT}`);
 });
 
 module.exports = app;
