@@ -2,13 +2,27 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const url = require('url');
 const webHostingService = require('../services/webHostingService');
 
 const router = express.Router();
 
+// File extensions that are clearly static assets
+const STATIC_EXTENSIONS = new Set([
+  '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.avif',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.map', '.json', '.xml', '.txt', '.webmanifest', '.manifest',
+  '.mp4', '.webm', '.ogg', '.mp3', '.wav',
+  '.pdf', '.zip', '.gz', '.br',
+]);
+
 // Middleware to serve hosted websites publicly
 router.use(async (req, res, next) => {
   const pool = req.app.locals.pool;
+
+  // Bug #8: Capture query string from the original URL so it's not lost
+  const parsedUrl = url.parse(req.originalUrl);
+  const queryString = parsedUrl.query || '';
 
   // 1. Custom domain routing — check Host header against registered domains
   const host = req.hostname; // hostname without port
@@ -27,10 +41,11 @@ router.use(async (req, res, next) => {
     if (domainProject && domainProject.status !== 'stopped') {
       const subPath = req.path || '/';
       if ((domainProject.project_type === 'node' || domainProject.project_type === 'fullstack') && domainProject.node_port) {
-        if (domainProject.project_type === 'fullstack' && !subPath.startsWith('/api')) {
-          return serveStatic(domainProject, subPath, res, next);
+        if (domainProject.project_type === 'fullstack') {
+          // Bug #9: Smart routing for fullstack — try static first, then SPA fallback, then proxy
+          return serveFullstack(req, res, next, domainProject, subPath, queryString);
         }
-        const proxyPath = domainProject.project_type === 'fullstack' ? subPath.replace(/^\/api/, '') || '/' : subPath;
+        const proxyPath = appendQuery(subPath, queryString);
         return proxyRequest(req, res, domainProject.node_port, proxyPath);
       }
       return serveStatic(domainProject, subPath, res, next);
@@ -68,19 +83,93 @@ router.use(async (req, res, next) => {
 
   // For node/fullstack projects, proxy to Node backend
   if ((project.project_type === 'node' || project.project_type === 'fullstack') && project.node_port) {
-    // Fullstack: proxy /slug/api/* to Node, serve static for everything else
-    if (project.project_type === 'fullstack' && !subPath.startsWith('/api')) {
-      return serveStatic(project, subPath, res, next);
+    if (project.project_type === 'fullstack') {
+      // Bug #9: Smart routing for fullstack — try static first, then SPA fallback, then proxy
+      return serveFullstack(req, res, next, project, subPath, queryString);
     }
 
-    // Proxy to Node backend
-    const proxyPath = project.project_type === 'fullstack' ? subPath.replace(/^\/api/, '') || '/' : subPath;
+    // Pure node project — proxy everything
+    const proxyPath = appendQuery(subPath, queryString);
     return proxyRequest(req, res, project.node_port, proxyPath);
   }
 
   // Static project — serve files
   serveStatic(project, subPath, res, next);
 });
+
+// Bug #8: Helper to append query string to a path
+function appendQuery(targetPath, queryString) {
+  if (!queryString) return targetPath;
+  return targetPath + '?' + queryString;
+}
+
+// Bug #9: Smart fullstack routing
+// 1. If the file exists on disk as a real static asset, serve it
+// 2. If no file on disk and path has no extension (or is .html), serve index.html (SPA fallback)
+// 3. Otherwise proxy to the Node backend
+function serveFullstack(req, res, next, project, subPath, queryString) {
+  const deployPath = project.deploy_path;
+  if (!deployPath) return next();
+
+  const baseDir = project.output_dir
+    ? path.join(deployPath, project.output_dir)
+    : deployPath;
+
+  if (!fs.existsSync(baseDir)) {
+    // No static dir — proxy everything to backend
+    const proxyPath = appendQuery(subPath, queryString);
+    return proxyRequest(req, res, project.node_port, proxyPath);
+  }
+
+  // Security: resolve real base path
+  let realBase;
+  try {
+    realBase = fs.realpathSync(baseDir);
+  } catch {
+    const proxyPath = appendQuery(subPath, queryString);
+    return proxyRequest(req, res, project.node_port, proxyPath);
+  }
+
+  // Check if a real static file exists at this path
+  let filePath = path.join(baseDir, subPath);
+  const ext = path.extname(subPath).toLowerCase();
+
+  try {
+    if (fs.existsSync(filePath)) {
+      const realFile = fs.realpathSync(filePath);
+      if (!realFile.startsWith(realBase)) {
+        return res.status(403).send('Forbidden');
+      }
+
+      if (fs.statSync(filePath).isDirectory()) {
+        filePath = path.join(filePath, 'index.html');
+      }
+
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        return res.sendFile(filePath);
+      }
+    }
+  } catch {}
+
+  // No file found on disk
+  if (STATIC_EXTENSIONS.has(ext)) {
+    // Looks like a static asset request (e.g. /assets/logo.png) but file not found — proxy to backend
+    const proxyPath = appendQuery(subPath, queryString);
+    return proxyRequest(req, res, project.node_port, proxyPath);
+  }
+
+  // No extension or .html — try SPA fallback (index.html)
+  if (!ext || ext === '.html') {
+    const indexPath = path.join(baseDir, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+  }
+
+  // Fallback: proxy to backend
+  const proxyPath = appendQuery(subPath, queryString);
+  return proxyRequest(req, res, project.node_port, proxyPath);
+}
 
 function proxyRequest(req, res, port, targetPath) {
   const options = {

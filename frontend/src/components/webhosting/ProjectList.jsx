@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Globe, Trash2, GitBranch, Play, Square, AlertCircle, Loader2 } from 'lucide-react';
+import { Plus, Globe, Trash2, GitBranch, Play, Square, AlertCircle, Loader2, Search } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +35,20 @@ export default function ProjectList({ onSelectProject }) {
       if (key === 'name' && (!prev.slug || prev.slug === generateSlug(prev.name))) {
         next.slug = generateSlug(val);
       }
+      // Bug #12: Smarter defaults based on project type
+      if (key === 'projectType') {
+        if (val === 'fullstack') {
+          if (!prev.installCommand || prev.installCommand === 'npm install') {
+            next.installCommand = '';
+          }
+        } else if (val === 'static') {
+          next.nodeEntryPoint = '';
+        } else {
+          if (!prev.installCommand) {
+            next.installCommand = 'npm install';
+          }
+        }
+      }
       return next;
     });
   };
@@ -53,6 +67,34 @@ export default function ProjectList({ onSelectProject }) {
       toast.success(`Project "${form.name}" created`);
       setShowCreate(false);
       resetForm();
+
+      // Bug #11: After creation, trigger scan and navigate to dashboard
+      try {
+        const { data: scanResult } = await api.post(`/admin/web-hosting/projects/${project.id}/scan`);
+        if (scanResult?.detected) {
+          const d = scanResult.detected;
+          const autoUpdates = {};
+          if (d.installCommand) autoUpdates.installCommand = d.installCommand;
+          if (d.buildCommand) autoUpdates.buildCommand = d.buildCommand;
+          if (d.outputDir) autoUpdates.outputDir = d.outputDir;
+          if (d.nodeEntryPoint) autoUpdates.nodeEntryPoint = d.nodeEntryPoint;
+          if (d.projectType && d.projectType !== 'static') autoUpdates.projectType = d.projectType;
+
+          if (Object.keys(autoUpdates).length > 0) {
+            await api.put(`/admin/web-hosting/projects/${project.id}`, autoUpdates);
+            const parts = [];
+            if (d.framework) parts.push(d.framework.charAt(0).toUpperCase() + d.framework.slice(1));
+            if (d.frontendDir) parts.push(`frontend in /${d.frontendDir}`);
+            if (d.backendDir) parts.push(`backend in /${d.backendDir}`);
+            toast.success(`Auto-detected: ${parts.join(', ') || d.projectType}. Settings have been configured.`, { duration: 6000 });
+          }
+          // Refetch so dashboard shows updated values
+          queryClient.invalidateQueries({ queryKey: ['wh-projects'] });
+        }
+      } catch {
+        // Scan failed — that's fine, user can configure manually
+      }
+
       onSelectProject(project);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create project');
@@ -215,15 +257,28 @@ export default function ProjectList({ onSelectProject }) {
               </div>
             </div>
 
-            {/* Build */}
+            {/* Build — Bug #12: show placeholder for fullstack, hide entry point for static */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Install Command</Label>
-                <Input value={form.installCommand} onChange={e => setField('installCommand', e.target.value)} className="text-sm font-mono" />
+                <Input
+                  value={form.installCommand}
+                  onChange={e => setField('installCommand', e.target.value)}
+                  placeholder={form.projectType === 'fullstack' ? 'Auto-detected on deploy' : 'npm install'}
+                  className="text-sm font-mono"
+                />
+                {form.projectType === 'fullstack' && !form.installCommand && (
+                  <p className="text-[10px] text-muted-foreground">Leave blank to auto-detect on first deploy</p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Build Command <span className="text-muted-foreground">(optional)</span></Label>
-                <Input value={form.buildCommand} onChange={e => setField('buildCommand', e.target.value)} placeholder="npm run build" className="text-sm font-mono" />
+                <Input
+                  value={form.buildCommand}
+                  onChange={e => setField('buildCommand', e.target.value)}
+                  placeholder={form.projectType === 'fullstack' ? 'Auto-detected on deploy' : 'npm run build'}
+                  className="text-sm font-mono"
+                />
               </div>
             </div>
 
@@ -234,12 +289,20 @@ export default function ProjectList({ onSelectProject }) {
               </div>
             )}
 
+            {/* Bug #12: Hide entry point for static projects */}
             {(form.projectType === 'node' || form.projectType === 'fullstack') && (
               <div className="space-y-1">
                 <Label className="text-xs">Node Entry Point</Label>
                 <Input value={form.nodeEntryPoint} onChange={e => setField('nodeEntryPoint', e.target.value)} placeholder="index.js" className="text-sm font-mono" />
               </div>
             )}
+
+            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/50 border border-border/50">
+              <Search className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+              <p className="text-[10px] text-muted-foreground">
+                After creation, the repo will be scanned to auto-detect framework, install/build commands, output directory, and entry point. You can override any setting later.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>

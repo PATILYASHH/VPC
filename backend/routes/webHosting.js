@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const webHostingService = require('../services/webHostingService');
 
 const router = express.Router();
@@ -96,6 +98,39 @@ router.post('/projects/:id/redeploy', async (req, res) => {
     webHostingService.refreshSlugCache(pool);
     webHostingService.refreshDomainCache(pool);
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /projects/:id/scan — auto-detect project structure (Bug #10)
+router.post('/projects/:id/scan', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (!project.git_url) return res.status(400).json({ error: 'No git URL configured' });
+
+    const deployPath = project.deploy_path || path.join(webHostingService.HOSTING_DIR, project.slug);
+    webHostingService.ensureHostingDir();
+
+    // Shallow clone if not already cloned
+    if (!fs.existsSync(path.join(deployPath, '.git'))) {
+      if (fs.existsSync(deployPath)) {
+        fs.rmSync(deployPath, { recursive: true, force: true });
+      }
+      const cloneUrl = webHostingService.buildCloneUrl(project.git_url, project.git_token);
+      const branch = project.git_branch || 'main';
+      const { execSync } = require('child_process');
+      execSync(`git clone --depth 1 -b "${branch}" "${cloneUrl}" "${deployPath}"`, {
+        cwd: webHostingService.HOSTING_DIR,
+        timeout: 60000,
+        stdio: 'pipe',
+      });
+    }
+
+    const detected = webHostingService.detectProjectStructure(deployPath, project.slug);
+    res.json({ detected });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

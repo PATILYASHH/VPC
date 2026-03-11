@@ -28,9 +28,28 @@ function buildCloneUrl(gitUrl, gitToken) {
   }
 }
 
+// Bug #3: Prepend node_modules/.bin dirs to PATH so build tools (vite, react-scripts, craco) are found
 function runCommand(cmd, cwd, env = {}) {
   return new Promise((resolve, reject) => {
-    const mergedEnv = { ...process.env, ...env };
+    // Build PATH with node_modules/.bin from cwd and parent dirs
+    const pathSep = ':';
+    const extraPaths = [];
+    if (cwd) {
+      let dir = cwd;
+      for (let i = 0; i < 5; i++) {
+        const binDir = path.join(dir, 'node_modules', '.bin');
+        if (fs.existsSync(binDir)) {
+          extraPaths.push(binDir);
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+    const existingPath = process.env.PATH || '';
+    const newPath = extraPaths.length > 0 ? extraPaths.join(pathSep) + pathSep + existingPath : existingPath;
+
+    const mergedEnv = { ...process.env, ...env, PATH: newPath };
     exec(cmd, { cwd, timeout: 300000, maxBuffer: 10 * 1024 * 1024, env: mergedEnv }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(`${err.message}\n${stderr || ''}`));
@@ -39,6 +58,206 @@ function runCommand(cmd, cwd, env = {}) {
       }
     });
   });
+}
+
+// Bug #3 helper: chmod +x all node_modules/.bin files after install
+function chmodBinDirs(deployPath) {
+  const dirsToCheck = [deployPath];
+  // Also check common subdirectories
+  const subDirs = ['frontend', 'client', 'web', 'app', 'backend', 'server', 'api'];
+  for (const sub of subDirs) {
+    const subDir = path.join(deployPath, sub);
+    if (fs.existsSync(subDir)) dirsToCheck.push(subDir);
+  }
+  for (const dir of dirsToCheck) {
+    const binDir = path.join(dir, 'node_modules', '.bin');
+    if (fs.existsSync(binDir)) {
+      try {
+        const files = fs.readdirSync(binDir);
+        for (const f of files) {
+          try { fs.chmodSync(path.join(binDir, f), 0o755); } catch {}
+        }
+      } catch {}
+    }
+  }
+}
+
+// Bug #4: Write env vars to .env file(s) in deploy directory
+function writeEnvFile(deployPath, envVars) {
+  if (!envVars || Object.keys(envVars).length === 0) return;
+  const envContent = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+
+  // Write to root deploy dir
+  fs.writeFileSync(path.join(deployPath, '.env'), envContent);
+
+  // Also write to backend subdirectory if one exists
+  const backendDirs = ['backend', 'server', 'api'];
+  for (const dir of backendDirs) {
+    const subDir = path.join(deployPath, dir);
+    if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
+      fs.writeFileSync(path.join(subDir, '.env'), envContent);
+    }
+  }
+}
+
+// Bug #5: Generate PM2 ecosystem config file
+function writeEcosystemConfig(deployPath, pm2Name, entryPath, envVars, cwd) {
+  const config = {
+    apps: [{
+      name: pm2Name,
+      script: entryPath,
+      cwd: cwd || deployPath,
+      env: envVars,
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 1000,
+    }]
+  };
+  const filePath = path.join(deployPath, 'ecosystem.wh.config.js');
+  fs.writeFileSync(filePath, `module.exports = ${JSON.stringify(config, null, 2)};\n`);
+  return filePath;
+}
+
+// Bug #6: Auto-detect project structure
+function detectProjectStructure(deployPath, slug) {
+  const detected = {
+    frontendDir: null,
+    backendDir: null,
+    framework: null,
+    installCommand: null,
+    buildCommand: null,
+    outputDir: null,
+    nodeEntryPoint: null,
+    projectType: null,
+  };
+
+  // Detect frontend directory
+  const frontendCandidates = ['frontend', 'client', 'web', 'app'];
+  for (const dir of frontendCandidates) {
+    const fullPath = path.join(deployPath, dir);
+    if (fs.existsSync(path.join(fullPath, 'package.json'))) {
+      detected.frontendDir = dir;
+      break;
+    }
+  }
+
+  // Detect backend directory
+  const backendCandidates = ['backend', 'server', 'api'];
+  for (const dir of backendCandidates) {
+    const fullPath = path.join(deployPath, dir);
+    if (fs.existsSync(path.join(fullPath, 'package.json'))) {
+      detected.backendDir = dir;
+      break;
+    }
+  }
+
+  // Determine where to look for framework config
+  const frontendBase = detected.frontendDir ? path.join(deployPath, detected.frontendDir) : deployPath;
+  const backendBase = detected.backendDir ? path.join(deployPath, detected.backendDir) : deployPath;
+
+  // Detect framework from frontend dir
+  const viteConfigs = ['vite.config.js', 'vite.config.ts', 'vite.config.mjs', 'vite.config.mts'];
+  const cracoConfigs = ['craco.config.js', 'craco.config.ts'];
+  const nextConfigs = ['next.config.js', 'next.config.ts', 'next.config.mjs'];
+
+  if (viteConfigs.some(c => fs.existsSync(path.join(frontendBase, c)))) {
+    detected.framework = 'vite';
+  } else if (nextConfigs.some(c => fs.existsSync(path.join(frontendBase, c)))) {
+    detected.framework = 'next';
+  } else if (cracoConfigs.some(c => fs.existsSync(path.join(frontendBase, c)))) {
+    detected.framework = 'craco';
+  } else {
+    // Check for react-scripts in dependencies
+    try {
+      const pkgPath = path.join(frontendBase, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.dependencies?.['react-scripts'] || pkg.devDependencies?.['react-scripts']) {
+          detected.framework = 'cra';
+        }
+      }
+    } catch {}
+  }
+
+  // Detect output directory based on framework
+  if (detected.framework === 'vite') {
+    detected.outputDir = detected.frontendDir ? `${detected.frontendDir}/dist` : 'dist';
+  } else if (detected.framework === 'cra' || detected.framework === 'craco') {
+    detected.outputDir = detected.frontendDir ? `${detected.frontendDir}/build` : 'build';
+  } else if (detected.framework === 'next') {
+    detected.outputDir = detected.frontendDir ? `${detected.frontendDir}/.next` : '.next';
+  }
+
+  // Detect node entry point from backend dir
+  const entryPointCandidates = ['server.js', 'index.js', 'app.js', 'src/index.js', 'src/server.js', 'src/app.js'];
+  const entrySearchBase = detected.backendDir ? backendBase : deployPath;
+  for (const entry of entryPointCandidates) {
+    if (fs.existsSync(path.join(entrySearchBase, entry))) {
+      detected.nodeEntryPoint = detected.backendDir ? `${detected.backendDir}/${entry}` : entry;
+      break;
+    }
+  }
+  // Also check main field in package.json
+  if (!detected.nodeEntryPoint) {
+    try {
+      const pkgPath = path.join(entrySearchBase, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg.main) {
+          const mainPath = detected.backendDir ? `${detected.backendDir}/${pkg.main}` : pkg.main;
+          if (fs.existsSync(path.join(deployPath, mainPath))) {
+            detected.nodeEntryPoint = mainPath;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Determine project type
+  const hasFrontend = detected.frontendDir || detected.framework;
+  const hasBackend = detected.backendDir || detected.nodeEntryPoint;
+  if (hasFrontend && hasBackend) {
+    detected.projectType = 'fullstack';
+  } else if (hasBackend && !hasFrontend) {
+    detected.projectType = 'node';
+  } else {
+    detected.projectType = 'static';
+  }
+
+  // Build install command
+  const isMonorepo = detected.frontendDir && detected.backendDir;
+  if (isMonorepo) {
+    const parts = [];
+    parts.push(`cd ${detected.frontendDir} && npm install`);
+    parts.push(`cd ${detected.backendDir} && npm install`);
+    detected.installCommand = parts.join(' && cd .. && ');
+  } else if (detected.frontendDir && !detected.backendDir) {
+    detected.installCommand = `cd ${detected.frontendDir} && npm install`;
+  } else if (detected.backendDir && !detected.frontendDir) {
+    detected.installCommand = `cd ${detected.backendDir} && npm install`;
+  } else {
+    // Single directory project - check if root has package.json
+    if (fs.existsSync(path.join(deployPath, 'package.json'))) {
+      detected.installCommand = 'npm install';
+    }
+  }
+
+  // Build build command
+  if (detected.framework === 'vite') {
+    const cdPrefix = detected.frontendDir ? `cd ${detected.frontendDir} && ` : '';
+    detected.buildCommand = `${cdPrefix}node node_modules/vite/bin/vite.js build --base=/${slug}/`;
+  } else if (detected.framework === 'cra') {
+    const cdPrefix = detected.frontendDir ? `cd ${detected.frontendDir} && ` : '';
+    detected.buildCommand = `${cdPrefix}PUBLIC_URL=/${slug} npm run build`;
+  } else if (detected.framework === 'craco') {
+    const cdPrefix = detected.frontendDir ? `cd ${detected.frontendDir} && ` : '';
+    detected.buildCommand = `${cdPrefix}PUBLIC_URL=/${slug} npm run build`;
+  } else if (detected.framework === 'next') {
+    const cdPrefix = detected.frontendDir ? `cd ${detected.frontendDir} && ` : '';
+    detected.buildCommand = `${cdPrefix}npm run build`;
+  }
+
+  return detected;
 }
 
 // --- CRUD ---
@@ -195,7 +414,17 @@ async function deploy(pool, project) {
 
     // Clone or pull
     if (fs.existsSync(path.join(deployPath, '.git'))) {
-      log += '> git pull\n';
+      // Bug #1: Reset tracked files before pull to avoid "local changes would be overwritten"
+      // Preserve .env and ecosystem.wh.config.js (our generated files)
+      log += '> git checkout -- . && git clean -fd -e .env -e ecosystem.wh.config.js\n';
+      try {
+        await runCommand('git checkout -- .', deployPath);
+        await runCommand('git clean -fd -e .env -e ecosystem.wh.config.js', deployPath);
+      } catch (cleanErr) {
+        log += `Warning: git clean failed: ${cleanErr.message}\n`;
+      }
+
+      log += `> git pull origin ${project.git_branch || 'main'}\n`;
       const pullOut = await runCommand(`git pull origin ${project.git_branch || 'main'}`, deployPath);
       log += pullOut + '\n';
     } else {
@@ -207,14 +436,66 @@ async function deploy(pool, project) {
       log += cloneOut + '\n';
     }
 
-    // Install dependencies
-    if (project.install_command) {
-      const packageJson = path.join(deployPath, 'package.json');
-      if (fs.existsSync(packageJson)) {
-        log += `> ${project.install_command}\n`;
-        const installOut = await runCommand(project.install_command, deployPath);
-        log += installOut + '\n';
+    // Bug #6: Auto-detect project structure and fill empty fields
+    const detected = detectProjectStructure(deployPath, project.slug);
+    log += `> Auto-detected: framework=${detected.framework || 'none'}, frontendDir=${detected.frontendDir || 'none'}, backendDir=${detected.backendDir || 'none'}, type=${detected.projectType}\n`;
+
+    const updates = {};
+    if ((!project.install_command || project.install_command === 'npm install') && detected.installCommand && detected.installCommand !== 'npm install') {
+      updates.install_command = detected.installCommand;
+      log += `> Auto-set install command: ${detected.installCommand}\n`;
+    }
+    if (!project.build_command && detected.buildCommand) {
+      updates.build_command = detected.buildCommand;
+      log += `> Auto-set build command: ${detected.buildCommand}\n`;
+    }
+    if (!project.output_dir && detected.outputDir) {
+      updates.output_dir = detected.outputDir;
+      log += `> Auto-set output dir: ${detected.outputDir}\n`;
+    }
+    if ((!project.node_entry_point || project.node_entry_point === 'index.js') && detected.nodeEntryPoint && detected.nodeEntryPoint !== 'index.js') {
+      updates.node_entry_point = detected.nodeEntryPoint;
+      log += `> Auto-set entry point: ${detected.nodeEntryPoint}\n`;
+    }
+    if (project.project_type === 'static' && detected.projectType !== 'static') {
+      updates.project_type = detected.projectType;
+      log += `> Auto-set project type: ${detected.projectType}\n`;
+    }
+
+    // Persist auto-detected values to DB
+    if (Object.keys(updates).length > 0) {
+      const setClauses = [];
+      const vals = [];
+      let paramIdx = 1;
+      for (const [key, value] of Object.entries(updates)) {
+        setClauses.push(`${key} = $${paramIdx}`);
+        vals.push(value);
+        paramIdx++;
       }
+      setClauses.push('updated_at = NOW()');
+      vals.push(project.id);
+      await pool.query(`UPDATE web_hosting_projects SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, vals);
+
+      // Merge updates into project for remainder of deploy
+      Object.assign(project, updates);
+    }
+
+    // Bug #4: Write .env file(s) before install/build
+    const envVars = project.env_vars || {};
+    writeEnvFile(deployPath, envVars);
+    if (Object.keys(envVars).length > 0) {
+      log += `> Wrote .env file (${Object.keys(envVars).length} vars)\n`;
+    }
+
+    // Install dependencies
+    // Bug #2: Always run install command if set — don't gate on root package.json
+    if (project.install_command) {
+      log += `> ${project.install_command}\n`;
+      const installOut = await runCommand(project.install_command, deployPath);
+      log += installOut + '\n';
+
+      // Bug #3: chmod +x node_modules/.bin after install
+      chmodBinDirs(deployPath);
     }
 
     // Build
@@ -239,16 +520,18 @@ async function deploy(pool, project) {
       }
 
       // Build env vars for PM2
-      const envVars = project.env_vars || {};
-      envVars.PORT = String(port);
-
-      const envStr = Object.entries(envVars).map(([k, v]) => `${k}="${v}"`).join(' ');
+      const pm2Env = { ...(project.env_vars || {}), PORT: String(port) };
 
       // Stop existing process
       try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
 
+      // Bug #5: Use ecosystem config file instead of fragile shell env prefix
+      const entryDir = path.dirname(entryPath);
+      const ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
+      log += `> Generated PM2 ecosystem config\n`;
+
       log += `> Starting Node.js on port ${port}\n`;
-      const startCmd = `${envStr} pm2 start "${entryPath}" --name "${pm2Name}" -- --port ${port}`;
+      const startCmd = `pm2 start "${ecosystemPath}"`;
       const startOut = await runCommand(startCmd, deployPath);
       log += startOut + '\n';
 
@@ -264,6 +547,10 @@ async function deploy(pool, project) {
         [log, project.id]
       );
     }
+
+    // Bug #7: Refresh slug cache inside deploy() so it's not stale
+    await refreshSlugCache(pool);
+    await refreshDomainCache(pool);
 
     return { success: true, log };
   } catch (err) {
@@ -384,5 +671,6 @@ module.exports = {
   deploy, redeploy, startBackend, stopBackend, restartBackend, getLogs, getStatus, getNextPort,
   refreshSlugCache, getSlugCache, refreshDomainCache, getDomainCache, getProjectByDomain,
   generateDomainVerifyToken, verifyDomain, removeDomain,
+  detectProjectStructure, buildCloneUrl,
   RESERVED_SLUGS, HOSTING_DIR, ensureHostingDir
 };

@@ -249,9 +249,21 @@ function LogsViewer({ projectId }) {
   );
 }
 
+// Bug #13: Helper to show auto-detected badge next to fields
+function AutoBadge({ value, defaultValue }) {
+  // Show badge if the value looks like it was auto-detected (not default and not empty)
+  if (!value || value === defaultValue) return null;
+  return (
+    <Badge variant="outline" className="text-[9px] ml-1.5 px-1 py-0 border-blue-500/40 text-blue-500">
+      auto
+    </Badge>
+  );
+}
+
 function SettingsForm({ project, onSaved }) {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     if (project) {
@@ -280,13 +292,41 @@ function SettingsForm({ project, onSaved }) {
     }
   };
 
+  // Bug #13: Rescan repo to update auto-detected values
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const { data: scanResult } = await api.post(`/admin/web-hosting/projects/${project.id}/scan`);
+      if (scanResult?.detected) {
+        const d = scanResult.detected;
+        const newForm = { ...form };
+        if (d.installCommand) newForm.installCommand = d.installCommand;
+        if (d.buildCommand) newForm.buildCommand = d.buildCommand;
+        if (d.outputDir) newForm.outputDir = d.outputDir;
+        if (d.nodeEntryPoint) newForm.nodeEntryPoint = d.nodeEntryPoint;
+        setForm(newForm);
+        toast.success(`Detected: ${d.framework || 'standard'} project${d.frontendDir ? ` (frontend: /${d.frontendDir})` : ''}${d.backendDir ? ` (backend: /${d.backendDir})` : ''}`);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Scan failed');
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const isNode = project?.project_type === 'node' || project?.project_type === 'fullstack';
 
   return (
     <div className="space-y-4 max-w-lg">
-      <h3 className="text-sm font-medium flex items-center gap-2">
-        <Settings className="w-4 h-4" /> Project Settings
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium flex items-center gap-2">
+          <Settings className="w-4 h-4" /> Project Settings
+        </h3>
+        <Button variant="outline" size="sm" onClick={handleScan} disabled={scanning}>
+          {scanning ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
+          Re-scan Repo
+        </Button>
+      </div>
       <div className="space-y-3">
         <div className="space-y-1">
           <Label className="text-xs">Git Repository URL</Label>
@@ -304,21 +344,33 @@ function SettingsForm({ project, onSaved }) {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
-            <Label className="text-xs">Install Command</Label>
+            <Label className="text-xs flex items-center">
+              Install Command
+              <AutoBadge value={form.installCommand} defaultValue="npm install" />
+            </Label>
             <Input value={form.installCommand || ''} onChange={e => setForm(f => ({ ...f, installCommand: e.target.value }))} className="text-sm font-mono" />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Build Command</Label>
+            <Label className="text-xs flex items-center">
+              Build Command
+              <AutoBadge value={form.buildCommand} defaultValue="" />
+            </Label>
             <Input value={form.buildCommand || ''} onChange={e => setForm(f => ({ ...f, buildCommand: e.target.value }))} placeholder="npm run build" className="text-sm font-mono" />
           </div>
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">Output Directory</Label>
+          <Label className="text-xs flex items-center">
+            Output Directory
+            <AutoBadge value={form.outputDir} defaultValue="" />
+          </Label>
           <Input value={form.outputDir || ''} onChange={e => setForm(f => ({ ...f, outputDir: e.target.value }))} placeholder="dist" className="text-sm font-mono" />
         </div>
         {isNode && (
           <div className="space-y-1">
-            <Label className="text-xs">Node Entry Point</Label>
+            <Label className="text-xs flex items-center">
+              Node Entry Point
+              <AutoBadge value={form.nodeEntryPoint} defaultValue="index.js" />
+            </Label>
             <Input value={form.nodeEntryPoint || ''} onChange={e => setForm(f => ({ ...f, nodeEntryPoint: e.target.value }))} placeholder="index.js" className="text-sm font-mono" />
           </div>
         )}
