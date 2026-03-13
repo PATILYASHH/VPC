@@ -241,26 +241,57 @@ function runPgDump(conn, dumpPath) {
   });
 }
 
+// ── Pre-restore cleanup: drop all public tables to prevent duplicates ──
+
+async function cleanPublicSchema(project) {
+  const { Pool: LocalPool } = require('pg');
+  // Use admin credentials so we can drop tables regardless of ownership
+  const adminPool = new LocalPool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: project.db_name,
+    user: process.env.DB_USER || 'vpc_admin',
+    password: process.env.DB_PASSWORD,
+    max: 2,
+    idleTimeoutMillis: 10000,
+  });
+
+  try {
+    // Drop and recreate the public schema to guarantee a clean slate.
+    // This avoids ownership and FK-dependency issues that cause --clean
+    // to silently fail and duplicate data (double entries on sync).
+    await adminPool.query('DROP SCHEMA public CASCADE');
+    await adminPool.query('CREATE SCHEMA public');
+
+    // Re-grant permissions to the project user
+    const safeUser = project.db_user.replace(/"/g, '""');
+    await adminPool.query(`GRANT ALL ON SCHEMA public TO "${safeUser}"`);
+    await adminPool.query('GRANT ALL ON SCHEMA public TO PUBLIC');
+  } finally {
+    await adminPool.end();
+  }
+}
+
 // ── pg_restore helper ──────────────────────────────────────────────
 
 function runPgRestore(project, dumpPath) {
   return new Promise((resolve, reject) => {
+    // Use admin credentials for pg_restore so it can create objects properly.
+    // Ownership is reassigned to the project user after restore.
     const args = [
       '-h', process.env.DB_HOST || 'localhost',
       '-p', process.env.DB_PORT || '5432',
-      '-U', project.db_user,
+      '-U', process.env.DB_USER || 'vpc_admin',
       '-d', project.db_name,
-      '--clean',
-      '--if-exists',
       '--no-owner',
       '--no-acl',
       dumpPath,
     ];
 
-    const env = { ...process.env, PGPASSWORD: project.db_password };
+    const env = { ...process.env, PGPASSWORD: process.env.DB_PASSWORD };
 
     execFile('pg_restore', args, { timeout: 600000, env }, (err, stdout, stderr) => {
-      // pg_restore returns exit code 1 for warnings (e.g., "relation does not exist" during --clean)
+      // pg_restore returns exit code 1 for warnings (e.g., "relation does not exist")
       // This is normal and expected — only real failures have exit code 2+
       if (err && err.code !== null && err.code > 1) {
         reject(new Error(`pg_restore failed: ${stderr || err.message}`));
@@ -269,6 +300,52 @@ function runPgRestore(project, dumpPath) {
       }
     });
   });
+}
+
+// ── Post-restore: reassign ownership to project user ──────────────
+
+async function reassignOwnership(project) {
+  const { Pool: LocalPool } = require('pg');
+  const adminPool = new LocalPool({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '5432'),
+    database: project.db_name,
+    user: process.env.DB_USER || 'vpc_admin',
+    password: process.env.DB_PASSWORD,
+    max: 2,
+    idleTimeoutMillis: 10000,
+  });
+
+  try {
+    const safeUser = project.db_user.replace(/'/g, "''");
+    await adminPool.query(`
+      DO $$
+      DECLARE
+        r RECORD;
+      BEGIN
+        -- Reassign tables
+        FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+        LOOP
+          EXECUTE format('ALTER TABLE public.%I OWNER TO ${safeUser}', r.tablename);
+        END LOOP;
+        -- Reassign sequences
+        FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'
+        LOOP
+          EXECUTE format('ALTER SEQUENCE public.%I OWNER TO ${safeUser}', r.sequencename);
+        END LOOP;
+        -- Reassign functions
+        FOR r IN SELECT p.oid::regprocedure AS func_signature
+                 FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+                 WHERE n.nspname = 'public'
+                 AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+        LOOP
+          EXECUTE format('ALTER FUNCTION %s OWNER TO ${safeUser}', r.func_signature);
+        END LOOP;
+      END $$;
+    `);
+  } finally {
+    await adminPool.end();
+  }
 }
 
 // ── Prepare local DB: install extensions that exist on remote ───────
@@ -331,18 +408,12 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
     let remote = null;
 
     try {
-      // ── Step 1: Prepare local DB with extensions ───────────
-      addJobStep(job.id, 'extensions', 'running', 'Installing required extensions...');
-      updateJob(job.id, { progress: 5, message: 'Preparing database extensions...' });
-
+      // ── Step 1: pg_dump remote Supabase DB ─────────────────
       remote = createRemotePool(connectionString);
       const local = banadbService.getProjectPool(project);
-      await prepareLocalExtensions(remote, local, job.id);
-      updateJob(job.id, { progress: 10 });
 
-      // ── Step 2: pg_dump remote Supabase DB ─────────────────
       addJobStep(job.id, 'dump', 'running', 'Dumping remote Supabase database...');
-      updateJob(job.id, { progress: 15, message: 'Dumping remote database...' });
+      updateJob(job.id, { progress: 5, message: 'Dumping remote database...' });
 
       await runPgDump(conn, dumpPath);
 
@@ -350,9 +421,24 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       const dumpStats = fs.statSync(dumpPath);
       const dumpSizeMb = (dumpStats.size / 1048576).toFixed(1);
       addJobStep(job.id, 'dump', 'done', `Database dumped (${dumpSizeMb} MB compressed)`);
-      updateJob(job.id, { progress: 40 });
+      updateJob(job.id, { progress: 30 });
 
-      // ── Step 3: pg_restore into BanaDB project DB ──────────
+      // ── Step 2: Clean public schema to prevent duplicate entries ──
+      addJobStep(job.id, 'restore', 'running', 'Cleaning existing data...');
+      updateJob(job.id, { progress: 32, message: 'Cleaning existing data...' });
+
+      // Drop and recreate public schema to guarantee a clean slate.
+      // Without this, pg_restore --clean can silently fail to DROP tables
+      // (due to ownership mismatches or FK dependencies), causing data to
+      // be appended instead of replaced on subsequent syncs.
+      await cleanPublicSchema(project);
+
+      // ── Step 3: Re-install extensions after schema cleanup ──
+      addJobStep(job.id, 'extensions', 'running', 'Installing required extensions...');
+      updateJob(job.id, { progress: 35, message: 'Preparing database extensions...' });
+      await prepareLocalExtensions(remote, local, job.id);
+
+      // ── Step 4: pg_restore into BanaDB project DB ──────────
       addJobStep(job.id, 'restore', 'running', 'Restoring into BanaDB project...');
       updateJob(job.id, { progress: 45, message: 'Restoring to BanaDB...' });
 
@@ -371,9 +457,17 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       } else {
         addJobStep(job.id, 'restore', 'done', 'Database restored successfully');
       }
+      updateJob(job.id, { progress: 72 });
+
+      // ── Step 4b: Reassign ownership to project user ────────
+      try {
+        await reassignOwnership(project);
+      } catch (ownerErr) {
+        console.error('[Import] Ownership reassignment warning:', ownerErr.message);
+      }
       updateJob(job.id, { progress: 75 });
 
-      // ── Step 4: Count imported tables ──────────────────────
+      // ── Step 5: Count imported tables ──────────────────────
       addJobStep(job.id, 'verify', 'running', 'Verifying imported data...');
       updateJob(job.id, { message: 'Verifying import...' });
 
@@ -398,7 +492,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       addJobStep(job.id, 'verify', 'done', `Verified: ${tablesImported} tables, ${totalRows.toLocaleString()} rows`);
       updateJob(job.id, { progress: 80, tables_imported: tablesImported, rows_imported: totalRows });
 
-      // ── Step 5: Import auth users (optional) ───────────────
+      // ── Step 6: Import auth users (optional) ───────────────
       let authUsersImported = 0;
       if (importAuth) {
         addJobStep(job.id, 'auth', 'running', 'Migrating auth users...');
@@ -413,7 +507,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
         }
       }
 
-      // ── Step 6: Save connection for future sync ────────────
+      // ── Step 7: Save connection for future sync ────────────
       addJobStep(job.id, 'link', 'running', 'Saving connection for sync...');
       updateJob(job.id, { progress: 95, message: 'Finalizing...' });
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Copy, AlertTriangle } from 'lucide-react';
+import { Copy, AlertTriangle, Eraser } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ export default function BanaSettings({ project }) {
   const [storageLimitMb, setStorageLimitMb] = useState(project.storage_limit_mb);
   const [maxConnections, setMaxConnections] = useState(project.max_connections);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const queryClient = useQueryClient();
 
@@ -42,6 +43,24 @@ export default function BanaSettings({ project }) {
       toast.error(err.response?.data?.error || 'Failed to update settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeleteAllRows = async () => {
+    if (!confirm(`Delete ALL rows from ALL tables in "${project.name}"?\n\nThis will clear all data but keep the table structure intact.`)) return;
+    if (!confirm('Are you sure? All data in every table will be permanently deleted.')) return;
+
+    setClearing(true);
+    try {
+      const { data: result } = await api.delete(`/admin/bana/projects/${project.id}/rows`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['bana-project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      const totalRows = result.details?.reduce((sum, t) => sum + t.rows_deleted, 0) || 0;
+      toast.success(`Cleared ${totalRows} rows from ${result.tables_cleared} tables`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to clear data');
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -164,12 +183,38 @@ export default function BanaSettings({ project }) {
           <AlertTriangle className="w-4 h-4 text-destructive" />
           <h3 className="text-sm font-semibold text-destructive">Danger Zone</h3>
         </div>
-        <p className="text-xs text-muted-foreground mb-3">
-          Deleting this project will permanently drop the PostgreSQL database and all associated data. This action cannot be undone.
-        </p>
-        <Button variant="destructive" size="sm" onClick={handleDelete}>
-          Delete Project
-        </Button>
+
+        <div className="space-y-4">
+          {/* Delete All Rows */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium">Delete All Rows</p>
+              <p className="text-xs text-muted-foreground">
+                Clear all data from every table. Tables and schema remain intact — only rows are removed.
+                Deletes in correct order based on foreign key relationships.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive hover:text-destructive-foreground" onClick={handleDeleteAllRows} disabled={clearing}>
+              <Eraser className="w-3 h-3 mr-1.5" />
+              {clearing ? 'Clearing...' : 'Delete Rows'}
+            </Button>
+          </div>
+
+          <div className="border-t border-destructive/10" />
+
+          {/* Delete Project */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium">Delete Project</p>
+              <p className="text-xs text-muted-foreground">
+                Permanently drop the PostgreSQL database and all associated data. This action cannot be undone.
+              </p>
+            </div>
+            <Button variant="destructive" size="sm" className="shrink-0" onClick={handleDelete}>
+              Delete Project
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );

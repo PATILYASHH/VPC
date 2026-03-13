@@ -72,6 +72,18 @@ router.delete('/projects/:id', async (req, res) => {
   }
 });
 
+router.delete('/projects/:id/rows', async (req, res) => {
+  try {
+    if (!req.body.confirm) {
+      return res.json({ requiresConfirmation: true });
+    }
+    const result = await banadbService.deleteAllRows(req.app.locals.pool, req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.patch('/projects/:id/settings', async (req, res) => {
   try {
     const { storageLimitMb, maxConnections } = req.body;

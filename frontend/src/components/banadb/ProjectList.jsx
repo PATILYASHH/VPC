@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Database, Trash2, HardDrive } from 'lucide-react';
+import { Plus, Database, Trash2, HardDrive, Eraser } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +56,19 @@ export default function ProjectList({ onSelectProject }) {
       toast.error(err.response?.data?.error || 'Failed to create project');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleDeleteRows = async (e, project) => {
+    e.stopPropagation();
+    if (!confirm(`Delete ALL rows from ALL tables in "${project.name}"?\n\nTables and schema will remain intact.`)) return;
+    try {
+      const { data: result } = await api.delete(`/admin/bana/projects/${project.id}/rows`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      const totalRows = result.details?.reduce((sum, t) => sum + t.rows_deleted, 0) || 0;
+      toast.success(`Cleared ${totalRows} rows from ${result.tables_cleared} tables in "${project.name}"`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to clear data');
     }
   };
 
@@ -159,6 +172,16 @@ export default function ProjectList({ onSelectProject }) {
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        title="Delete all rows"
+                        onClick={(e) => handleDeleteRows(e, project)}
+                      >
+                        <Eraser className="w-3 h-3 text-amber-500" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        title="Delete project"
                         onClick={(e) => handleDelete(e, project)}
                       >
                         <Trash2 className="w-3 h-3 text-destructive" />

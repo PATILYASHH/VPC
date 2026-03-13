@@ -255,6 +255,128 @@ async function deleteProject(pool, projectId) {
   return { deleted: true };
 }
 
+async function deleteAllRows(pool, projectId) {
+  const project = await getProject(pool, projectId);
+  if (!project) throw new Error('Project not found');
+
+  const projectPool = getProjectPool(project);
+
+  // Step 1: Get all user tables in public schema
+  const { rows: tables } = await projectPool.query(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_type = 'BASE TABLE'
+  `);
+
+  if (tables.length === 0) {
+    return { cleared: true, tables_cleared: 0, message: 'No tables found' };
+  }
+
+  // Step 2: Get all foreign key relationships
+  const { rows: fkRelations } = await projectPool.query(`
+    SELECT
+      tc.table_name AS dependent_table,
+      ccu.table_name AS referenced_table
+    FROM information_schema.table_constraints AS tc
+    JOIN information_schema.constraint_column_usage AS ccu
+      ON tc.constraint_name = ccu.constraint_name
+      AND tc.table_schema = ccu.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_schema = 'public'
+      AND tc.table_name != ccu.table_name
+  `);
+
+  // Step 3: Build dependency graph and topological sort
+  // A table that references another table depends on it
+  // We need to delete from dependent tables first, then referenced (independent) tables
+  const tableNames = tables.map(t => t.table_name);
+  const dependsOn = {}; // table -> set of tables it depends on (references)
+
+  for (const t of tableNames) {
+    dependsOn[t] = new Set();
+  }
+
+  for (const fk of fkRelations) {
+    if (dependsOn[fk.dependent_table] && tableNames.includes(fk.referenced_table)) {
+      dependsOn[fk.dependent_table].add(fk.referenced_table);
+    }
+  }
+
+  // Topological sort (Kahn's algorithm) - independent tables come last
+  const inDegree = {};
+  const reverseAdj = {}; // referenced -> [dependents]
+
+  for (const t of tableNames) {
+    inDegree[t] = dependsOn[t].size;
+    reverseAdj[t] = [];
+  }
+
+  for (const t of tableNames) {
+    for (const dep of dependsOn[t]) {
+      if (reverseAdj[dep]) {
+        reverseAdj[dep].push(t);
+      }
+    }
+  }
+
+  // Tables with no dependencies (independent) go into the queue first
+  // But we want to DELETE from dependent tables first, so we reverse the order
+  const queue = tableNames.filter(t => inDegree[t] === 0);
+  const sortedIndependentFirst = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    sortedIndependentFirst.push(current);
+    for (const dependent of (reverseAdj[current] || [])) {
+      inDegree[dependent]--;
+      if (inDegree[dependent] === 0) {
+        queue.push(dependent);
+      }
+    }
+  }
+
+  // Handle circular dependencies - add any remaining tables
+  const sorted = tableNames.filter(t => !sortedIndependentFirst.includes(t));
+  sortedIndependentFirst.push(...sorted);
+
+  // Reverse: delete dependent (child) tables first, then independent (parent) tables
+  const deleteOrder = sortedIndependentFirst.reverse();
+
+  // Step 4: Delete all rows in order, wrapped in a transaction
+  const client = await projectPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Temporarily disable triggers to handle any edge cases
+    await client.query('SET session_replication_role = replica');
+
+    const clearedTables = [];
+    for (const tableName of deleteOrder) {
+      const escapedTable = tableName.replace(/"/g, '""');
+      const result = await client.query(`DELETE FROM "${escapedTable}"`);
+      clearedTables.push({ table: tableName, rows_deleted: result.rowCount });
+    }
+
+    // Re-enable triggers
+    await client.query('SET session_replication_role = DEFAULT');
+
+    await client.query('COMMIT');
+
+    return {
+      cleared: true,
+      tables_cleared: clearedTables.length,
+      details: clearedTables,
+      delete_order: deleteOrder,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw new Error(`Failed to clear data: ${err.message}`);
+  } finally {
+    client.release();
+  }
+}
+
 async function updateProjectSettings(pool, projectId, { storageLimitMb, maxConnections }) {
   const updates = [];
   const values = [];
@@ -567,6 +689,7 @@ module.exports = {
   generateSlug,
   createProject,
   deleteProject,
+  deleteAllRows,
   updateProjectSettings,
   getAuthUsers,
   createAuthUser,
