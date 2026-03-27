@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { execFile } = require('child_process');
 
 let client = null;
 let currentApiKey = null;
@@ -19,6 +20,40 @@ function getClient() {
 }
 
 /**
+ * Run a prompt through the local `claude` CLI (Claude Code).
+ * No API key needed — uses the CLI's own auth on this machine.
+ * Falls back gracefully if CLI is not installed.
+ */
+function runClaudeCLI(prompt, systemPrompt) {
+  return new Promise((resolve, reject) => {
+    const fullPrompt = systemPrompt
+      ? `${systemPrompt}\n\n---\n\n${prompt}`
+      : prompt;
+
+    execFile('claude', ['-p', fullPrompt, '--output-format', 'text'], {
+      timeout: 120000, // 2 min
+      maxBuffer: 5 * 1024 * 1024,
+      env: { ...process.env },
+    }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(err.message + (stderr || '')));
+      resolve(stdout.trim());
+    });
+  });
+}
+
+/** Check if claude CLI is available on this machine */
+let _cliAvailable = null;
+function isClaudeCLIAvailable() {
+  if (_cliAvailable !== null) return Promise.resolve(_cliAvailable);
+  return new Promise((resolve) => {
+    execFile('claude', ['--version'], { timeout: 5000 }, (err) => {
+      _cliAvailable = !err;
+      resolve(_cliAvailable);
+    });
+  });
+}
+
+/**
  * Load model preferences from DB settings (called before AI operations).
  */
 async function loadModelSettings(pool) {
@@ -36,14 +71,6 @@ async function loadModelSettings(pool) {
  * Review SQL content using Claude — returns analysis, risks, and suggestions.
  */
 async function reviewSQL(sqlContent, context = {}) {
-  const ai = getClient();
-  if (!ai) {
-    return {
-      available: false,
-      error: 'ANTHROPIC_API_KEY not configured. Add it in AI Agent Settings to enable AI review.',
-    };
-  }
-
   // Load latest model settings if pool is available
   if (context.pool) await loadModelSettings(context.pool);
 
@@ -64,23 +91,49 @@ Return ONLY valid JSON, no markdown fencing or explanation.`;
     context.existingTables ? `\n\nExisting tables: ${context.existingTables.join(', ')}` : ''
   }`;
 
-  try {
-    const response = await ai.messages.create({
-      model: runtimeModel,
-      max_tokens: runtimeMaxTokens,
-      messages: [{ role: 'user', content: userPrompt }],
-      system: systemPrompt,
-    });
-
-    const text = response.content[0]?.text || '';
+  // Try Anthropic SDK first (if API key set), then fall back to local CLI
+  const ai = getClient();
+  if (ai) {
     try {
-      const review = JSON.parse(text);
-      return { available: true, review, model: runtimeModel };
+      const response = await ai.messages.create({
+        model: runtimeModel,
+        max_tokens: runtimeMaxTokens,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt,
+      });
+      const text = response.content[0]?.text || '';
+      try {
+        const review = JSON.parse(text);
+        return { available: true, review, model: runtimeModel, mode: 'api' };
+      } catch {
+        return { available: true, review: { summary: text, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: text }, model: runtimeModel, mode: 'api' };
+      }
+    } catch (err) {
+      return { available: true, error: err.message, mode: 'api' };
+    }
+  }
+
+  // No API key — try local claude CLI
+  const cliOk = await isClaudeCLIAvailable();
+  if (!cliOk) {
+    return {
+      available: false,
+      error: 'No API key configured and claude CLI not found. Either add an Anthropic API key in AI Agent Settings or install Claude Code on this server.',
+    };
+  }
+
+  try {
+    const text = await runClaudeCLI(userPrompt, systemPrompt);
+    // Strip markdown fencing if present
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    try {
+      const review = JSON.parse(cleaned);
+      return { available: true, review, model: 'claude-cli', mode: 'cli' };
     } catch {
-      return { available: true, review: { summary: text, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: text }, model: runtimeModel };
+      return { available: true, review: { summary: cleaned, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: cleaned }, model: 'claude-cli', mode: 'cli' };
     }
   } catch (err) {
-    return { available: true, error: err.message };
+    return { available: true, error: `CLI error: ${err.message}`, mode: 'cli' };
   }
 }
 
@@ -88,9 +141,6 @@ Return ONLY valid JSON, no markdown fencing or explanation.`;
  * Review multiple PRs for smart merge — analyze ordering and conflicts.
  */
 async function reviewSmartMerge(prs, context = {}) {
-  const ai = getClient();
-  if (!ai) return { available: false };
-
   if (context.pool) await loadModelSettings(context.pool);
 
   const sqlSummary = prs.map(pr =>
@@ -106,22 +156,43 @@ async function reviewSmartMerge(prs, context = {}) {
 
 Return ONLY valid JSON.`;
 
-  try {
-    const response = await ai.messages.create({
-      model: runtimeModel,
-      max_tokens: runtimeMaxTokens,
-      messages: [{ role: 'user', content: `Review these PRs for sequential merge:\n\n${sqlSummary}` }],
-      system: systemPrompt,
-    });
+  const userPrompt = `Review these PRs for sequential merge:\n\n${sqlSummary}`;
 
-    const text = response.content[0]?.text || '';
+  // Try Anthropic SDK first, then local CLI
+  const ai = getClient();
+  if (ai) {
     try {
-      return { available: true, analysis: JSON.parse(text), model: runtimeModel };
+      const response = await ai.messages.create({
+        model: runtimeModel,
+        max_tokens: runtimeMaxTokens,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt,
+      });
+      const text = response.content[0]?.text || '';
+      try {
+        return { available: true, analysis: JSON.parse(text), model: runtimeModel, mode: 'api' };
+      } catch {
+        return { available: true, analysis: { notes: text, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: runtimeModel, mode: 'api' };
+      }
+    } catch (err) {
+      return { available: true, error: err.message, mode: 'api' };
+    }
+  }
+
+  // No API key — try local CLI
+  const cliOk = await isClaudeCLIAvailable();
+  if (!cliOk) return { available: false, error: 'No API key and no claude CLI available' };
+
+  try {
+    const text = await runClaudeCLI(userPrompt, systemPrompt);
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    try {
+      return { available: true, analysis: JSON.parse(cleaned), model: 'claude-cli', mode: 'cli' };
     } catch {
-      return { available: true, analysis: { notes: text, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: runtimeModel };
+      return { available: true, analysis: { notes: cleaned, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: 'claude-cli', mode: 'cli' };
     }
   } catch (err) {
-    return { available: true, error: err.message };
+    return { available: true, error: `CLI error: ${err.message}`, mode: 'cli' };
   }
 }
 
@@ -130,7 +201,8 @@ Return ONLY valid JSON.`;
  */
 async function analyzeSystem(pool, projects = []) {
   const ai = getClient();
-  if (!ai) return { available: false, error: 'AI not configured' };
+  const cliOk = !ai ? await isClaudeCLIAvailable() : false;
+  if (!ai && !cliOk) return { available: false, error: 'No API key and no claude CLI available' };
 
   await loadModelSettings(pool);
 

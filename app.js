@@ -17,15 +17,16 @@ app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
 // Serve hosted websites (public, no auth — must be before SPA catch-all)
 app.use(require('./backend/routes/webHostingPublic'));
 
-// Serve frontend build in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'frontend', 'dist')));
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html'));
-    }
-  });
-}
+// Serve frontend static files
+const frontendDist = path.join(__dirname, 'frontend', 'dist');
+app.use(express.static(frontendDist));
+
+// SPA fallback — serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  }
+});
 
 // Auto-apply pending migrations on startup
 const pool = app.locals.pool;
@@ -33,12 +34,27 @@ pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DE
   .then(() => pool.query(`UPDATE vpc_admins SET permissions = '{"all": true}' WHERE permissions IS NULL`))
   .catch(() => {});
 
-// Refresh web hosting slug cache on startup
+// Initialize web-hosting caches and start server
 const webHostingService = require('./backend/services/webHostingService');
-webHostingService.refreshSlugCache(pool);
-webHostingService.refreshDomainCache(pool);
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`[VPC] Server running on port ${PORT}`);
   console.log(`[VPC] Environment: ${process.env.NODE_ENV || 'development'}`);
+  try {
+    await webHostingService.refreshSlugCache(pool);
+    await webHostingService.refreshDomainCache(pool);
+    console.log('[VPC] Web-hosting caches initialized');
+  } catch (err) {
+    console.error('[VPC] Failed to init web-hosting caches:', err.message);
+  }
+
+  // Start Jarvis Telegram bot polling (if configured)
+  try {
+    const jarvisTelegram = require('./backend/services/jarvisTelegramService');
+    const settingsRouter = require('./backend/routes/settings');
+    await jarvisTelegram.init(pool, settingsRouter.decrypt);
+    console.log('[VPC] Jarvis Telegram bot initialized');
+  } catch (err) {
+    console.error('[VPC] Jarvis Telegram init failed:', err.message);
+  }
 });

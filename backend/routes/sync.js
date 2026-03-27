@@ -6,7 +6,7 @@ const syncService = require('../services/syncService');
 const pullService = require('../services/pullService');
 const banadbService = require('../services/banadbService');
 const prService = require('../services/prService');
-const aiReviewService = require('../services/aiReviewService');
+const aiReviewService = require('../services/aiAgentService');
 const telegramService = require('../services/telegramService');
 
 /**

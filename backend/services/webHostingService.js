@@ -64,7 +64,7 @@ function runCommand(cmd, cwd, env = {}) {
 function chmodBinDirs(deployPath) {
   const dirsToCheck = [deployPath];
   // Also check common subdirectories
-  const subDirs = ['frontend', 'client', 'web', 'app', 'backend', 'server', 'api'];
+  const subDirs = ['frontend', 'client', 'web', 'app', 'dashboard', 'backend', 'server', 'api'];
   for (const sub of subDirs) {
     const subDir = path.join(deployPath, sub);
     if (fs.existsSync(subDir)) dirsToCheck.push(subDir);
@@ -90,14 +90,69 @@ function writeEnvFile(deployPath, envVars) {
   // Write to root deploy dir
   fs.writeFileSync(path.join(deployPath, '.env'), envContent);
 
-  // Also write to backend subdirectory if one exists
-  const backendDirs = ['backend', 'server', 'api'];
-  for (const dir of backendDirs) {
+  // Also write to backend and frontend subdirectories if they exist
+  // Frontend dirs need .env for NEXT_PUBLIC_* vars to be inlined at build time
+  const subDirs = ['backend', 'server', 'api', 'frontend', 'client', 'web', 'app', 'dashboard'];
+  for (const dir of subDirs) {
     const subDir = path.join(deployPath, dir);
     if (fs.existsSync(subDir) && fs.statSync(subDir).isDirectory()) {
       fs.writeFileSync(path.join(subDir, '.env'), envContent);
     }
   }
+}
+
+// Patch Next.js config to add basePath for slug-based hosting
+function patchNextConfigForSlug(deployPath, slug, detected) {
+  const frontendDir = detected.frontendDir;
+  const base = frontendDir ? path.join(deployPath, frontendDir) : deployPath;
+  const configFiles = ['next.config.ts', 'next.config.js', 'next.config.mjs', 'next.config.mts'];
+
+  for (const configFile of configFiles) {
+    const configPath = path.join(base, configFile);
+    if (!fs.existsSync(configPath)) continue;
+
+    let content;
+    try { content = fs.readFileSync(configPath, 'utf8'); } catch { continue; }
+
+    // Skip if basePath already set
+    if (content.includes('basePath')) continue;
+
+    // Insert basePath into the config object
+    // Handle: const nextConfig: NextConfig = { ... }
+    // or: const nextConfig = { ... }
+    // or: module.exports = { ... }
+    // or: export default { ... }
+    let newContent = content;
+
+    // Match common patterns for the config object opening
+    // Pattern 1: NextConfig = { /* ... */ }
+    newContent = newContent.replace(
+      /(NextConfig\s*=\s*\{)/,
+      `$1\n  basePath: '/${slug}',`
+    );
+
+    // Pattern 2: module.exports = { (JS)
+    if (newContent === content) {
+      newContent = newContent.replace(
+        /(module\.exports\s*=\s*\{)/,
+        `$1\n  basePath: '/${slug}',`
+      );
+    }
+
+    // Pattern 3: export default { (ESM without type)
+    if (newContent === content) {
+      newContent = newContent.replace(
+        /(export\s+default\s*\{)/,
+        `$1\n  basePath: '/${slug}',`
+      );
+    }
+
+    if (newContent !== content) {
+      fs.writeFileSync(configPath, newContent, 'utf8');
+      return 1;
+    }
+  }
+  return 0;
 }
 
 // Auto-patch frontend source files so SPA works under /{slug}/ subdirectory
@@ -108,9 +163,13 @@ function patchFrontendForSlug(deployPath, slug, detected) {
     ? path.join(deployPath, frontendDir, 'src')
     : path.join(deployPath, 'src');
 
-  if (!fs.existsSync(srcDir)) return 0;
-
+  // Patch Next.js basePath if applicable
   let patchCount = 0;
+  if (detected.framework === 'next') {
+    patchCount += patchNextConfigForSlug(deployPath, slug, detected);
+  }
+
+  if (!fs.existsSync(srcDir)) return patchCount;
 
   // Recursively find all .js, .jsx, .ts, .tsx files
   const files = findSourceFiles(srcDir);
@@ -180,18 +239,20 @@ function findSourceFiles(dir) {
 }
 
 // Bug #5: Generate PM2 ecosystem config file
-function writeEcosystemConfig(deployPath, pm2Name, entryPath, envVars, cwd) {
-  const config = {
-    apps: [{
-      name: pm2Name,
-      script: entryPath,
-      cwd: cwd || deployPath,
-      env: envVars,
-      autorestart: true,
-      max_restarts: 10,
-      restart_delay: 1000,
-    }]
+function writeEcosystemConfig(deployPath, pm2Name, entryPath, envVars, cwd, options = {}) {
+  const appConfig = {
+    name: pm2Name,
+    script: options.script || entryPath,
+    cwd: cwd || deployPath,
+    env: envVars,
+    autorestart: true,
+    max_restarts: 10,
+    restart_delay: 1000,
   };
+  if (options.args) appConfig.args = options.args;
+  if (options.interpreter) appConfig.interpreter = options.interpreter;
+
+  const config = { apps: [appConfig] };
   const filePath = path.join(deployPath, 'ecosystem.wh.config.js');
   fs.writeFileSync(filePath, `module.exports = ${JSON.stringify(config, null, 2)};\n`);
   return filePath;
@@ -211,7 +272,7 @@ function detectProjectStructure(deployPath, slug) {
   };
 
   // Detect frontend directory
-  const frontendCandidates = ['frontend', 'client', 'web', 'app'];
+  const frontendCandidates = ['frontend', 'client', 'web', 'app', 'dashboard'];
   for (const dir of frontendCandidates) {
     const fullPath = path.join(deployPath, dir);
     if (fs.existsSync(path.join(fullPath, 'package.json'))) {
@@ -293,9 +354,15 @@ function detectProjectStructure(deployPath, slug) {
   }
 
   // Determine project type
+  // Next.js always needs a running server (next start), so treat as 'node'
+  const isNextJs = detected.framework === 'next';
   const hasFrontend = detected.frontendDir || detected.framework;
   const hasBackend = detected.backendDir || detected.nodeEntryPoint;
-  if (hasFrontend && hasBackend) {
+  if (isNextJs) {
+    // Next.js is server-rendered — needs `next start` via PM2
+    detected.projectType = 'node';
+    detected.nodeEntryPoint = '__nextjs__'; // sentinel: handled specially in deploy()
+  } else if (hasFrontend && hasBackend) {
     detected.projectType = 'fullstack';
   } else if (hasBackend && !hasFrontend) {
     detected.projectType = 'node';
@@ -601,25 +668,43 @@ async function deploy(pool, project) {
         port = await getNextPort(pool);
       }
       const pm2Name = `wh-${project.slug}`;
-      const entryPoint = project.node_entry_point || 'index.js';
-      const entryPath = path.join(deployPath, entryPoint);
-
-      if (!fs.existsSync(entryPath)) {
-        throw new Error(`Entry point "${entryPoint}" not found at ${entryPath}`);
-      }
-
-      // Build env vars for PM2
       const pm2Env = { ...(project.env_vars || {}), PORT: String(port) };
 
       // Stop existing process
       try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
 
-      // Bug #5: Use ecosystem config file instead of fragile shell env prefix
-      const entryDir = path.dirname(entryPath);
-      const ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
-      log += `> Generated PM2 ecosystem config\n`;
+      // Detect if this is a Next.js project (sentinel from detectProjectStructure or next.config exists)
+      const isNextJs = detected.framework === 'next' || project.node_entry_point === '__nextjs__';
 
-      log += `> Starting Node.js on port ${port}\n`;
+      let ecosystemPath;
+      if (isNextJs) {
+        // Next.js: run `next start -p PORT` via PM2
+        const nextDir = detected.frontendDir ? path.join(deployPath, detected.frontendDir) : deployPath;
+        const nextBin = path.join(nextDir, 'node_modules', '.bin', 'next');
+        if (!fs.existsSync(nextBin)) {
+          throw new Error(`Next.js binary not found at ${nextBin}. Make sure dependencies are installed.`);
+        }
+        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, null, pm2Env, nextDir, {
+          script: nextBin,
+          args: `start -p ${port}`,
+        });
+        log += `> Generated PM2 ecosystem config (Next.js: next start -p ${port})\n`;
+        log += `> Starting Next.js on port ${port}\n`;
+      } else {
+        const entryPoint = project.node_entry_point || 'index.js';
+        const entryPath = path.join(deployPath, entryPoint);
+
+        if (!fs.existsSync(entryPath)) {
+          throw new Error(`Entry point "${entryPoint}" not found at ${entryPath}`);
+        }
+
+        // Bug #5: Use ecosystem config file instead of fragile shell env prefix
+        const entryDir = path.dirname(entryPath);
+        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
+        log += `> Generated PM2 ecosystem config\n`;
+        log += `> Starting Node.js on port ${port}\n`;
+      }
+
       const startCmd = `pm2 start "${ecosystemPath}"`;
       const startOut = await runCommand(startCmd, deployPath);
       log += startOut + '\n';
@@ -712,7 +797,7 @@ let slugCache = {};
 
 async function refreshSlugCache(pool) {
   try {
-    const { rows } = await pool.query(`SELECT slug, project_type, deploy_path, output_dir, node_port, status FROM web_hosting_projects WHERE status != 'stopped'`);
+    const { rows } = await pool.query(`SELECT slug, project_type, deploy_path, output_dir, node_port, node_entry_point, status FROM web_hosting_projects WHERE status != 'stopped'`);
     const cache = {};
     for (const row of rows) {
       cache[row.slug] = row;
@@ -731,7 +816,7 @@ let domainCache = {};
 async function refreshDomainCache(pool) {
   try {
     const { rows } = await pool.query(
-      `SELECT slug, custom_domain, project_type, deploy_path, output_dir, node_port, status
+      `SELECT slug, custom_domain, project_type, deploy_path, output_dir, node_port, node_entry_point, status
        FROM web_hosting_projects
        WHERE status != 'stopped' AND custom_domain IS NOT NULL AND custom_domain != ''`
     );

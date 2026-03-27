@@ -89,7 +89,10 @@ router.use(async (req, res, next) => {
     }
 
     // Pure node project — proxy everything
-    const proxyPath = appendQuery(subPath, queryString);
+    // Next.js with basePath expects the full path including slug prefix
+    const isNextJs = project.node_entry_point === '__nextjs__';
+    const targetPath = isNextJs ? `/${slug}${subPath === '/' ? '' : subPath}` : subPath;
+    const proxyPath = appendQuery(targetPath, queryString);
     return proxyRequest(req, res, project.node_port, proxyPath);
   }
 
@@ -184,12 +187,22 @@ function serveFullstack(req, res, next, project, subPath, queryString) {
 }
 
 function proxyRequest(req, res, port, targetPath) {
+  const headers = { ...req.headers, host: `127.0.0.1:${port}` };
+
+  // If body was already parsed by express.json(), we need to re-serialize and fix content-length
+  const hasParsedBody = req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0;
+  let bodyData;
+  if (hasParsedBody) {
+    bodyData = JSON.stringify(req.body);
+    headers['content-length'] = Buffer.byteLength(bodyData);
+  }
+
   const options = {
     hostname: '127.0.0.1',
     port,
     path: targetPath,
     method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${port}` },
+    headers,
   };
 
   const proxyReq = http.request(options, (proxyRes) => {
@@ -203,10 +216,7 @@ function proxyRequest(req, res, port, targetPath) {
     }
   });
 
-  // If body was already parsed by express.json(), send it manually
-  if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-    const bodyData = JSON.stringify(req.body);
-    options.headers['content-length'] = Buffer.byteLength(bodyData);
+  if (hasParsedBody) {
     proxyReq.end(bodyData);
   } else {
     req.pipe(proxyReq);

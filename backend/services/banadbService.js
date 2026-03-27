@@ -259,10 +259,11 @@ async function deleteAllRows(pool, projectId) {
   const project = await getProject(pool, projectId);
   if (!project) throw new Error('Project not found');
 
-  const projectPool = getProjectPool(project);
+  // Use admin pool (superuser) to bypass permission issues
+  const adminPool = getProjectAdminPool(project);
 
   // Step 1: Get all user tables in public schema
-  const { rows: tables } = await projectPool.query(`
+  const { rows: tables } = await adminPool.query(`
     SELECT table_name
     FROM information_schema.tables
     WHERE table_schema = 'public'
@@ -274,7 +275,7 @@ async function deleteAllRows(pool, projectId) {
   }
 
   // Step 2: Get all foreign key relationships
-  const { rows: fkRelations } = await projectPool.query(`
+  const { rows: fkRelations } = await adminPool.query(`
     SELECT
       tc.table_name AS dependent_table,
       ccu.table_name AS referenced_table
@@ -344,12 +345,9 @@ async function deleteAllRows(pool, projectId) {
   const deleteOrder = sortedIndependentFirst.reverse();
 
   // Step 4: Delete all rows in order, wrapped in a transaction
-  const client = await projectPool.connect();
+  const client = await adminPool.connect();
   try {
     await client.query('BEGIN');
-
-    // Temporarily disable triggers to handle any edge cases
-    await client.query('SET session_replication_role = replica');
 
     const clearedTables = [];
     for (const tableName of deleteOrder) {
@@ -357,9 +355,6 @@ async function deleteAllRows(pool, projectId) {
       const result = await client.query(`DELETE FROM "${escapedTable}"`);
       clearedTables.push({ table: tableName, rows_deleted: result.rowCount });
     }
-
-    // Re-enable triggers
-    await client.query('SET session_replication_role = DEFAULT');
 
     await client.query('COMMIT');
 
