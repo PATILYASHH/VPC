@@ -1,9 +1,9 @@
 {
   "name": "vpc-sync",
-  "displayName": "VPC Sync - BanaDB Schema Management",
-  "description": "Git-like schema sync for BanaDB projects. Pull & push database migrations directly from VS Code.",
+  "displayName": "VPC Sync - VPSHUB & BanaDB",
+  "description": "Full repo sync with VPSHUB + database migration management. Track changed files, pull/push code, auto-detect and run migrations.",
   "publisher": "vpc-admin",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -42,6 +42,11 @@
         {
           "id": "vpcSync.history",
           "name": "History"
+        },
+        {
+          "id": "vpcSync.repoChanges",
+          "name": "VPSHUB Changes",
+          "type": "webview"
         }
       ]
     },
@@ -163,6 +168,26 @@
         "command": "vpcSync.compareSchema",
         "title": "VPC Sync: Compare Schema",
         "icon": "$(diff)"
+      },
+      {
+        "command": "vpcSync.vpshubPull",
+        "title": "VPC Sync: Pull from VPSHUB",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "vpcSync.vpshubPush",
+        "title": "VPC Sync: Push to VPSHUB",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "vpcSync.vpshubShowChanges",
+        "title": "VPC Sync: Show Changed Files",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "vpcSync.runMigrations",
+        "title": "VPC Sync: Run New Migrations",
+        "icon": "$(play)"
       }
     ],
     "menus": {
@@ -310,6 +335,61 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically pull remote schema changes on refresh"
+        },
+        "vpcSync.vpshubUrl": {
+          "type": "string",
+          "default": "",
+          "description": "VPSHUB server URL (e.g. http://localhost:8001)"
+        },
+        "vpcSync.vpshubToken": {
+          "type": "string",
+          "default": "",
+          "description": "VPSHUB JWT token or Personal Access Token for authentication"
+        },
+        "vpcSync.vpshubOwner": {
+          "type": "string",
+          "default": "",
+          "description": "VPSHUB repository owner username"
+        },
+        "vpcSync.vpshubRepo": {
+          "type": "string",
+          "default": "",
+          "description": "VPSHUB repository slug"
+        },
+        "vpcSync.vpshubBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "VPSHUB branch to sync with"
+        },
+        "vpcSync.dbHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Database host for auto-migration"
+        },
+        "vpcSync.dbPort": {
+          "type": "number",
+          "default": 5432,
+          "description": "Database port"
+        },
+        "vpcSync.dbName": {
+          "type": "string",
+          "default": "",
+          "description": "Database name for auto-migration"
+        },
+        "vpcSync.dbUser": {
+          "type": "string",
+          "default": "",
+          "description": "Database user"
+        },
+        "vpcSync.dbPassword": {
+          "type": "string",
+          "default": "",
+          "description": "Database password"
+        },
+        "vpcSync.autoRunMigrations": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run new migrations after pulling"
         }
       }
     }

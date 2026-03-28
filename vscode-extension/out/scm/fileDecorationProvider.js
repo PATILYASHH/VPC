@@ -46,9 +46,6 @@ class VpcFileDecorationProvider {
         this._onDidChangeFileDecorations.fire(undefined);
     }
     provideFileDecoration(uri) {
-        if (!uri.fsPath.endsWith('.sql')) {
-            return undefined;
-        }
         const status = this.fileStatuses.get(uri.fsPath);
         if (!status) {
             return undefined;

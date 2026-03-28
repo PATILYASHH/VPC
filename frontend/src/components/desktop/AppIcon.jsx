@@ -18,12 +18,13 @@ export default function AppIcon({ appId }) {
   return (
     <button
       onClick={handleClick}
-      className="flex flex-col items-center gap-1.5 w-20 p-2 rounded-lg hover:bg-white/10 transition-colors group"
+      onDoubleClick={handleClick}
+      className="flex flex-col items-center gap-1.5 w-20 p-2 rounded-xl hover:bg-white/[0.08] transition-all duration-150 group"
     >
-      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-        <Icon className="w-6 h-6 text-primary" />
+      <div className={`w-12 h-12 rounded-xl ${appDef.iconBg || 'bg-primary/10'} flex items-center justify-center group-hover:scale-105 transition-transform duration-150 shadow-lg shadow-black/20`}>
+        <Icon className={`w-6 h-6 ${appDef.iconColor || 'text-primary'}`} />
       </div>
-      <span className="text-xs text-foreground/80 text-center leading-tight truncate w-full">
+      <span className="text-[11px] text-white/80 text-center leading-tight truncate w-full font-medium drop-shadow-sm">
         {appDef.title}
       </span>
     </button>

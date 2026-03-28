@@ -173,6 +173,65 @@ export class SyncApiClient {
     });
   }
 
+  // ─── VPSHUB Repo Sync APIs ──────────────────────────────────
+
+  private vpshubHeaders(token: string): Record<string, string> {
+    return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  }
+
+  async vpshubGetManifest(baseUrl: string, token: string, owner: string, repo: string, ref: string): Promise<{
+    ref: string; sha: string; files: { path: string; hash: string; size: number; mode: string }[]; total: number;
+  }> {
+    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubGetFileContent(baseUrl: string, token: string, owner: string, repo: string, ref: string, filePath: string): Promise<{ content: string; path: string }> {
+    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubDownloadFile(baseUrl: string, token: string, owner: string, repo: string, ref: string, filePath: string): Promise<Buffer> {
+    const url = `${baseUrl}/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
+    return new Promise((resolve, reject) => {
+      const parsedUrl = new URL(url);
+      const client = parsedUrl.protocol === 'https:' ? https : http;
+      client.get(parsedUrl, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+      }).on('error', reject);
+    });
+  }
+
+  async vpshubGetChangedFiles(baseUrl: string, token: string, owner: string, repo: string, fromSha: string, toSha: string): Promise<{
+    changes: { status: string; path: string; oldPath?: string }[];
+  }> {
+    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubGetBranches(baseUrl: string, token: string, owner: string, repo: string): Promise<{ branches: string[] }> {
+    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/branches`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubGetCommits(baseUrl: string, token: string, owner: string, repo: string, ref: string, limit = 30): Promise<any> {
+    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubGetRepos(baseUrl: string, token: string): Promise<{ repos: any[] }> {
+    return request(`${baseUrl}/admin/vpshub/repos`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
   // Legacy pull endpoints (backward compat)
   async fetchMigration(url: string, key: string): Promise<any> {
     return request(`${url}/pull/migration`, {

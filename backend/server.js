@@ -83,6 +83,7 @@ adminRouter.use('/gallery', require('./routes/gallery'));
 adminRouter.use('/sync', require('./routes/sync'));
 adminRouter.use('/web-hosting', require('./routes/webHosting'));
 adminRouter.use('/settings', require('./routes/settings'));
+adminRouter.use('/vpshub', require('./routes/vpshub'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {
@@ -90,6 +91,25 @@ adminRouter.get('/me', (req, res) => {
 });
 
 app.use('/api/admin', adminRouter);
+
+// VPSHub Git Smart HTTP Protocol (no JWT, uses Basic Auth with PAT tokens)
+// Must come BEFORE static files and SPA fallback
+app.use('/git', require('./routes/vpshubGit'));
+
+// Web hosting: serve hosted projects by slug or custom domain
+// Must come BEFORE the SPA catch-all so /koperp/ etc. are handled correctly
+const webHostingPublic = require('./routes/webHostingPublic');
+const webHostingService = require('./services/webHostingService');
+app.use(webHostingPublic);
+
+// Serve frontend static files
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+app.use(express.static(frontendDist));
+
+// SPA fallback — serve index.html for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDist, 'index.html'));
+});
 
 // Error handling
 app.use((err, req, res, _next) => {

@@ -15,6 +15,7 @@ const ROUTE_PERMISSION_MAP = {
   '/sync': 'banadb',
   '/web-hosting': 'web_hosting',
   '/settings': 'ai_agent',
+  '/vpshub': 'vpshub',
 };
 
 async function authenticateAdmin(req, res, next) {
