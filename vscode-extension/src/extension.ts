@@ -9,6 +9,7 @@ import { HistoryProvider } from './views/historyProvider';
 import { ConfigViewProvider } from './views/configViewProvider';
 import { PullRequestsProvider } from './views/pullRequestsProvider';
 import { SyncActionsProvider } from './views/syncActionsProvider';
+import { RepoChangesProvider } from './views/repoChangesProvider';
 import { pullCommand } from './commands/pull';
 import { pushCommand, pushAllCommand } from './commands/push';
 import { registerStageCommands } from './commands/stage';
@@ -33,10 +34,12 @@ export function activate(context: vscode.ExtensionContext) {
   const pullRequestsProvider = new PullRequestsProvider(client);
   const configViewProvider = new ConfigViewProvider(client, () => refreshAll());
   const syncActionsProvider = new SyncActionsProvider(client, () => refreshAll());
+  const repoChangesProvider = new RepoChangesProvider(client, () => refreshAll());
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SyncActionsProvider.viewType, syncActionsProvider),
     vscode.window.registerWebviewViewProvider(ConfigViewProvider.viewType, configViewProvider),
+    vscode.window.registerWebviewViewProvider(RepoChangesProvider.viewType, repoChangesProvider),
     vscode.window.registerTreeDataProvider('vpcSync.pullRequests', pullRequestsProvider),
     vscode.window.registerTreeDataProvider('vpcSync.history', historyProvider),
   );
@@ -47,6 +50,7 @@ export function activate(context: vscode.ExtensionContext) {
     pullRequestsProvider.refresh();
     configViewProvider.refresh();
     syncActionsProvider.refresh();
+    repoChangesProvider.refresh();
   }
 
   // ─── Stage/Unstage commands ───────────────────────────────
@@ -116,6 +120,21 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('vpcSync.pullDatabase', () => pullCommand(client, () => refreshAll())),
     vscode.commands.registerCommand('vpcSync.compareSchema', () => detectChanges(client, scmProvider, () => refreshAll())),
+
+    // VPSHUB Repo Sync commands
+    vscode.commands.registerCommand('vpcSync.vpshubPull', () => {
+      vscode.commands.executeCommand('vpcSync.repoChanges.focus');
+    }),
+    vscode.commands.registerCommand('vpcSync.vpshubPush', () => {
+      vscode.window.showInformationMessage('Use git push to your VPSHUB remote to push changes.');
+    }),
+    vscode.commands.registerCommand('vpcSync.vpshubShowChanges', () => {
+      vscode.commands.executeCommand('vpcSync.repoChanges.focus');
+    }),
+    vscode.commands.registerCommand('vpcSync.runMigrations', () => {
+      repoChangesProvider.refresh();
+      vscode.commands.executeCommand('vpcSync.repoChanges.focus');
+    }),
   );
 
   // ─── Auto-refresh ─────────────────────────────────────────

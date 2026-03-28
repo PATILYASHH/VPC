@@ -141,6 +141,22 @@ router.post('/:owner/:repo/git-receive-pack', resolveRepo, authenticateGit, asyn
       await updateRepoSize(pool, req.repoInfo.id, req.repoInfo.owner_username, req.repoInfo.slug);
       // Update timestamp
       await pool.query('UPDATE vpshub_repositories SET updated_at = NOW() WHERE id = $1', [req.repoInfo.id]);
+
+      // Auto-deploy: run migrations + redeploy hosting if linked
+      const deployService = require('../services/vpshubDeployService');
+      const results = await deployService.onPush(pool, req.repoInfo.owner_username, req.repoInfo.slug);
+      if (results) {
+        if (results.migrations && results.migrations.length > 0) {
+          const applied = results.migrations.filter(r => r.status === 'applied').length;
+          const failed = results.migrations.filter(r => r.status === 'failed').length;
+          if (applied > 0) console.log(`[VPSHub] Auto-deployed ${applied} migration(s) for ${req.repoInfo.slug}`);
+          if (failed > 0) console.error(`[VPSHub] ${failed} migration(s) failed for ${req.repoInfo.slug}`);
+        }
+        if (results.hosting) {
+          if (results.hosting.success) console.log(`[VPSHub] Auto-redeployed hosting for ${req.repoInfo.slug}`);
+          else if (results.hosting.error) console.error(`[VPSHub] Hosting redeploy failed: ${results.hosting.error}`);
+        }
+      }
     } catch (err) {
       console.error('[VPSHub Git] post-push update error:', err.message);
     }

@@ -1,6 +1,6 @@
 import useWindowStore from '@/stores/useWindowStore';
 import APP_REGISTRY from '@/lib/appRegistry';
-import { Minus, Square, X } from 'lucide-react';
+import { Minus, Square, X, Maximize2 } from 'lucide-react';
 
 export default function WindowTitleBar({ windowId, isActive }) {
   const win = useWindowStore((s) => s.windows[windowId]);
@@ -14,40 +14,38 @@ export default function WindowTitleBar({ windowId, isActive }) {
 
   return (
     <div
-      className={`window-drag-handle h-10 flex items-center justify-between px-3 select-none cursor-default border-b ${
-        isActive ? 'bg-muted' : 'bg-muted/50'
+      className={`window-drag-handle h-10 flex items-center justify-between px-3 select-none cursor-default border-b transition-colors ${
+        isActive ? 'bg-[#161b22] border-white/[0.06]' : 'bg-[#13171e] border-white/[0.04]'
       }`}
     >
       <div className="flex items-center gap-2 min-w-0">
-        {Icon && <Icon className="w-4 h-4 shrink-0 text-muted-foreground" />}
-        <span className="text-sm font-medium truncate">{win.title}</span>
+        {Icon && <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? (appDef.iconColor || 'text-muted-foreground') : 'text-muted-foreground/60'}`} />}
+        <span className={`text-xs font-medium truncate ${isActive ? 'text-foreground/90' : 'text-foreground/50'}`}>
+          {win.title}
+        </span>
+        {appDef?.description && isActive && (
+          <span className="text-[10px] text-muted-foreground/40 truncate hidden sm:inline">
+            {appDef.description}
+          </span>
+        )}
       </div>
 
-      <div className="flex items-center gap-1 ml-2">
+      <div className="flex items-center gap-0.5 ml-2">
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            minimizeWindow(windowId);
-          }}
-          className="w-7 h-7 rounded flex items-center justify-center hover:bg-yellow-500/20 text-muted-foreground hover:text-yellow-500 transition-colors"
+          onClick={(e) => { e.stopPropagation(); minimizeWindow(windowId); }}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground/60 hover:bg-yellow-500/15 hover:text-yellow-400 transition-colors"
         >
           <Minus className="w-3.5 h-3.5" />
         </button>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleMaximize(windowId);
-          }}
-          className="w-7 h-7 rounded flex items-center justify-center hover:bg-green-500/20 text-muted-foreground hover:text-green-500 transition-colors"
+          onClick={(e) => { e.stopPropagation(); toggleMaximize(windowId); }}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground/60 hover:bg-green-500/15 hover:text-green-400 transition-colors"
         >
-          <Square className="w-3 h-3" />
+          {win.isMaximized ? <Square className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
         </button>
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            closeWindow(windowId);
-          }}
-          className="w-7 h-7 rounded flex items-center justify-center hover:bg-red-500/20 text-muted-foreground hover:text-red-500 transition-colors"
+          onClick={(e) => { e.stopPropagation(); closeWindow(windowId); }}
+          className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground/60 hover:bg-red-500/15 hover:text-red-400 transition-colors"
         >
           <X className="w-3.5 h-3.5" />
         </button>

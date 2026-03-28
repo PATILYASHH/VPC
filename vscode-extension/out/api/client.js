@@ -120,6 +120,52 @@ class SyncApiClient {
             headers: { apikey: key },
         });
     }
+    // ─── VPSHUB Repo Sync APIs ──────────────────────────────────
+    vpshubHeaders(token) {
+        return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    }
+    async vpshubGetManifest(baseUrl, token, owner, repo, ref) {
+        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubGetFileContent(baseUrl, token, owner, repo, ref, filePath) {
+        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubDownloadFile(baseUrl, token, owner, repo, ref, filePath) {
+        const url = `${baseUrl}/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
+        return new Promise((resolve, reject) => {
+            const parsedUrl = new URL(url);
+            const client = parsedUrl.protocol === 'https:' ? https : http;
+            client.get(parsedUrl, { headers: { Authorization: `Bearer ${token}` } }, (res) => {
+                const chunks = [];
+                res.on('data', (chunk) => chunks.push(chunk));
+                res.on('end', () => resolve(Buffer.concat(chunks)));
+            }).on('error', reject);
+        });
+    }
+    async vpshubGetChangedFiles(baseUrl, token, owner, repo, fromSha, toSha) {
+        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubGetBranches(baseUrl, token, owner, repo) {
+        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/branches`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubGetCommits(baseUrl, token, owner, repo, ref, limit = 30) {
+        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubGetRepos(baseUrl, token) {
+        return request(`${baseUrl}/admin/vpshub/repos`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
     // Legacy pull endpoints (backward compat)
     async fetchMigration(url, key) {
         return request(`${url}/pull/migration`, {

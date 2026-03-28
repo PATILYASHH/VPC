@@ -13,8 +13,6 @@ export class VpcFileDecorationProvider implements vscode.FileDecorationProvider 
   }
 
   provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
-    if (!uri.fsPath.endsWith('.sql')) { return undefined; }
-
     const status = this.fileStatuses.get(uri.fsPath);
     if (!status) { return undefined; }
 

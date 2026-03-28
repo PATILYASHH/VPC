@@ -75,16 +75,16 @@ export default function Window({ windowId }) {
     >
       <div
         style={{ transition: 'transform 220ms cubic-bezier(0.4,0,0.2,1), opacity 220ms ease' }}
-        className={`flex flex-col h-full bg-card border rounded-lg overflow-hidden shadow-2xl origin-bottom ${
+        className={`flex flex-col h-full rounded-xl overflow-hidden origin-bottom ${
           isAnimating
-            ? 'scale-90 opacity-0 translate-y-6'
+            ? 'scale-95 opacity-0 translate-y-4'
             : isActive
-            ? 'scale-100 opacity-100 translate-y-0 border-border shadow-2xl'
-            : 'scale-100 opacity-100 translate-y-0 border-border/50 shadow-lg opacity-95'
+            ? 'scale-100 opacity-100 translate-y-0 shadow-2xl shadow-black/40 ring-1 ring-white/[0.08]'
+            : 'scale-100 opacity-[0.97] translate-y-0 shadow-xl shadow-black/30 ring-1 ring-white/[0.04]'
         }`}
       >
         <WindowTitleBar windowId={windowId} isActive={isActive} />
-        <div className="flex-1 overflow-auto bg-background">
+        <div className="flex-1 overflow-auto bg-[#0d1117]">
           <ErrorBoundary>
             <AppComponent />
           </ErrorBoundary>

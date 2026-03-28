@@ -74,38 +74,15 @@ async function createRepository(pool, { ownerId, ownerUsername, name, slug, desc
 }
 
 async function initRepoWithReadme(repoPath, repoName, description, authorName) {
-  // Use git plumbing to create initial commit in bare repo
   const readmeContent = `# ${repoName}\n\n${description || ''}\n`;
 
-  // Create blob
-  const blobHash = (await git(
-    ['hash-object', '-w', '--stdin'],
-    { gitDir: repoPath, cwd: repoPath }
-  )).trim();
-
-  // We need to pipe content, so use a temp file approach
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpshub-'));
-  const tmpFile = path.join(tmpDir, 'README.md');
-  fs.writeFileSync(tmpFile, readmeContent);
+  const workDir = path.join(tmpDir, 'work');
+  fs.mkdirSync(workDir);
 
   try {
-    // Hash the blob
-    const hash = (await git(['hash-object', '-w', tmpFile], { gitDir: repoPath })).trim();
-
-    // Create tree
-    const treeInput = `100644 blob ${hash}\tREADME.md\n`;
-    const treeFile = path.join(tmpDir, 'tree');
-    fs.writeFileSync(treeFile, treeInput);
-
-    const treeHash = (await git(['mktree'], { gitDir: repoPath, cwd: tmpDir })).trim();
-
-    // For mktree we need to pipe - use a different approach
-    // Actually let's use a temp worktree approach which is simpler
-    const workDir = path.join(tmpDir, 'work');
-    fs.mkdirSync(workDir);
-
-    // Clone bare repo to temp, add file, push back
-    await git(['clone', repoPath, workDir]);
+    // Init a fresh repo (not a clone of empty bare), add README, push to bare
+    await git(['init', workDir]);
     fs.writeFileSync(path.join(workDir, 'README.md'), readmeContent);
     await git(['add', 'README.md'], { cwd: workDir });
     await git([
@@ -113,9 +90,9 @@ async function initRepoWithReadme(repoPath, repoName, description, authorName) {
       '-c', `user.email=${authorName}@vpshub`,
       'commit', '-m', 'Initial commit'
     ], { cwd: workDir });
+    await git(['remote', 'add', 'origin', repoPath], { cwd: workDir });
     await git(['push', 'origin', 'HEAD:main'], { cwd: workDir });
   } finally {
-    // Clean up temp dir
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
@@ -389,6 +366,95 @@ async function updateRepoSize(pool, repoId, ownerUsername, repoSlug) {
   } catch { /* ignore */ }
 }
 
+// ─── Full File Manifest (for extension sync) ────────────────
+
+/**
+ * Get a flat list of ALL files in the repo at a given ref with their SHA hashes.
+ * Used by the VPC extension to compare local vs remote files.
+ */
+async function getFileManifest(ownerUsername, repoSlug, ref) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  try {
+    // git ls-tree -r --format='%(objectname) %(objectsize) %(path)' <ref>
+    const output = await git(
+      ['ls-tree', '-r', '--long', ref],
+      { gitDir: repoPath }
+    );
+    if (!output.trim()) return [];
+
+    return output.trim().split('\n').map(line => {
+      // Format: <mode> <type> <hash> <size>\t<path>
+      const tabIdx = line.indexOf('\t');
+      const meta = line.substring(0, tabIdx).trim().split(/\s+/);
+      const filePath = line.substring(tabIdx + 1);
+      return {
+        path: filePath,
+        hash: meta[2],
+        size: parseInt(meta[3]) || 0,
+        mode: meta[0],
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get raw file content as Buffer (for binary-safe download)
+ */
+async function getBlobRaw(ownerUsername, repoSlug, ref, filePath) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env, GIT_DIR: repoPath };
+    execFile('git', ['show', `${ref}:${filePath}`], {
+      env,
+      maxBuffer: 50 * 1024 * 1024,
+      encoding: 'buffer',
+    }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+}
+
+/**
+ * Get the latest commit SHA for a ref
+ */
+async function getHeadSha(ownerUsername, repoSlug, ref) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  try {
+    const output = await git(['rev-parse', ref], { gitDir: repoPath });
+    return output.trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get changed files between two commits (for extension diff)
+ */
+async function getChangedFiles(ownerUsername, repoSlug, fromSha, toSha) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  try {
+    const output = await git(
+      ['diff', '--name-status', fromSha, toSha],
+      { gitDir: repoPath }
+    );
+    if (!output.trim()) return [];
+
+    return output.trim().split('\n').map(line => {
+      const parts = line.split('\t');
+      return {
+        status: parts[0], // A=added, M=modified, D=deleted, R=renamed
+        path: parts[parts.length - 1],
+        oldPath: parts.length > 2 ? parts[1] : undefined,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
   REPOS_DIR,
   getRepoPath,
@@ -401,6 +467,7 @@ module.exports = {
   updateRepository,
   getTree,
   getBlob,
+  getBlobRaw,
   getLog,
   getCommit,
   getBranches,
@@ -411,4 +478,7 @@ module.exports = {
   getDiff,
   repoHasCommits,
   updateRepoSize,
+  getFileManifest,
+  getHeadSha,
+  getChangedFiles,
 };

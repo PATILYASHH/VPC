@@ -32,20 +32,20 @@ export default function Taskbar() {
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-12 z-[9999] bg-card/80 backdrop-blur-md border-t flex items-center px-2">
-      {/* Left: VPC launcher button */}
+    <div className="fixed bottom-0 left-0 right-0 h-12 z-[9999] bg-[#0d1117]/90 backdrop-blur-xl border-t border-white/[0.06] flex items-center px-2 gap-1">
+      {/* VPC launcher button */}
       <button
         onClick={toggleLauncher}
-        className="h-8 px-3 rounded bg-primary text-primary-foreground text-sm font-bold flex items-center gap-1.5 hover:bg-primary/90 transition-colors"
+        className="h-8 px-3.5 rounded-lg bg-primary/90 text-primary-foreground text-xs font-bold flex items-center gap-1.5 hover:bg-primary transition-colors shrink-0"
       >
-        <LayoutGrid className="w-4 h-4" />
+        <LayoutGrid className="w-3.5 h-3.5" />
         VPC
       </button>
 
-      <div className="w-px h-6 bg-border mx-2" />
+      <div className="w-px h-5 bg-white/[0.08] mx-1" />
 
-      {/* Center: open window tabs */}
-      <div className="flex-1 flex items-center gap-1 overflow-x-auto">
+      {/* Open window tabs */}
+      <div className="flex-1 flex items-center gap-0.5 overflow-x-auto">
         {Object.values(windows).map((win) => {
           const appDef = APP_REGISTRY[win.appId];
           const Icon = appDef?.icon;
@@ -57,9 +57,9 @@ export default function Taskbar() {
                 key={win.id}
                 onClick={() => handleWindowClick(win.id)}
                 title={win.title}
-                className="h-8 w-8 rounded flex items-center justify-center shrink-0 transition-all duration-150 bg-blue-600/20 border border-blue-500/40 text-blue-400 hover:bg-blue-600/40 hover:border-blue-400/70"
+                className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition-all duration-150 bg-white/[0.04] border border-white/[0.06] text-muted-foreground hover:bg-white/[0.08]"
               >
-                {Icon && <Icon className="w-4 h-4" />}
+                {Icon && <Icon className={`w-3.5 h-3.5 ${appDef.iconColor || ''}`} />}
               </button>
             );
           }
@@ -68,31 +68,31 @@ export default function Taskbar() {
             <button
               key={win.id}
               onClick={() => handleWindowClick(win.id)}
-              className={`h-8 px-3 rounded flex items-center gap-2 text-xs shrink-0 transition-colors ${
+              className={`h-8 px-3 rounded-lg flex items-center gap-2 text-xs shrink-0 transition-all duration-150 ${
                 isActive
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-accent/50'
+                  ? 'bg-white/[0.1] text-foreground border border-white/[0.1]'
+                  : 'text-muted-foreground hover:bg-white/[0.05] border border-transparent'
               }`}
             >
-              {Icon && <Icon className="w-3.5 h-3.5" />}
+              {Icon && <Icon className={`w-3.5 h-3.5 ${isActive ? (appDef.iconColor || '') : ''}`} />}
               <span className="truncate max-w-[120px]">{win.title}</span>
             </button>
           );
         })}
       </div>
 
-      <div className="w-px h-6 bg-border mx-2" />
+      <div className="w-px h-5 bg-white/[0.08] mx-1" />
 
       {/* Right: admin info + clock + logout */}
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span>{admin?.username}</span>
-        <span className="font-mono">{format(time, 'HH:mm')}</span>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+        <span className="font-medium text-foreground/70">{admin?.username}</span>
+        <span className="font-mono text-[11px] text-foreground/50">{format(time, 'HH:mm')}</span>
         <button
           onClick={logout}
-          className="hover:text-destructive transition-colors"
+          className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-500/10 hover:text-red-400 transition-colors"
           title="Logout"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>
