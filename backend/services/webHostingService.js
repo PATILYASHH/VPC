@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const dns = require('dns').promises;
+const vcsCore = require('./vpcVcsCore');
 
 const HOSTING_DIR = path.join(os.homedir(), 'web-hosting');
 const RESERVED_SLUGS = ['api', 'admin', 'storage', 'uploads', 'downloads', 'health', 'web-hosting', 'sites'];
@@ -13,6 +14,127 @@ function ensureHostingDir() {
   if (!fs.existsSync(HOSTING_DIR)) {
     fs.mkdirSync(HOSTING_DIR, { recursive: true });
   }
+}
+
+/**
+ * Check if a git_url points to a local VPC VCS repo (.vpc)
+ */
+function isVpcRepo(gitUrl) {
+  return gitUrl && gitUrl.endsWith('.vpc') && fs.existsSync(gitUrl);
+}
+
+/**
+ * Checkout a VPC VCS repo to a deploy path by reading objects directly.
+ * Used instead of git clone for .vpc repos (which use SHA-256 and aren't git-compatible).
+ */
+function checkoutVpcRepo(repoPath, deployPath, branch) {
+  const branchRef = `refs/heads/${branch}`;
+  const commitHash = vcsCore.resolveRef(repoPath, branchRef);
+  if (!commitHash) {
+    throw new Error(`Branch '${branch}' not found in VPC repo`);
+  }
+
+  const commit = vcsCore.readCommit(repoPath, commitHash);
+  const files = vcsCore.walkTree(repoPath, commit.tree);
+
+  if (!fs.existsSync(deployPath)) {
+    fs.mkdirSync(deployPath, { recursive: true });
+  }
+
+  for (const file of files) {
+    // Normalize backslashes (repos pushed from Windows may have them)
+    const normalizedPath = file.path.replace(/\\/g, '/');
+    const filePath = path.join(deployPath, normalizedPath);
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const content = vcsCore.readBlob(repoPath, file.hash);
+    fs.writeFileSync(filePath, content);
+    if (file.mode === '100755') {
+      fs.chmodSync(filePath, 0o755);
+    }
+  }
+
+  // Store a metadata file so we know the current commit for future pulls
+  fs.writeFileSync(path.join(deployPath, '.vpc-deploy'), JSON.stringify({
+    repoPath,
+    branch,
+    commitHash,
+  }));
+
+  return { commitHash, fileCount: files.length };
+}
+
+/**
+ * Pull updates from a VPC VCS repo by re-checking out all files.
+ */
+function pullVpcRepo(repoPath, deployPath, branch) {
+  const branchRef = `refs/heads/${branch}`;
+  const commitHash = vcsCore.resolveRef(repoPath, branchRef);
+  if (!commitHash) {
+    throw new Error(`Branch '${branch}' not found in VPC repo`);
+  }
+
+  // Check if already at this commit
+  const metaPath = path.join(deployPath, '.vpc-deploy');
+  if (fs.existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      if (meta.commitHash === commitHash) {
+        return { commitHash, fileCount: 0, upToDate: true };
+      }
+    } catch { /* ignore corrupt meta */ }
+  }
+
+  const commit = vcsCore.readCommit(repoPath, commitHash);
+  const files = vcsCore.walkTree(repoPath, commit.tree);
+
+  // Get list of existing files to clean up removed ones
+  const existingFiles = new Set();
+  function collectFiles(dir, base) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '.vpc-deploy' || entry.name === '.env' || entry.name === 'ecosystem.wh.config.js' || entry.name === 'node_modules') continue;
+      const rel = base ? `${base}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        collectFiles(path.join(dir, entry.name), rel);
+      } else {
+        existingFiles.add(rel);
+      }
+    }
+  }
+  collectFiles(deployPath, '');
+
+  // Write all files from the new commit
+  const newFiles = new Set();
+  for (const file of files) {
+    const normalizedPath = file.path.replace(/\\/g, '/');
+    newFiles.add(normalizedPath);
+    const filePath = path.join(deployPath, normalizedPath);
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    const content = vcsCore.readBlob(repoPath, file.hash);
+    fs.writeFileSync(filePath, content);
+    if (file.mode === '100755') {
+      fs.chmodSync(filePath, 0o755);
+    }
+  }
+
+  // Remove files that no longer exist in the repo
+  for (const oldFile of existingFiles) {
+    if (!newFiles.has(oldFile)) {
+      const oldPath = path.join(deployPath, oldFile);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+  }
+
+  // Update metadata
+  fs.writeFileSync(metaPath, JSON.stringify({ repoPath, branch, commitHash }));
+
+  return { commitHash, fileCount: files.length, upToDate: false };
 }
 
 function buildCloneUrl(gitUrl, gitToken) {
@@ -557,9 +679,28 @@ async function deploy(pool, project) {
 
     const cloneUrl = buildCloneUrl(project.git_url, project.git_token);
     const deployPath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
+    const branch = project.git_branch || 'main';
 
-    // Clone or pull
-    if (fs.existsSync(path.join(deployPath, '.git'))) {
+    // Clone or pull — use VPC VCS checkout for .vpc repos, git for everything else
+    if (isVpcRepo(project.git_url)) {
+      // VPC VCS repo: read objects directly instead of git clone
+      if (fs.existsSync(path.join(deployPath, '.vpc-deploy'))) {
+        log += `> vpc-vcs pull (branch: ${branch})\n`;
+        const result = pullVpcRepo(project.git_url, deployPath, branch);
+        if (result.upToDate) {
+          log += `Already up to date at ${result.commitHash.slice(0, 12)}\n`;
+        } else {
+          log += `Updated to ${result.commitHash.slice(0, 12)} (${result.fileCount} files)\n`;
+        }
+      } else {
+        if (fs.existsSync(deployPath)) {
+          fs.rmSync(deployPath, { recursive: true, force: true });
+        }
+        log += `> vpc-vcs checkout (branch: ${branch})\n`;
+        const result = checkoutVpcRepo(project.git_url, deployPath, branch);
+        log += `Checked out ${result.commitHash.slice(0, 12)} (${result.fileCount} files)\n`;
+      }
+    } else if (fs.existsSync(path.join(deployPath, '.git'))) {
       // Bug #1: Reset tracked files before pull to avoid "local changes would be overwritten"
       // Preserve .env and ecosystem.wh.config.js (our generated files)
       log += '> git checkout -- . && git clean -fd -e .env -e ecosystem.wh.config.js\n';
@@ -570,15 +711,15 @@ async function deploy(pool, project) {
         log += `Warning: git clean failed: ${cleanErr.message}\n`;
       }
 
-      log += `> git pull origin ${project.git_branch || 'main'}\n`;
-      const pullOut = await runCommand(`git pull origin ${project.git_branch || 'main'}`, deployPath);
+      log += `> git pull origin ${branch}\n`;
+      const pullOut = await runCommand(`git pull origin ${branch}`, deployPath);
       log += pullOut + '\n';
     } else {
       if (fs.existsSync(deployPath)) {
         fs.rmSync(deployPath, { recursive: true, force: true });
       }
-      log += `> git clone -b ${project.git_branch || 'main'}\n`;
-      const cloneOut = await runCommand(`git clone -b ${project.git_branch || 'main'} "${cloneUrl}" "${deployPath}"`, HOSTING_DIR);
+      log += `> git clone -b ${branch}\n`;
+      const cloneOut = await runCommand(`git clone -b ${branch} "${cloneUrl}" "${deployPath}"`, HOSTING_DIR);
       log += cloneOut + '\n';
     }
 
@@ -654,8 +795,16 @@ async function deploy(pool, project) {
       }
     }
 
-    // Build
+    // Build — remove stale Next.js lock files before building
     if (project.build_command) {
+      const nextLock = path.join(deployPath, '.next', 'lock');
+      const frontendDir = project.build_command.match(/^cd\s+(\S+)\s*&&/);
+      if (frontendDir) {
+        const fLock = path.join(deployPath, frontendDir[1], '.next', 'lock');
+        if (fs.existsSync(fLock)) fs.unlinkSync(fLock);
+      }
+      if (fs.existsSync(nextLock)) fs.unlinkSync(nextLock);
+
       log += `> ${project.build_command}\n`;
       const buildOut = await runCommand(project.build_command, deployPath);
       log += buildOut + '\n';

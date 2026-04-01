@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe } from 'lucide-react';
+import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useApiQuery } from '@/hooks/useApi';
@@ -11,12 +11,14 @@ import CodePRDetail from './CodePRDetail';
 import IssueList from './IssueList';
 import IssueDetail from './IssueDetail';
 import RepoSettings from './RepoSettings';
+import AgentTab from './AgentTab';
 
 const TABS = [
   { id: 'code', label: 'Code', icon: Code },
   { id: 'commits', label: 'Commits', icon: GitCommit },
   { id: 'pulls', label: 'Pull Requests', icon: GitPullRequest },
   { id: 'issues', label: 'Issues', icon: CircleDot },
+  { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -42,7 +44,7 @@ export default function RepoView({ repo, onBack }) {
     }
   }, [repoDetail, currentRef]);
 
-  const cloneUrl = `${window.location.origin}/git/${repo.owner_username}/${repo.slug}.git`;
+  const cloneUrl = `${window.location.origin}/vcs/${repo.owner_username}/${repo.slug}`;
 
   function copyCloneUrl() {
     navigator.clipboard.writeText(cloneUrl);
@@ -215,6 +217,8 @@ export default function RepoView({ repo, onBack }) {
               onSelectIssue={setSelectedIssue}
             />
           )
+        ) : activeTab === 'agent' ? (
+          <AgentTab owner={repo.owner_username} repo={repo.slug} />
         ) : activeTab === 'settings' ? (
           <RepoSettings owner={repo.owner_username} repo={repo.slug} />
         ) : null}
@@ -233,21 +237,26 @@ function EmptyRepoView({ cloneUrl, repoName }) {
           <h4 className="font-medium text-sm mb-3 text-foreground/80">Create a new repository on the command line</h4>
           <pre className="text-xs bg-white/[0.03] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground">
 {`echo "# ${repoName}" >> README.md
-git init
-git add README.md
-git commit -m "first commit"
-git branch -M main
-git remote add origin ${cloneUrl}
-git push -u origin main`}
+vpc init
+vpc add README.md
+vpc commit -m "first commit"
+vpc remote add origin ${cloneUrl}
+vpc push origin main`}
           </pre>
         </div>
 
         <div className="border border-white/[0.06] rounded-xl p-4 bg-white/[0.02]">
           <h4 className="font-medium text-sm mb-3 text-foreground/80">Push an existing repository</h4>
           <pre className="text-xs bg-white/[0.03] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground">
-{`git remote add origin ${cloneUrl}
-git branch -M main
-git push -u origin main`}
+{`vpc remote add origin ${cloneUrl}
+vpc push origin main`}
+          </pre>
+        </div>
+
+        <div className="border border-white/[0.06] rounded-xl p-4 bg-white/[0.02]">
+          <h4 className="font-medium text-sm mb-3 text-foreground/80">Clone this repository</h4>
+          <pre className="text-xs bg-white/[0.03] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground">
+{`vpc clone ${cloneUrl}`}
           </pre>
         </div>
       </div>

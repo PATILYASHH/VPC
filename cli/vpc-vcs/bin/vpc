@@ -1,0 +1,157 @@
+#!/usr/bin/env node
+
+/**
+ * VPC — Custom Version Control System CLI
+ *
+ * Usage:
+ *   vpc init                       Initialize a new repository
+ *   vpc clone <url>                Clone a remote repository
+ *   vpc add <files...>             Stage files for commit
+ *   vpc status                     Show working tree status
+ *   vpc commit -m <message>        Create a commit
+ *   vpc log                        Show commit history
+ *   vpc diff [--staged]            Show changes
+ *   vpc branch [name]              List or create branches
+ *   vpc checkout <branch>          Switch branches
+ *   vpc merge <branch>             Merge a branch
+ *   vpc push [remote] [branch]     Push to remote
+ *   vpc pull [remote] [branch]     Pull from remote
+ *   vpc remote add|remove|list     Manage remotes
+ */
+
+const { program } = require('commander');
+
+program
+  .name('vpc')
+  .description('VPC Version Control System')
+  .version('1.0.0');
+
+// Init
+program
+  .command('init')
+  .description('Initialize a new VPC repository')
+  .action(async () => {
+    const { init } = require('../src/commands/init');
+    await init();
+  });
+
+// Clone
+program
+  .command('clone <url>')
+  .description('Clone a remote repository')
+  .option('-d, --dir <directory>', 'Target directory')
+  .action(async (url, opts) => {
+    const { clone } = require('../src/commands/clone');
+    await clone(url, opts);
+  });
+
+// Add
+program
+  .command('add [files...]')
+  .description('Stage files for commit')
+  .option('-A, --all', 'Stage all changes')
+  .action(async (files, opts) => {
+    const { add } = require('../src/commands/add');
+    await add(files, opts);
+  });
+
+// Status
+program
+  .command('status')
+  .description('Show working tree status')
+  .action(async () => {
+    const { status } = require('../src/commands/status');
+    await status();
+  });
+
+// Commit
+program
+  .command('commit')
+  .description('Create a commit')
+  .requiredOption('-m, --message <message>', 'Commit message')
+  .action(async (opts) => {
+    const { commit } = require('../src/commands/commit');
+    await commit(opts);
+  });
+
+// Log
+program
+  .command('log')
+  .description('Show commit history')
+  .option('-n, --number <count>', 'Number of commits', '10')
+  .action(async (opts) => {
+    const { log } = require('../src/commands/log');
+    await log(opts);
+  });
+
+// Diff
+program
+  .command('diff')
+  .description('Show changes')
+  .option('--staged', 'Show staged changes')
+  .action(async (opts) => {
+    const { diff } = require('../src/commands/diff');
+    await diff(opts);
+  });
+
+// Branch
+program
+  .command('branch [name]')
+  .description('List or create branches')
+  .option('-d, --delete', 'Delete branch')
+  .action(async (name, opts) => {
+    const { branch } = require('../src/commands/branch');
+    await branch(name, opts);
+  });
+
+// Checkout
+program
+  .command('checkout <ref>')
+  .description('Switch branches or restore files')
+  .option('-b', 'Create new branch and switch')
+  .action(async (ref, opts) => {
+    const { checkout } = require('../src/commands/checkout');
+    await checkout(ref, opts);
+  });
+
+// Merge
+program
+  .command('merge <branch>')
+  .description('Merge a branch into current branch')
+  .option('-m, --message <message>', 'Merge commit message')
+  .action(async (branchName, opts) => {
+    const { merge } = require('../src/commands/merge');
+    await merge(branchName, opts);
+  });
+
+// Push
+program
+  .command('push [remote] [branch]')
+  .description('Push commits to remote')
+  .action(async (remote, branchName) => {
+    const { push } = require('../src/commands/push');
+    await push(remote, branchName);
+  });
+
+// Pull
+program
+  .command('pull [remote] [branch]')
+  .description('Pull commits from remote')
+  .action(async (remote, branchName) => {
+    const { pull } = require('../src/commands/pull');
+    await pull(remote, branchName);
+  });
+
+// Remote
+program
+  .command('remote')
+  .description('Manage remotes')
+  .argument('[action]', 'add, remove, or list')
+  .argument('[name]', 'Remote name')
+  .argument('[url]', 'Remote URL')
+  .action(async (action, name, url) => {
+    const { remote } = require('../src/commands/remote');
+    await remote(action, name, url);
+  });
+
+program.parse();

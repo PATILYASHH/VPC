@@ -125,17 +125,17 @@ class SyncApiClient {
         return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
     }
     async vpshubGetManifest(baseUrl, token, owner, repo, ref) {
-        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
             headers: this.vpshubHeaders(token),
         });
     }
     async vpshubGetFileContent(baseUrl, token, owner, repo, ref, filePath) {
-        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
             headers: this.vpshubHeaders(token),
         });
     }
     async vpshubDownloadFile(baseUrl, token, owner, repo, ref, filePath) {
-        const url = `${baseUrl}/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
+        const url = `${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
         return new Promise((resolve, reject) => {
             const parsedUrl = new URL(url);
             const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -147,23 +147,79 @@ class SyncApiClient {
         });
     }
     async vpshubGetChangedFiles(baseUrl, token, owner, repo, fromSha, toSha) {
-        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
             headers: this.vpshubHeaders(token),
         });
     }
     async vpshubGetBranches(baseUrl, token, owner, repo) {
-        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/branches`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/branches`, {
             headers: this.vpshubHeaders(token),
         });
     }
     async vpshubGetCommits(baseUrl, token, owner, repo, ref, limit = 30) {
-        return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
             headers: this.vpshubHeaders(token),
         });
     }
     async vpshubGetRepos(baseUrl, token) {
-        return request(`${baseUrl}/admin/vpshub/repos`, {
+        return request(`${baseUrl}/api/admin/vpshub/repos`, {
             headers: this.vpshubHeaders(token),
+        });
+    }
+    // ─── VPC VCS Transfer Protocol ───────────────────────────────
+    vcsBasicAuth(username, token) {
+        return 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
+    }
+    /**
+     * Fetch remote refs via VPC VCS protocol
+     */
+    async vcsFetchRefs(vcsUrl, username, token) {
+        return request(`${vcsUrl}/refs`, {
+            method: 'POST',
+            headers: {
+                Authorization: this.vcsBasicAuth(username, token),
+                'Content-Type': 'application/json',
+            },
+            body: '{}',
+        });
+    }
+    /**
+     * Push objects and update refs via VPC VCS protocol
+     */
+    async vcsPush(vcsUrl, username, token, objects, refs) {
+        return request(`${vcsUrl}/push`, {
+            method: 'POST',
+            headers: {
+                Authorization: this.vcsBasicAuth(username, token),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ objects, refs }),
+        });
+    }
+    /**
+     * Pull objects from remote via VPC VCS protocol
+     */
+    async vcsPull(vcsUrl, username, token, wants, haves) {
+        return request(`${vcsUrl}/pull`, {
+            method: 'POST',
+            headers: {
+                Authorization: this.vcsBasicAuth(username, token),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ wants, haves }),
+        });
+    }
+    /**
+     * Negotiate object transfer via VPC VCS protocol
+     */
+    async vcsNegotiate(vcsUrl, username, token, body) {
+        return request(`${vcsUrl}/negotiate`, {
+            method: 'POST',
+            headers: {
+                Authorization: this.vcsBasicAuth(username, token),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
         });
     }
     // Legacy pull endpoints (backward compat)

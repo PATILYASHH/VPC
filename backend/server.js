@@ -34,9 +34,15 @@ app.use('/api/bana', cors());
 // Fallback CORS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
-// Body parsing
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Body parsing — skip /vcs routes (binary VPC VCS protocol data has its own parser)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/vcs/')) return next();
+  express.json({ limit: '50mb' })(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith('/vcs/')) return next();
+  express.urlencoded({ extended: true, limit: '50mb' })(req, res, next);
+});
 
 // Attach database pool
 app.locals.pool = pool;
@@ -92,15 +98,18 @@ adminRouter.get('/me', (req, res) => {
 
 app.use('/api/admin', adminRouter);
 
-// VPSHub Git Smart HTTP Protocol (no JWT, uses Basic Auth with PAT tokens)
+// VPC VCS Transfer Protocol (no JWT, uses Basic Auth with PAT tokens)
 // Must come BEFORE static files and SPA fallback
-app.use('/git', require('./routes/vpshubGit'));
+app.use('/vcs', require('./routes/vpshubVcs'));
 
 // Web hosting: serve hosted projects by slug or custom domain
 // Must come BEFORE the SPA catch-all so /koperp/ etc. are handled correctly
 const webHostingPublic = require('./routes/webHostingPublic');
 const webHostingService = require('./services/webHostingService');
 app.use(webHostingPublic);
+
+// Serve downloadable files (VS Code extension, etc.)
+app.use('/downloads', express.static(path.join(__dirname, '..', 'downloads')));
 
 // Serve frontend static files
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');

@@ -1,4 +1,13 @@
+/**
+ * VPSHub Pull Request Service
+ *
+ * PR CRUD, merge, diff, comments — all using VPC VCS (no Git).
+ */
+
 const gitService = require('./vpshubGitService');
+const vcsCore = require('./vpcVcsCore');
+const vcsDiff = require('./vpcVcsDiff');
+const vcsMerge = require('./vpcVcsMerge');
 
 // ─── PR CRUD ──────────────────────────────────────────────────
 
@@ -106,62 +115,49 @@ async function updatePullRequest(pool, prId, updates) {
 async function mergePullRequest(pool, { prId, repoId, ownerUsername, repoSlug, sourceBranch, targetBranch, mergedById }) {
   const repoPath = gitService.getRepoPath(ownerUsername, repoSlug);
 
-  // Perform git merge on the bare repo using a temp worktree
-  const fs = require('fs');
-  const path = require('path');
-  const os = require('os');
-  const { execFile } = require('child_process');
+  // Resolve both branches to commit hashes
+  const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${sourceBranch}`);
+  const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${targetBranch}`);
 
-  function git(args, opts = {}) {
-    return new Promise((resolve, reject) => {
-      execFile('git', args, {
-        cwd: opts.cwd,
-        env: { ...process.env, ...(opts.gitDir ? { GIT_DIR: opts.gitDir } : {}) },
-        maxBuffer: 50 * 1024 * 1024,
-        timeout: 60000,
-      }, (err, stdout, stderr) => {
-        if (err) reject(new Error(stderr || err.message));
-        else resolve(stdout);
-      });
-    });
+  if (!sourceHash) {
+    return { success: false, error: `Branch '${sourceBranch}' not found` };
+  }
+  if (!targetHash) {
+    return { success: false, error: `Branch '${targetBranch}' not found` };
   }
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpshub-merge-'));
+  // Perform merge using VCS merge engine
+  const result = vcsMerge.mergeCommits(repoPath, {
+    ours: targetHash,
+    theirs: sourceHash,
+    authorName: 'VPSHub',
+    authorEmail: 'vpshub@localhost',
+    message: `Merge branch '${sourceBranch}' into ${targetBranch}`,
+  });
 
-  try {
-    // Clone, checkout target, merge source
-    await git(['clone', '--no-checkout', repoPath, tmpDir]);
-    await git(['checkout', targetBranch], { cwd: tmpDir });
-    await git([
-      '-c', 'user.name=VPSHub',
-      '-c', 'user.email=vpshub@localhost',
-      'merge', '--no-ff', `origin/${sourceBranch}`,
-      '-m', `Merge branch '${sourceBranch}' into ${targetBranch}`
-    ], { cwd: tmpDir });
-
-    const mergeSha = (await git(['rev-parse', 'HEAD'], { cwd: tmpDir })).trim();
-
-    // Push merge commit back to bare repo
-    await git(['push', 'origin', targetBranch], { cwd: tmpDir });
-
-    // Update PR record
-    await pool.query(
-      `UPDATE vpshub_pull_requests
-       SET status = 'merged', merged_by = $1, merged_at = NOW(), merge_commit_sha = $2, updated_at = NOW()
-       WHERE id = $3`,
-      [mergedById, mergeSha, prId]
-    );
-
-    return { success: true, merge_sha: mergeSha };
-  } catch (err) {
-    // Check if it's a merge conflict
-    if (err.message.includes('CONFLICT') || err.message.includes('Automatic merge failed')) {
-      return { success: false, error: 'Merge conflict detected. Resolve conflicts locally and push.' };
-    }
-    throw err;
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (!result.success) {
+    const conflictPaths = result.conflicts.map(c => c.path).join(', ');
+    return { success: false, error: `Merge conflict in: ${conflictPaths}. Resolve conflicts locally and push.` };
   }
+
+  const mergeSha = result.commitHash;
+
+  // Update the target branch ref
+  vcsCore.updateRef(repoPath, `refs/heads/${targetBranch}`, mergeSha);
+
+  // Sync refs and commits to DB
+  await vcsCore.syncRefsToDb(pool, repoId, repoPath);
+  await vcsCore.syncCommitsToDb(pool, repoId, repoPath, mergeSha);
+
+  // Update PR record
+  await pool.query(
+    `UPDATE vpshub_pull_requests
+     SET status = 'merged', merged_by = $1, merged_at = NOW(), merge_commit_sha = $2, updated_at = NOW()
+     WHERE id = $3`,
+    [mergedById, mergeSha, prId]
+  );
+
+  return { success: true, merge_sha: mergeSha };
 }
 
 async function closePullRequest(pool, prId) {
@@ -183,50 +179,53 @@ async function reopenPullRequest(pool, prId) {
 // ─── PR Diff ──────────────────────────────────────────────────
 
 async function getPrDiff(ownerUsername, repoSlug, sourceBranch, targetBranch) {
-  return gitService.getDiff(ownerUsername, repoSlug, targetBranch, sourceBranch);
+  const repoPath = gitService.getRepoPath(ownerUsername, repoSlug);
+
+  const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${sourceBranch}`);
+  const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${targetBranch}`);
+  if (!sourceHash || !targetHash) return '';
+
+  // Diff from merge-base to source (like git diff target...source)
+  const mergeBase = vcsMerge.findMergeBase(repoPath, targetHash, sourceHash);
+  const fromHash = mergeBase || targetHash;
+
+  return vcsDiff.diffCommits(repoPath, fromHash, sourceHash);
 }
 
 async function getPrFiles(ownerUsername, repoSlug, sourceBranch, targetBranch) {
   const repoPath = gitService.getRepoPath(ownerUsername, repoSlug);
-  const { execFile } = require('child_process');
 
-  return new Promise((resolve, reject) => {
-    execFile('git', ['diff', '--name-status', `${targetBranch}...${sourceBranch}`], {
-      env: { ...process.env, GIT_DIR: repoPath },
-      maxBuffer: 50 * 1024 * 1024,
-    }, (err, stdout) => {
-      if (err) { resolve([]); return; }
-      const files = stdout.trim().split('\n').filter(Boolean).map(line => {
-        const parts = line.split('\t');
-        return { status: parts[0], path: parts[parts.length - 1] };
-      });
-      resolve(files);
-    });
-  });
+  const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${sourceBranch}`);
+  const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${targetBranch}`);
+  if (!sourceHash || !targetHash) return [];
+
+  const mergeBase = vcsMerge.findMergeBase(repoPath, targetHash, sourceHash);
+  const fromHash = mergeBase || targetHash;
+
+  const fromCommit = vcsCore.readCommit(repoPath, fromHash);
+  const toCommit = vcsCore.readCommit(repoPath, sourceHash);
+
+  const changes = vcsDiff.diffTrees(repoPath, fromCommit.tree, toCommit.tree);
+  return changes.map(c => ({ status: c.status, path: c.path }));
 }
 
 async function getPrCommits(ownerUsername, repoSlug, sourceBranch, targetBranch) {
   const repoPath = gitService.getRepoPath(ownerUsername, repoSlug);
-  const { execFile } = require('child_process');
 
-  return new Promise((resolve, reject) => {
-    const format = '%H%n%h%n%an%n%ae%n%aI%n%s%n---END---';
-    execFile('git', ['log', `--format=${format}`, `${targetBranch}..${sourceBranch}`], {
-      env: { ...process.env, GIT_DIR: repoPath },
-      maxBuffer: 50 * 1024 * 1024,
-    }, (err, stdout) => {
-      if (err) { resolve([]); return; }
-      const commits = stdout.split('---END---').filter(s => s.trim()).map(block => {
-        const lines = block.trim().split('\n');
-        return {
-          sha: lines[0], short_sha: lines[1],
-          author_name: lines[2], author_email: lines[3],
-          date: lines[4], message: lines[5],
-        };
-      });
-      resolve(commits);
-    });
-  });
+  const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${sourceBranch}`);
+  const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${targetBranch}`);
+  if (!sourceHash || !targetHash) return [];
+
+  const commits = vcsMerge.getCommitsBetween(repoPath, targetHash, sourceHash);
+
+  return commits.map(c => ({
+    sha: c.hash,
+    short_sha: c.hash.slice(0, 12),
+    author_name: c.authorName,
+    author_email: c.authorEmail,
+    date: c.authorDate ? new Date(c.authorDate * 1000).toISOString() : null,
+    message: c.message,
+  }));
 }
 
 // ─── Comments ─────────────────────────────────────────────────

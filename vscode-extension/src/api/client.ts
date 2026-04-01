@@ -182,19 +182,19 @@ export class SyncApiClient {
   async vpshubGetManifest(baseUrl: string, token: string, owner: string, repo: string, ref: string): Promise<{
     ref: string; sha: string; files: { path: string; hash: string; size: number; mode: string }[]; total: number;
   }> {
-    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/manifest/${ref}`, {
       headers: this.vpshubHeaders(token),
     });
   }
 
   async vpshubGetFileContent(baseUrl: string, token: string, owner: string, repo: string, ref: string, filePath: string): Promise<{ content: string; path: string }> {
-    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/blob/${ref}/${filePath}`, {
       headers: this.vpshubHeaders(token),
     });
   }
 
   async vpshubDownloadFile(baseUrl: string, token: string, owner: string, repo: string, ref: string, filePath: string): Promise<Buffer> {
-    const url = `${baseUrl}/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
+    const url = `${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/raw/${ref}/${filePath}`;
     return new Promise((resolve, reject) => {
       const parsedUrl = new URL(url);
       const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -209,26 +209,94 @@ export class SyncApiClient {
   async vpshubGetChangedFiles(baseUrl: string, token: string, owner: string, repo: string, fromSha: string, toSha: string): Promise<{
     changes: { status: string; path: string; oldPath?: string }[];
   }> {
-    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/changes/${fromSha}/${toSha}`, {
       headers: this.vpshubHeaders(token),
     });
   }
 
   async vpshubGetBranches(baseUrl: string, token: string, owner: string, repo: string): Promise<{ branches: string[] }> {
-    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/branches`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/branches`, {
       headers: this.vpshubHeaders(token),
     });
   }
 
   async vpshubGetCommits(baseUrl: string, token: string, owner: string, repo: string, ref: string, limit = 30): Promise<any> {
-    return request(`${baseUrl}/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/commits/${ref}?limit=${limit}`, {
       headers: this.vpshubHeaders(token),
     });
   }
 
   async vpshubGetRepos(baseUrl: string, token: string): Promise<{ repos: any[] }> {
-    return request(`${baseUrl}/admin/vpshub/repos`, {
+    return request(`${baseUrl}/api/admin/vpshub/repos`, {
       headers: this.vpshubHeaders(token),
+    });
+  }
+
+  // ─── VPC VCS Transfer Protocol ───────────────────────────────
+
+  private vcsBasicAuth(username: string, token: string): string {
+    return 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
+  }
+
+  /**
+   * Fetch remote refs via VPC VCS protocol
+   */
+  async vcsFetchRefs(vcsUrl: string, username: string, token: string): Promise<{
+    HEAD: string | null; defaultBranch: string; refs: Record<string, string>;
+  }> {
+    return request(`${vcsUrl}/refs`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+  }
+
+  /**
+   * Push objects and update refs via VPC VCS protocol
+   */
+  async vcsPush(vcsUrl: string, username: string, token: string, objects: any[], refs: Record<string, string | { old: string; new: string }>): Promise<{
+    ok: boolean; updated_refs: Record<string, string>; merged?: boolean; conflict?: boolean; auto_pr?: { pr_number: number; conflicts: string[] }; error?: string;
+  }> {
+    return request(`${vcsUrl}/push`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ objects, refs }),
+    });
+  }
+
+  /**
+   * Pull objects from remote via VPC VCS protocol
+   */
+  async vcsPull(vcsUrl: string, username: string, token: string, wants: string[], haves: string[]): Promise<{
+    refs: Record<string, string>; objectCount: number; objects: any[];
+  }> {
+    return request(`${vcsUrl}/pull`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ wants, haves }),
+    });
+  }
+
+  /**
+   * Negotiate object transfer via VPC VCS protocol
+   */
+  async vcsNegotiate(vcsUrl: string, username: string, token: string, body: any): Promise<any> {
+    return request(`${vcsUrl}/negotiate`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     });
   }
 

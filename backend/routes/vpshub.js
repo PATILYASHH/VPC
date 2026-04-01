@@ -1086,4 +1086,251 @@ router.delete('/tokens/:id', async (req, res) => {
   }
 });
 
+// ─── VPC Sync Downloads ──────────────────────────────────────
+
+router.get('/downloads/cli', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const filePath = path.join(__dirname, '..', '..', 'downloads', 'vpc-sync-cli.tar.gz');
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'CLI package not available' });
+  }
+  res.download(filePath, 'vpc-sync-cli.tar.gz');
+});
+
+router.get('/downloads/extension', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const filePath = path.join(__dirname, '..', '..', 'downloads', 'vpc-sync.vsix');
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'Extension file not available' });
+  }
+  res.download(filePath, 'vpc-sync.vsix');
+});
+
+router.get('/downloads/info', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+
+  const cliPath = path.join(__dirname, '..', '..', 'downloads', 'vpc-sync-cli.tar.gz');
+  const vsixPath = path.join(__dirname, '..', '..', 'downloads', 'vpc-sync.vsix');
+
+  res.json({
+    cli: {
+      version: '1.0.0',
+      filename: 'vpc-sync-cli.tar.gz',
+      available: fs.existsSync(cliPath),
+      size: fs.existsSync(cliPath) ? fs.statSync(cliPath).size : 0,
+      downloadUrl: '/downloads/vpc-sync-cli.tar.gz',
+    },
+    extension: {
+      version: '5.0.0',
+      filename: 'vpc-sync.vsix',
+      available: fs.existsSync(vsixPath),
+      size: fs.existsSync(vsixPath) ? fs.statSync(vsixPath).size : 0,
+      downloadUrl: '/downloads/vpc-sync.vsix',
+    },
+  });
+});
+
+// ─── AI Code Review & Agent ──────────────────────────────────
+
+const aiReviewService = require('../services/aiReviewService');
+const vcsCore = require('../services/vpcVcsCore');
+
+// AI Review a code PR
+router.post('/repos/:owner/:repo/pulls/:number/ai-review', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { owner, repo, number } = req.params;
+    const repoInfo = await gitService.getRepositoryBySlug(pool, owner, repo);
+    if (!repoInfo) return res.status(404).json({ error: 'Repository not found' });
+
+    const pr = await prService.getPullRequest(pool, repoInfo.id, parseInt(number));
+    if (!pr) return res.status(404).json({ error: 'PR not found' });
+
+    const diff = await prService.getPrDiff(pool, repoInfo.id, owner, repo, pr.source_branch, pr.target_branch);
+    const files = await prService.getPrFiles(pool, repoInfo.id, owner, repo, pr.source_branch, pr.target_branch);
+    const fileList = files.map(f => f.path);
+
+    const result = await aiReviewService.reviewCode(diff, fileList, {
+      pool, title: pr.title, description: pr.description,
+    });
+
+    if (result.error) return res.status(500).json({ error: result.error });
+
+    // Store review as a PR comment
+    if (result.review) {
+      const review = result.review;
+      const body = `## AI Code Review\n\n**${review.approval === 'approve' ? 'Approved' : review.approval === 'request_changes' ? 'Changes Requested' : 'Reviewed'}**\n\n${review.summary || ''}\n\n${
+        review.issues?.length ? '### Issues\n' + review.issues.map(i => `- **${i.severity}** ${i.file}${i.line ? ':' + i.line : ''}: ${i.message}`).join('\n') + '\n\n' : ''
+      }${
+        review.suggestions?.length ? '### Suggestions\n' + review.suggestions.map(s => `- ${s}`).join('\n') + '\n\n' : ''
+      }${
+        review.security_concerns?.length ? '### Security Concerns\n' + review.security_concerns.map(s => `- ${s}`).join('\n') + '\n\n' : ''
+      }${review.review_notes || ''}`;
+
+      await prService.addComment(pool, {
+        prId: pr.id, authorId: req.user?.id || repoInfo.owner_id, body,
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error('[VPSHub] AI review error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Resolve conflicts in a PR
+router.post('/repos/:owner/:repo/pulls/:number/ai-resolve', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { owner, repo, number } = req.params;
+    const repoInfo = await gitService.getRepositoryBySlug(pool, owner, repo);
+    if (!repoInfo) return res.status(404).json({ error: 'Repository not found' });
+
+    const pr = await prService.getPullRequest(pool, repoInfo.id, parseInt(number));
+    if (!pr) return res.status(404).json({ error: 'PR not found' });
+
+    const repoPath = gitService.getRepoPath(owner, repo);
+    const vcsMerge = require('../services/vpcVcsMerge');
+
+    // Attempt merge to get conflicts
+    const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.source_branch}`);
+    const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.target_branch}`);
+    if (!sourceHash || !targetHash) return res.status(400).json({ error: 'Branch not found' });
+
+    const mergeResult = vcsMerge.mergeCommits(repoPath, {
+      ours: targetHash, theirs: sourceHash,
+      authorName: 'AI Agent', authorEmail: 'ai@vpshub',
+      message: `AI-resolved merge: ${pr.source_branch} into ${pr.target_branch}`,
+    });
+
+    if (mergeResult.success) {
+      return res.json({ resolved: true, message: 'No conflicts — merge is clean', merge_sha: mergeResult.commitHash });
+    }
+
+    // Resolve each conflict with AI
+    const resolutions = [];
+    for (const conflict of mergeResult.conflicts) {
+      const result = await aiReviewService.resolveConflicts(conflict.content, conflict.path, { pool });
+      resolutions.push({ path: conflict.path, ...result });
+    }
+
+    res.json({ resolved: false, conflicts: mergeResult.conflicts.length, resolutions });
+  } catch (err) {
+    console.error('[VPSHub] AI resolve error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Agent chat for a repository
+router.post('/repos/:owner/:repo/agent/chat', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { owner, repo } = req.params;
+    const { message, history } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const repoInfo = await gitService.getRepositoryBySlug(pool, owner, repo);
+    if (!repoInfo) return res.status(404).json({ error: 'Repository not found' });
+
+    const repoPath = gitService.getRepoPath(owner, repo);
+
+    // Build repo context
+    let fileTree = '';
+    let recentCommits = '';
+    try {
+      const headHash = vcsCore.resolveRef(repoPath, 'HEAD');
+      if (headHash) {
+        const commit = vcsCore.readCommit(repoPath, headHash);
+        const files = vcsCore.walkTree(repoPath, commit.tree);
+        fileTree = files.slice(0, 100).map(f => f.path).join('\n');
+
+        // Recent commits
+        const commits = [];
+        let hash = headHash;
+        for (let i = 0; i < 10 && hash; i++) {
+          try {
+            const c = vcsCore.readCommit(repoPath, hash);
+            commits.push(`${hash.slice(0, 8)} ${c.message}`);
+            hash = c.parents[0] || null;
+          } catch { break; }
+        }
+        recentCommits = commits.join('\n');
+      }
+    } catch { /* ignore */ }
+
+    const result = await aiReviewService.chatWithRepo(message, {
+      repoName: `${owner}/${repoInfo.slug}`,
+      branch: 'main',
+      fileTree,
+      recentCommits,
+      history: history || [],
+    }, { pool });
+
+    res.json(result);
+  } catch (err) {
+    console.error('[VPSHub] Agent chat error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Agent analyze repository
+router.post('/repos/:owner/:repo/agent/analyze', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { owner, repo } = req.params;
+    const repoInfo = await gitService.getRepositoryBySlug(pool, owner, repo);
+    if (!repoInfo) return res.status(404).json({ error: 'Repository not found' });
+
+    const repoPath = gitService.getRepoPath(owner, repo);
+
+    // Get file listing and key files content
+    let fileTree = '';
+    let keyFilesContent = '';
+    try {
+      const headHash = vcsCore.resolveRef(repoPath, 'HEAD');
+      if (headHash) {
+        const commit = vcsCore.readCommit(repoPath, headHash);
+        const files = vcsCore.walkTree(repoPath, commit.tree);
+        fileTree = files.map(f => `${f.path} (${f.size}b)`).join('\n');
+
+        // Read key files for analysis
+        const keyFiles = ['package.json', 'README.md', 'Dockerfile', '.env.example', 'requirements.txt', 'go.mod', 'Cargo.toml'];
+        for (const kf of keyFiles) {
+          const match = files.find(f => f.path.endsWith(kf));
+          if (match) {
+            try {
+              const content = vcsCore.readBlob(repoPath, match.hash).toString('utf8');
+              keyFilesContent += `\n--- ${match.path} ---\n${content.slice(0, 2000)}\n`;
+            } catch { /* skip */ }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    const message = `Analyze this repository comprehensively. Cover:
+1. Project overview — what does it do?
+2. Tech stack and dependencies
+3. Code quality observations
+4. Potential issues or improvements
+5. Security concerns
+6. Suggestions for next steps
+
+File structure:\n${fileTree.slice(0, 5000)}\n\nKey files:\n${keyFilesContent.slice(0, 8000)}`;
+
+    const result = await aiReviewService.chatWithRepo(message, {
+      repoName: `${owner}/${repoInfo.slug}`,
+      branch: 'main',
+    }, { pool });
+
+    res.json(result);
+  } catch (err) {
+    console.error('[VPSHub] Agent analyze error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

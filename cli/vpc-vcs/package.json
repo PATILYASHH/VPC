@@ -1,0 +1,17 @@
+{
+  "name": "vpc-vcs",
+  "version": "1.0.0",
+  "description": "VPC Version Control System — custom VCS CLI",
+  "bin": {
+    "vpc": "./bin/vpc"
+  },
+  "scripts": {
+    "start": "node bin/vpc"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "ora": "^5.4.1"
+  }
+}

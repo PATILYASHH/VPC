@@ -1,7 +1,19 @@
-const { execFile } = require('child_process');
+/**
+ * VPSHub Repository Service
+ *
+ * Provides all repository operations using VPC VCS (custom version control).
+ * No Git dependency — all operations use vpcVcsCore, vpcVcsDiff, vpcVcsMerge.
+ *
+ * Exported API signatures are preserved for compatibility with existing routes.
+ */
+
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+
+const vcsCore = require('./vpcVcsCore');
+const vcsDiff = require('./vpcVcsDiff');
+const vcsMerge = require('./vpcVcsMerge');
 
 const REPOS_DIR = path.join(os.homedir(), 'vpshub-repos');
 
@@ -12,28 +24,7 @@ function ensureReposDir() {
 }
 
 function getRepoPath(ownerUsername, repoSlug) {
-  return path.join(REPOS_DIR, ownerUsername, `${repoSlug}.git`);
-}
-
-function git(args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    if (opts.gitDir) {
-      env.GIT_DIR = opts.gitDir;
-    }
-    execFile('git', args, {
-      cwd: opts.cwd,
-      env,
-      maxBuffer: 50 * 1024 * 1024,
-      timeout: opts.timeout || 30000,
-    }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(`git ${args[0]} failed: ${err.message}\n${stderr || ''}`));
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
+  return path.join(REPOS_DIR, ownerUsername, `${repoSlug}.vpc`);
 }
 
 // ─── Repository CRUD ─────────────────────────────────────────
@@ -44,16 +35,12 @@ async function createRepository(pool, { ownerId, ownerUsername, name, slug, desc
   const repoPath = getRepoPath(ownerUsername, slug);
   const ownerDir = path.dirname(repoPath);
 
-  // Create owner dir if needed
   if (!fs.existsSync(ownerDir)) {
     fs.mkdirSync(ownerDir, { recursive: true });
   }
 
-  // Init bare repo
-  await git(['init', '--bare', repoPath]);
-
-  // Set default branch to main
-  await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], { gitDir: repoPath });
+  // Init bare VPC VCS repo
+  vcsCore.initBareRepo(repoPath);
 
   // Insert DB record
   const { rows } = await pool.query(
@@ -67,40 +54,20 @@ async function createRepository(pool, { ownerId, ownerUsername, name, slug, desc
 
   // Initialize with README if requested
   if (initReadme) {
-    await initRepoWithReadme(repoPath, name, description, ownerUsername);
+    const commitHash = vcsCore.initRepoWithReadme(repoPath, name, description, ownerUsername);
+
+    // Sync to DB
+    await vcsCore.syncRefsToDb(pool, repo.id, repoPath);
+    await vcsCore.syncCommitsToDb(pool, repo.id, repoPath, commitHash);
   }
 
   return repo;
 }
 
-async function initRepoWithReadme(repoPath, repoName, description, authorName) {
-  const readmeContent = `# ${repoName}\n\n${description || ''}\n`;
-
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vpshub-'));
-  const workDir = path.join(tmpDir, 'work');
-  fs.mkdirSync(workDir);
-
-  try {
-    // Init a fresh repo (not a clone of empty bare), add README, push to bare
-    await git(['init', workDir]);
-    fs.writeFileSync(path.join(workDir, 'README.md'), readmeContent);
-    await git(['add', 'README.md'], { cwd: workDir });
-    await git([
-      '-c', `user.name=${authorName}`,
-      '-c', `user.email=${authorName}@vpshub`,
-      'commit', '-m', 'Initial commit'
-    ], { cwd: workDir });
-    await git(['remote', 'add', 'origin', repoPath], { cwd: workDir });
-    await git(['push', 'origin', 'HEAD:main'], { cwd: workDir });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
 async function deleteRepository(pool, repoId, ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
 
-  // Delete from DB
+  // Delete from DB (cascades to refs, commits, PRs, etc.)
   await pool.query('DELETE FROM vpshub_repositories WHERE id = $1', [repoId]);
 
   // Delete from filesystem
@@ -178,97 +145,159 @@ async function updateRepository(pool, repoId, updates) {
   return rows[0];
 }
 
-// ─── Git Read Operations ─────────────────────────────────────
+// ─── VCS Read Operations ─────────────────────────────────────
 
 async function getTree(ownerUsername, repoSlug, ref, dirPath) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
-  const target = dirPath ? `${ref}:${dirPath}` : `${ref}`;
 
   try {
-    const output = await git(['ls-tree', '-l', target], { gitDir: repoPath });
-    return output.trim().split('\n').filter(Boolean).map(line => {
-      // format: <mode> <type> <hash> <size>\t<name>
-      const match = line.match(/^(\d+)\s+(blob|tree)\s+([a-f0-9]+)\s+(-|\d+)\t(.+)$/);
-      if (!match) return null;
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return [];
+
+    const commit = vcsCore.readCommit(repoPath, commitHash);
+
+    // Resolve the directory path within the tree
+    let treeHash = commit.tree;
+    if (dirPath) {
+      const resolved = vcsCore.resolveTreePath(repoPath, commit.tree, dirPath);
+      if (!resolved || resolved.type !== 'tree') return [];
+      treeHash = resolved.hash;
+    }
+
+    const entries = vcsCore.readTree(repoPath, treeHash);
+
+    // Add size info for blobs
+    return entries.map(entry => {
+      let size = null;
+      if (entry.type === 'blob') {
+        try {
+          const blob = vcsCore.readBlob(repoPath, entry.hash);
+          size = blob.length;
+        } catch { /* ignore */ }
+      }
+
       return {
-        mode: match[1],
-        type: match[2],
-        hash: match[3],
-        size: match[4] === '-' ? null : parseInt(match[4]),
-        name: match[5],
-        path: dirPath ? `${dirPath}/${match[5]}` : match[5],
+        mode: entry.mode,
+        type: entry.type,
+        hash: entry.hash,
+        size,
+        name: entry.name,
+        path: dirPath ? `${dirPath}/${entry.name}` : entry.name,
       };
-    }).filter(Boolean).sort((a, b) => {
-      // Folders first, then files
+    }).sort((a, b) => {
       if (a.type !== b.type) return a.type === 'tree' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
   } catch (err) {
-    if (err.message.includes('Not a valid object') || err.message.includes('fatal')) {
-      return []; // Empty repo or invalid ref
-    }
-    throw err;
+    return [];
   }
 }
 
 async function getBlob(ownerUsername, repoSlug, ref, filePath) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const content = await git(['show', `${ref}:${filePath}`], { gitDir: repoPath });
-    return content;
-  } catch (err) {
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return null;
+
+    const commit = vcsCore.readCommit(repoPath, commitHash);
+    const resolved = vcsCore.resolveTreePath(repoPath, commit.tree, filePath);
+    if (!resolved || resolved.type !== 'blob') return null;
+
+    return vcsCore.readBlob(repoPath, resolved.hash).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function getBlobRaw(ownerUsername, repoSlug, ref, filePath) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  try {
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return null;
+
+    const commit = vcsCore.readCommit(repoPath, commitHash);
+    const resolved = vcsCore.resolveTreePath(repoPath, commit.tree, filePath);
+    if (!resolved || resolved.type !== 'blob') return null;
+
+    return vcsCore.readBlob(repoPath, resolved.hash); // Returns Buffer
+  } catch {
     return null;
   }
 }
 
 async function getLog(ownerUsername, repoSlug, ref, { limit = 30, offset = 0, filePath } = {}) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
-  const format = '%H%n%h%n%an%n%ae%n%aI%n%s%n%b%n---COMMIT_END---';
-  const args = ['log', `--format=${format}`, `--skip=${offset}`, `-n`, `${limit}`];
-
-  if (ref) args.push(ref);
-  if (filePath) {
-    args.push('--');
-    args.push(filePath);
-  }
 
   try {
-    const output = await git(args, { gitDir: repoPath });
-    const commits = output.split('---COMMIT_END---').filter(s => s.trim()).map(block => {
-      const lines = block.trim().split('\n');
-      return {
-        sha: lines[0],
-        short_sha: lines[1],
-        author_name: lines[2],
-        author_email: lines[3],
-        date: lines[4],
-        message: lines[5],
-        body: lines.slice(6).join('\n').trim(),
-      };
-    });
-    return commits;
-  } catch (err) {
-    return []; // Empty repo
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return [];
+
+    let commits = vcsCore.walkCommits(repoPath, commitHash, { limit: limit + offset, offset: 0 });
+
+    // If filtering by file path, only include commits that changed the file
+    if (filePath) {
+      commits = commits.filter(commit => {
+        try {
+          for (const parentHash of commit.parents) {
+            const parentCommit = vcsCore.readCommit(repoPath, parentHash);
+            const changes = vcsDiff.diffTrees(repoPath, parentCommit.tree, commit.tree);
+            if (changes.some(c => c.path === filePath)) return true;
+          }
+          // Root commit — check if file exists in tree
+          if (commit.parents.length === 0) {
+            const manifest = vcsCore.walkTree(repoPath, commit.tree);
+            return manifest.some(f => f.path === filePath);
+          }
+          return false;
+        } catch { return false; }
+      });
+    }
+
+    // Apply offset and limit
+    commits = commits.slice(offset, offset + limit);
+
+    return commits.map(c => ({
+      sha: c.hash,
+      short_sha: c.hash.slice(0, 12),
+      author_name: c.authorName,
+      author_email: c.authorEmail,
+      date: c.authorDate ? new Date(c.authorDate * 1000).toISOString() : null,
+      message: c.message,
+      body: c.body || '',
+    }));
+  } catch {
+    return [];
   }
 }
 
 async function getCommit(ownerUsername, repoSlug, sha) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
-  const format = '%H%n%h%n%an%n%ae%n%aI%n%P%n%s%n%b%n---END---';
   try {
-    const output = await git(['show', `--format=${format}`, '--stat', sha], { gitDir: repoPath });
-    const parts = output.split('---END---');
-    const lines = parts[0].trim().split('\n');
-    const stats = parts[1] ? parts[1].trim() : '';
+    const commitHash = vcsCore.resolveRef(repoPath, sha);
+    if (!commitHash) return null;
+
+    const commit = vcsCore.readCommit(repoPath, commitHash);
+
+    // Get stats (compare with first parent)
+    let stats = '';
+    if (commit.parents.length > 0) {
+      const parentCommit = vcsCore.readCommit(repoPath, commit.parents[0]);
+      const changes = vcsDiff.diffTrees(repoPath, parentCommit.tree, commit.tree);
+      stats = vcsDiff.formatDiffStats(repoPath, changes);
+    } else {
+      const changes = vcsDiff.diffTrees(repoPath, null, commit.tree);
+      stats = vcsDiff.formatDiffStats(repoPath, changes);
+    }
+
     return {
-      sha: lines[0],
-      short_sha: lines[1],
-      author_name: lines[2],
-      author_email: lines[3],
-      date: lines[4],
-      parents: lines[5] ? lines[5].split(' ') : [],
-      message: lines[6],
-      body: lines.slice(7).join('\n').trim(),
+      sha: commit.hash,
+      short_sha: commit.hash.slice(0, 12),
+      author_name: commit.authorName,
+      author_email: commit.authorEmail,
+      date: commit.authorDate ? new Date(commit.authorDate * 1000).toISOString() : null,
+      parents: commit.parents,
+      message: commit.message,
+      body: commit.body || '',
       stats,
     };
   } catch {
@@ -279,11 +308,15 @@ async function getCommit(ownerUsername, repoSlug, sha) {
 async function getBranches(ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['branch', '--list', '--format=%(refname:short)%09%(objectname:short)%09%(HEAD)'], { gitDir: repoPath });
-    return output.trim().split('\n').filter(Boolean).map(line => {
-      const [name, sha, head] = line.split('\t');
-      return { name, sha, isHead: head === '*' };
-    });
+    const refs = vcsCore.listRefs(repoPath, 'refs/heads/');
+    const head = vcsCore.readHead(repoPath);
+    const headRef = head.symbolic ? head.ref : null;
+
+    return refs.map(ref => ({
+      name: ref.name.replace('refs/heads/', ''),
+      sha: ref.hash.slice(0, 12),
+      isHead: ref.name === headRef,
+    }));
   } catch {
     return [];
   }
@@ -292,11 +325,11 @@ async function getBranches(ownerUsername, repoSlug) {
 async function getTags(ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['tag', '--list', '--format=%(refname:short)%09%(objectname:short)'], { gitDir: repoPath });
-    return output.trim().split('\n').filter(Boolean).map(line => {
-      const [name, sha] = line.split('\t');
-      return { name, sha };
-    });
+    const refs = vcsCore.listRefs(repoPath, 'refs/tags/');
+    return refs.map(ref => ({
+      name: ref.name.replace('refs/tags/', ''),
+      sha: ref.hash.slice(0, 12),
+    }));
   } catch {
     return [];
   }
@@ -305,8 +338,11 @@ async function getTags(ownerUsername, repoSlug) {
 async function getDefaultBranch(ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['symbolic-ref', '--short', 'HEAD'], { gitDir: repoPath });
-    return output.trim();
+    const head = vcsCore.readHead(repoPath);
+    if (head.symbolic && head.ref) {
+      return head.ref.replace('refs/heads/', '');
+    }
+    return 'main';
   } catch {
     return 'main';
   }
@@ -326,8 +362,9 @@ async function getReadme(ownerUsername, repoSlug, ref) {
 async function getCommitCount(ownerUsername, repoSlug, ref) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['rev-list', '--count', ref], { gitDir: repoPath });
-    return parseInt(output.trim()) || 0;
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return 0;
+    return vcsCore.countCommits(repoPath, commitHash);
   } catch {
     return 0;
   }
@@ -336,8 +373,15 @@ async function getCommitCount(ownerUsername, repoSlug, ref) {
 async function getDiff(ownerUsername, repoSlug, base, head) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['diff', `${base}...${head}`], { gitDir: repoPath });
-    return output;
+    const baseHash = vcsCore.resolveRef(repoPath, base);
+    const headHash = vcsCore.resolveRef(repoPath, head);
+    if (!baseHash || !headHash) return '';
+
+    // Use three-dot diff semantics: diff from merge-base to head
+    const mergeBase = vcsMerge.findMergeBase(repoPath, baseHash, headHash);
+    const fromHash = mergeBase || baseHash;
+
+    return vcsDiff.diffCommits(repoPath, fromHash, headHash);
   } catch {
     return '';
   }
@@ -346,8 +390,8 @@ async function getDiff(ownerUsername, repoSlug, base, head) {
 async function repoHasCommits(ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    await git(['rev-parse', 'HEAD'], { gitDir: repoPath });
-    return true;
+    const hash = vcsCore.resolveRef(repoPath, 'HEAD');
+    return !!hash;
   } catch {
     return false;
   }
@@ -356,100 +400,53 @@ async function repoHasCommits(ownerUsername, repoSlug) {
 async function updateRepoSize(pool, repoId, ownerUsername, repoSlug) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['count-objects', '-v'], { gitDir: repoPath });
-    const sizeMatch = output.match(/size-pack:\s*(\d+)/);
-    const sizeKb = sizeMatch ? parseInt(sizeMatch[1]) : 0;
+    const sizeBytes = vcsCore.getRepoObjectsSize(repoPath);
     await pool.query(
       'UPDATE vpshub_repositories SET size_bytes = $1 WHERE id = $2',
-      [sizeKb * 1024, repoId]
+      [sizeBytes, repoId]
     );
   } catch { /* ignore */ }
 }
 
 // ─── Full File Manifest (for extension sync) ────────────────
 
-/**
- * Get a flat list of ALL files in the repo at a given ref with their SHA hashes.
- * Used by the VPC extension to compare local vs remote files.
- */
 async function getFileManifest(ownerUsername, repoSlug, ref) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    // git ls-tree -r --format='%(objectname) %(objectsize) %(path)' <ref>
-    const output = await git(
-      ['ls-tree', '-r', '--long', ref],
-      { gitDir: repoPath }
-    );
-    if (!output.trim()) return [];
+    const commitHash = vcsCore.resolveRef(repoPath, ref || 'HEAD');
+    if (!commitHash) return [];
 
-    return output.trim().split('\n').map(line => {
-      // Format: <mode> <type> <hash> <size>\t<path>
-      const tabIdx = line.indexOf('\t');
-      const meta = line.substring(0, tabIdx).trim().split(/\s+/);
-      const filePath = line.substring(tabIdx + 1);
-      return {
-        path: filePath,
-        hash: meta[2],
-        size: parseInt(meta[3]) || 0,
-        mode: meta[0],
-      };
-    });
+    const commit = vcsCore.readCommit(repoPath, commitHash);
+    return vcsCore.walkTree(repoPath, commit.tree);
   } catch {
     return [];
   }
 }
 
-/**
- * Get raw file content as Buffer (for binary-safe download)
- */
-async function getBlobRaw(ownerUsername, repoSlug, ref, filePath) {
-  const repoPath = getRepoPath(ownerUsername, repoSlug);
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env, GIT_DIR: repoPath };
-    execFile('git', ['show', `${ref}:${filePath}`], {
-      env,
-      maxBuffer: 50 * 1024 * 1024,
-      encoding: 'buffer',
-    }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout);
-    });
-  });
-}
-
-/**
- * Get the latest commit SHA for a ref
- */
 async function getHeadSha(ownerUsername, repoSlug, ref) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(['rev-parse', ref], { gitDir: repoPath });
-    return output.trim();
+    return vcsCore.resolveRef(repoPath, ref || 'HEAD');
   } catch {
     return null;
   }
 }
 
-/**
- * Get changed files between two commits (for extension diff)
- */
 async function getChangedFiles(ownerUsername, repoSlug, fromSha, toSha) {
   const repoPath = getRepoPath(ownerUsername, repoSlug);
   try {
-    const output = await git(
-      ['diff', '--name-status', fromSha, toSha],
-      { gitDir: repoPath }
-    );
-    if (!output.trim()) return [];
+    const fromHash = vcsCore.resolveRef(repoPath, fromSha);
+    const toHash = vcsCore.resolveRef(repoPath, toSha);
+    if (!fromHash || !toHash) return [];
 
-    return output.trim().split('\n').map(line => {
-      const parts = line.split('\t');
-      return {
-        status: parts[0], // A=added, M=modified, D=deleted, R=renamed
-        path: parts[parts.length - 1],
-        oldPath: parts.length > 2 ? parts[1] : undefined,
-      };
-    });
+    const fromCommit = vcsCore.readCommit(repoPath, fromHash);
+    const toCommit = vcsCore.readCommit(repoPath, toHash);
+
+    const changes = vcsDiff.diffTrees(repoPath, fromCommit.tree, toCommit.tree);
+    return changes.map(c => ({
+      status: c.status,
+      path: c.path,
+    }));
   } catch {
     return [];
   }

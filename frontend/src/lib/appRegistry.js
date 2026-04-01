@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -12,6 +12,7 @@ import Gallery from '@/components/apps/Gallery';
 import WebHosting from '@/components/apps/WebHosting';
 import VPSHub from '@/components/apps/VPSHub';
 import AgentSettings from '@/components/apps/AgentSettings';
+import VpcStore from '@/components/apps/VpcStore';
 
 const APP_REGISTRY = {
   'vpshub': {
@@ -207,6 +208,20 @@ const APP_REGISTRY = {
     defaultHeight: 600,
     minWidth: 500,
     minHeight: 400,
+  },
+  'vpc-store': {
+    id: 'vpc-store',
+    title: 'VPC Store',
+    description: 'Download Tools & Extensions',
+    icon: Download,
+    iconColor: 'text-amber-400',
+    iconBg: 'bg-amber-500/15',
+    category: 'development',
+    component: VpcStore,
+    defaultWidth: 1000,
+    defaultHeight: 750,
+    minWidth: 800,
+    minHeight: 600,
   },
 };
 

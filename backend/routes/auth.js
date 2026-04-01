@@ -126,4 +126,61 @@ router.post('/login/totp', loginLimiter, async (req, res) => {
   }
 });
 
+// Login with just authenticator code (no password) — for users with TOTP enabled
+router.post('/login/authenticator', loginLimiter, async (req, res) => {
+  try {
+    const { email, username, totpCode } = req.body;
+    const identifier = email || username;
+
+    if (!identifier || !totpCode) {
+      return res.status(400).json({ error: 'Email/username and authenticator code are required' });
+    }
+
+    const pool = req.app.locals.pool;
+
+    const { rows } = await pool.query(
+      `SELECT id, username, email, display_name, totp_enabled, totp_secret, permissions
+       FROM vpc_admins WHERE (email = $1 OR username = $1) AND is_active = true`,
+      [identifier]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const admin = rows[0];
+
+    if (!admin.totp_enabled || !admin.totp_secret) {
+      return res.status(400).json({ error: 'Authenticator login is not set up for this account. Please enable 2FA first.' });
+    }
+
+    const isValid = verifyTOTP(admin.totp_secret, totpCode);
+
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid authenticator code' });
+    }
+
+    const token = signToken({ id: admin.id, username: admin.username });
+
+    await pool.query(
+      'UPDATE vpc_admins SET last_login_at = NOW() WHERE id = $1',
+      [admin.id]
+    );
+
+    res.json({
+      token,
+      admin: {
+        id: admin.id,
+        username: admin.username,
+        email: admin.email,
+        display_name: admin.display_name,
+        permissions: admin.permissions || { all: true },
+      },
+    });
+  } catch (error) {
+    console.error('[Auth] Authenticator login error:', error.message);
+    res.status(500).json({ error: 'Authenticator login failed' });
+  }
+});
+
 module.exports = router;

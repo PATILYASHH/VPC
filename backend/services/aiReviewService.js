@@ -248,4 +248,146 @@ async function analyzeSystem(pool, projects = []) {
   return { available: true, issues, checked_at: new Date().toISOString() };
 }
 
-module.exports = { reviewSQL, reviewSmartMerge, analyzeSystem, loadModelSettings };
+// ─── Code PR Review ──────────────────────────────────────────
+
+/**
+ * AI-powered code review for a pull request diff.
+ */
+async function reviewCode(diff, fileList, context = {}) {
+  if (context.pool) await loadModelSettings(context.pool);
+
+  const systemPrompt = `You are an expert code reviewer. Review the following code diff from a pull request.
+Return a JSON object with:
+- "summary": One-line description of what this PR does
+- "issues": Array of { "file": "filename", "line": number_or_null, "severity": "error|warning|info", "message": "description" }
+- "suggestions": Array of improvement suggestions (strings)
+- "security_concerns": Array of security issues found (empty if none)
+- "approval": "approve" | "request_changes" | "comment"
+- "review_notes": Brief review (2-4 sentences)
+
+Return ONLY valid JSON, no markdown fencing.`;
+
+  const userPrompt = `Review this pull request:\n\nFiles changed: ${fileList.join(', ')}\n\nDiff:\n${diff.slice(0, 15000)}${
+    context.title ? `\n\nPR Title: ${context.title}` : ''
+  }${
+    context.description ? `\n\nPR Description: ${context.description}` : ''
+  }`;
+
+  return await _callAI(systemPrompt, userPrompt, 'review');
+}
+
+/**
+ * AI-powered conflict resolution for a file with conflict markers.
+ */
+async function resolveConflicts(conflictedContent, filePath, context = {}) {
+  if (context.pool) await loadModelSettings(context.pool);
+
+  const systemPrompt = `You are an expert developer resolving merge conflicts. Given a file with Git-style conflict markers (<<<<<<< ours, =======, >>>>>>> theirs), produce the resolved version.
+
+Rules:
+- Keep the BEST of both changes — don't discard either side unless it's truly redundant
+- Maintain code correctness and consistency
+- Remove ALL conflict markers from output
+- Return ONLY the resolved file content, no explanation
+
+Return a JSON object with:
+- "resolved_content": The full resolved file content (string)
+- "strategy": Brief description of how you resolved it (1 sentence)
+- "confidence": "high" | "medium" | "low"`;
+
+  const userPrompt = `Resolve conflicts in ${filePath}:\n\n${conflictedContent.slice(0, 20000)}`;
+
+  return await _callAI(systemPrompt, userPrompt, 'resolution');
+}
+
+/**
+ * AI chat about a repository — general purpose assistant.
+ */
+async function chatWithRepo(message, repoContext = {}, context = {}) {
+  if (context.pool) await loadModelSettings(context.pool);
+
+  const systemPrompt = `You are an AI assistant for a code repository on VPSHub (a self-hosted Git-like platform).
+You can help with:
+- Analyzing code and suggesting improvements
+- Explaining code functionality
+- Finding bugs and security issues
+- Suggesting features and architecture changes
+- Helping resolve merge conflicts
+
+Repository: ${repoContext.repoName || 'unknown'}
+Branch: ${repoContext.branch || 'main'}
+${repoContext.fileTree ? `\nFile structure:\n${repoContext.fileTree}` : ''}
+${repoContext.recentCommits ? `\nRecent commits:\n${repoContext.recentCommits}` : ''}
+
+Be concise and actionable. Use markdown formatting.`;
+
+  const ai = getClient();
+  if (ai) {
+    try {
+      const messages = repoContext.history || [];
+      messages.push({ role: 'user', content: message });
+
+      const response = await ai.messages.create({
+        model: runtimeModel,
+        max_tokens: runtimeMaxTokens,
+        messages,
+        system: systemPrompt,
+      });
+      return { available: true, response: response.content[0]?.text || '', model: runtimeModel, mode: 'api' };
+    } catch (err) {
+      return { available: true, error: err.message, mode: 'api' };
+    }
+  }
+
+  const cliOk = await isClaudeCLIAvailable();
+  if (!cliOk) return { available: false, error: 'No API key and no claude CLI available' };
+
+  try {
+    const text = await runClaudeCLI(message, systemPrompt);
+    return { available: true, response: text, model: 'claude-cli', mode: 'cli' };
+  } catch (err) {
+    return { available: true, error: `CLI error: ${err.message}`, mode: 'cli' };
+  }
+}
+
+/**
+ * Internal helper — call AI via SDK or CLI with fallback.
+ */
+async function _callAI(systemPrompt, userPrompt, resultKey) {
+  const ai = getClient();
+  if (ai) {
+    try {
+      const response = await ai.messages.create({
+        model: runtimeModel,
+        max_tokens: runtimeMaxTokens,
+        messages: [{ role: 'user', content: userPrompt }],
+        system: systemPrompt,
+      });
+      const text = response.content[0]?.text || '';
+      try {
+        return { available: true, [resultKey]: JSON.parse(text), model: runtimeModel, mode: 'api' };
+      } catch {
+        return { available: true, [resultKey]: { summary: text }, model: runtimeModel, mode: 'api' };
+      }
+    } catch (err) {
+      return { available: true, error: err.message, mode: 'api' };
+    }
+  }
+
+  const cliOk = await isClaudeCLIAvailable();
+  if (!cliOk) return { available: false, error: 'No API key and no claude CLI available' };
+
+  try {
+    const text = await runClaudeCLI(userPrompt, systemPrompt);
+    const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    try {
+      return { available: true, [resultKey]: JSON.parse(cleaned), model: 'claude-cli', mode: 'cli' };
+    } catch {
+      return { available: true, [resultKey]: { summary: cleaned }, model: 'claude-cli', mode: 'cli' };
+    }
+  } catch (err) {
+    return { available: true, error: `CLI error: ${err.message}`, mode: 'cli' };
+  }
+}
+
+module.exports = { reviewSQL, reviewSmartMerge, analyzeSystem, loadModelSettings, reviewCode, resolveConflicts, chatWithRepo };

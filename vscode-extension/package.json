@@ -1,16 +1,12 @@
 {
   "name": "vpc-sync",
-  "displayName": "VPC Sync - VPSHUB & BanaDB",
-  "description": "Full repo sync with VPSHUB + database migration management. Track changed files, pull/push code, auto-detect and run migrations.",
+  "displayName": "VPC Sync",
+  "description": "Version control for VPC — push, pull, commit, branch. Like Git but using VPC VCS.",
   "publisher": "vpc-admin",
-  "version": "4.0.0",
-  "engines": {
-    "vscode": "^1.85.0"
-  },
-  "categories": ["Other"],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "version": "6.3.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["SCM Providers"],
+  "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -18,379 +14,67 @@
         {
           "id": "vpcSync",
           "title": "VPC Sync",
-          "icon": "$(database)"
+          "icon": "$(cloud)"
         }
       ]
     },
     "views": {
       "vpcSync": [
         {
-          "id": "vpcSync.syncActions",
-          "name": "Sync",
-          "type": "webview"
-        },
-        {
-          "id": "vpcSync.config",
-          "name": "Connection",
-          "type": "webview",
-          "visibility": "collapsed"
-        },
-        {
-          "id": "vpcSync.pullRequests",
-          "name": "Pull Requests"
-        },
-        {
-          "id": "vpcSync.history",
-          "name": "History"
-        },
-        {
-          "id": "vpcSync.repoChanges",
-          "name": "VPSHUB Changes",
+          "id": "vpcSync.panel",
+          "name": "VPC Sync",
           "type": "webview"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "vpcSync.pullRequests",
-        "contents": "Not connected.\n[Configure Connection](command:vpcSync.configure)",
-        "when": "!config.vpcSync.serverUrl"
-      },
-      {
-        "view": "vpcSync.history",
-        "contents": "Not connected.\n[Configure Connection](command:vpcSync.configure)",
-        "when": "!config.vpcSync.serverUrl"
-      }
-    ],
     "commands": [
-      {
-        "command": "vpcSync.configure",
-        "title": "VPC Sync: Configure Connection",
-        "icon": "$(gear)"
-      },
-      {
-        "command": "vpcSync.pull",
-        "title": "VPC Sync: Pull Schema Changes",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "vpcSync.push",
-        "title": "VPC Sync: Push Migration",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "vpcSync.pushAll",
-        "title": "VPC Sync: Push All Staged",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "vpcSync.pushFile",
-        "title": "Push Migration",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "vpcSync.pullAll",
-        "title": "Pull All Changes",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "vpcSync.refresh",
-        "title": "VPC Sync: Refresh",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "vpcSync.status",
-        "title": "VPC Sync: Show Status"
-      },
-      {
-        "command": "vpcSync.selectFolder",
-        "title": "VPC Sync: Select Output Folder"
-      },
-      {
-        "command": "vpcSync.detectChanges",
-        "title": "VPC Sync: Detect Schema Changes",
-        "icon": "$(search)"
-      },
-      {
-        "command": "vpcSync.stage",
-        "title": "Stage Migration",
-        "icon": "$(add)"
-      },
-      {
-        "command": "vpcSync.unstage",
-        "title": "Unstage Migration",
-        "icon": "$(remove)"
-      },
-      {
-        "command": "vpcSync.stageAll",
-        "title": "Stage All Migrations",
-        "icon": "$(add)"
-      },
-      {
-        "command": "vpcSync.unstageAll",
-        "title": "Unstage All Migrations",
-        "icon": "$(remove)"
-      },
-      {
-        "command": "vpcSync.newMigration",
-        "title": "VPC Sync: New Migration",
-        "icon": "$(new-file)"
-      },
-      {
-        "command": "vpcSync.openFile",
-        "title": "Open File",
-        "icon": "$(go-to-file)"
-      },
-      {
-        "command": "vpcSync.diffWithRemote",
-        "title": "Compare with Remote",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "vpcSync.openResourceDiff",
-        "title": "Open Diff"
-      },
-      {
-        "command": "vpcSync.showSQL",
-        "title": "Show SQL"
-      },
-      {
-        "command": "vpcSync.commitAndPush",
-        "title": "VPC Sync: Commit & Push to VPSHUB",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "vpcSync.pullDatabase",
-        "title": "VPC Sync: Pull from Database",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "vpcSync.compareSchema",
-        "title": "VPC Sync: Compare Schema",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "vpcSync.vpshubPull",
-        "title": "VPC Sync: Pull from VPSHUB",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "vpcSync.vpshubPush",
-        "title": "VPC Sync: Push to VPSHUB",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "vpcSync.vpshubShowChanges",
-        "title": "VPC Sync: Show Changed Files",
-        "icon": "$(git-compare)"
-      },
-      {
-        "command": "vpcSync.runMigrations",
-        "title": "VPC Sync: Run New Migrations",
-        "icon": "$(play)"
-      }
+      { "command": "vpcSync.connect", "title": "VPC Sync: Connect to VPSHub", "icon": "$(plug)" },
+      { "command": "vpcSync.push", "title": "VPC Sync: Push", "icon": "$(arrow-up)" },
+      { "command": "vpcSync.pull", "title": "VPC Sync: Pull", "icon": "$(arrow-down)" },
+      { "command": "vpcSync.commit", "title": "VPC Sync: Commit", "icon": "$(check)" },
+      { "command": "vpcSync.refresh", "title": "VPC Sync: Refresh", "icon": "$(refresh)" },
+      { "command": "vpcSync.stageFile", "title": "Stage", "icon": "$(add)" },
+      { "command": "vpcSync.unstageFile", "title": "Unstage", "icon": "$(remove)" },
+      { "command": "vpcSync.stageAll", "title": "Stage All", "icon": "$(add)" },
+      { "command": "vpcSync.unstageAll", "title": "Unstage All", "icon": "$(remove)" },
+      { "command": "vpcSync.openFile", "title": "Open File", "icon": "$(go-to-file)" },
+      { "command": "vpcSync.discardFile", "title": "Discard Changes", "icon": "$(discard)" }
     ],
     "menus": {
       "scm/title": [
-        {
-          "command": "vpcSync.pushAll",
-          "when": "scmProvider == vpc-sync",
-          "group": "navigation@1"
-        },
-        {
-          "command": "vpcSync.pullAll",
-          "when": "scmProvider == vpc-sync",
-          "group": "navigation@2"
-        },
-        {
-          "command": "vpcSync.refresh",
-          "when": "scmProvider == vpc-sync",
-          "group": "navigation@3"
-        },
-        {
-          "command": "vpcSync.newMigration",
-          "when": "scmProvider == vpc-sync",
-          "group": "navigation@4"
-        },
-        {
-          "command": "vpcSync.detectChanges",
-          "when": "scmProvider == vpc-sync",
-          "group": "1_sync"
-        },
-        {
-          "command": "vpcSync.configure",
-          "when": "scmProvider == vpc-sync",
-          "group": "2_config"
-        }
+        { "command": "vpcSync.commit", "when": "scmProvider == vpc-sync", "group": "navigation@1" },
+        { "command": "vpcSync.push", "when": "scmProvider == vpc-sync", "group": "navigation@2" },
+        { "command": "vpcSync.pull", "when": "scmProvider == vpc-sync", "group": "navigation@3" },
+        { "command": "vpcSync.refresh", "when": "scmProvider == vpc-sync", "group": "navigation@4" }
       ],
       "scm/resourceGroup/context": [
-        {
-          "command": "vpcSync.stageAll",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == newMigrations",
-          "group": "inline"
-        },
-        {
-          "command": "vpcSync.unstageAll",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == readyToPush",
-          "group": "inline"
-        },
-        {
-          "command": "vpcSync.pullAll",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == pendingRemote",
-          "group": "inline"
-        }
+        { "command": "vpcSync.stageAll", "when": "scmProvider == vpc-sync && scmResourceGroup == changes", "group": "inline" },
+        { "command": "vpcSync.stageAll", "when": "scmProvider == vpc-sync && scmResourceGroup == untracked", "group": "inline" },
+        { "command": "vpcSync.unstageAll", "when": "scmProvider == vpc-sync && scmResourceGroup == staged", "group": "inline" }
       ],
       "scm/resourceState/context": [
-        {
-          "command": "vpcSync.stage",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == newMigrations",
-          "group": "inline@1"
-        },
-        {
-          "command": "vpcSync.unstage",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == readyToPush",
-          "group": "inline@1"
-        },
-        {
-          "command": "vpcSync.pushFile",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == readyToPush",
-          "group": "inline@2"
-        },
-        {
-          "command": "vpcSync.openFile",
-          "when": "scmProvider == vpc-sync && scmResourceGroup != pendingRemote",
-          "group": "inline@3"
-        },
-        {
-          "command": "vpcSync.diffWithRemote",
-          "when": "scmProvider == vpc-sync && scmResourceGroup == inReview",
-          "group": "inline@2"
-        }
+        { "command": "vpcSync.stageFile", "when": "scmProvider == vpc-sync && scmResourceGroup == changes", "group": "inline@1" },
+        { "command": "vpcSync.stageFile", "when": "scmProvider == vpc-sync && scmResourceGroup == untracked", "group": "inline@1" },
+        { "command": "vpcSync.unstageFile", "when": "scmProvider == vpc-sync && scmResourceGroup == staged", "group": "inline@1" },
+        { "command": "vpcSync.openFile", "when": "scmProvider == vpc-sync", "group": "inline@2" },
+        { "command": "vpcSync.discardFile", "when": "scmProvider == vpc-sync && scmResourceGroup == changes", "group": "inline@3" }
       ],
       "view/title": [
-        {
-          "command": "vpcSync.commitAndPush",
-          "when": "view == vpcSync.syncActions",
-          "group": "navigation@1"
-        },
-        {
-          "command": "vpcSync.pullDatabase",
-          "when": "view == vpcSync.syncActions",
-          "group": "navigation@2"
-        },
-        {
-          "command": "vpcSync.compareSchema",
-          "when": "view == vpcSync.syncActions",
-          "group": "navigation@3"
-        },
-        {
-          "command": "vpcSync.refresh",
-          "when": "view =~ /vpcSync/",
-          "group": "navigation@4"
-        },
-        {
-          "command": "vpcSync.configure",
-          "when": "view =~ /vpcSync/ && view != vpcSync.syncActions",
-          "group": "navigation@5"
-        }
+        { "command": "vpcSync.refresh", "when": "view == vpcSync.panel", "group": "navigation" }
       ]
     },
     "keybindings": [
-      {
-        "command": "vpcSync.pushAll",
-        "key": "ctrl+shift+enter",
-        "mac": "cmd+shift+enter",
-        "when": "scmProvider == vpc-sync"
-      },
-      {
-        "command": "vpcSync.newMigration",
-        "key": "ctrl+shift+n",
-        "mac": "cmd+shift+n"
-      }
+      { "command": "vpcSync.commit", "key": "ctrl+enter", "mac": "cmd+enter", "when": "scmProvider == vpc-sync && scmInputIsInFocus" }
     ],
     "configuration": {
       "title": "VPC Sync",
       "properties": {
-        "vpcSync.serverUrl": {
-          "type": "string",
-          "default": "",
-          "description": "BanaDB project API URL (e.g. http://server:8001/api/bana/v1/my-project)"
-        },
-        "vpcSync.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Pull API key (starts with bana_pull_)"
-        },
-        "vpcSync.outputFolder": {
-          "type": "string",
-          "default": "./migrations",
-          "description": "Output folder for migration files (relative to workspace root)"
-        },
-        "vpcSync.autoRefreshInterval": {
-          "type": "number",
-          "default": 30,
-          "description": "Auto-refresh interval in seconds (0 to disable)"
-        },
-        "vpcSync.autoPull": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically pull remote schema changes on refresh"
-        },
-        "vpcSync.vpshubUrl": {
-          "type": "string",
-          "default": "",
-          "description": "VPSHUB server URL (e.g. http://localhost:8001)"
-        },
-        "vpcSync.vpshubToken": {
-          "type": "string",
-          "default": "",
-          "description": "VPSHUB JWT token or Personal Access Token for authentication"
-        },
-        "vpcSync.vpshubOwner": {
-          "type": "string",
-          "default": "",
-          "description": "VPSHUB repository owner username"
-        },
-        "vpcSync.vpshubRepo": {
-          "type": "string",
-          "default": "",
-          "description": "VPSHUB repository slug"
-        },
-        "vpcSync.vpshubBranch": {
-          "type": "string",
-          "default": "main",
-          "description": "VPSHUB branch to sync with"
-        },
-        "vpcSync.dbHost": {
-          "type": "string",
-          "default": "localhost",
-          "description": "Database host for auto-migration"
-        },
-        "vpcSync.dbPort": {
-          "type": "number",
-          "default": 5432,
-          "description": "Database port"
-        },
-        "vpcSync.dbName": {
-          "type": "string",
-          "default": "",
-          "description": "Database name for auto-migration"
-        },
-        "vpcSync.dbUser": {
-          "type": "string",
-          "default": "",
-          "description": "Database user"
-        },
-        "vpcSync.dbPassword": {
-          "type": "string",
-          "default": "",
-          "description": "Database password"
-        },
-        "vpcSync.autoRunMigrations": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically run new migrations after pulling"
-        }
+        "vpcSync.serverUrl": { "type": "string", "default": "", "description": "VPSHub server URL (e.g. http://your-server:8001)" },
+        "vpcSync.token": { "type": "string", "default": "", "description": "VPSHub Personal Access Token (starts with vpshub_)" },
+        "vpcSync.repository": { "type": "string", "default": "", "description": "Repository (owner/name)" },
+        "vpcSync.username": { "type": "string", "default": "", "description": "VPSHub username" },
+        "vpcSync.branch": { "type": "string", "default": "main", "description": "Branch to sync" },
+        "vpcSync.autoRefreshInterval": { "type": "number", "default": 0, "description": "Auto-refresh interval in seconds (0=disabled)" }
       }
     }
   },

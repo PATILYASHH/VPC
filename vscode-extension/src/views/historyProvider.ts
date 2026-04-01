@@ -1,97 +1,71 @@
+/**
+ * Commit History Tree View
+ */
+
 import * as vscode from 'vscode';
-import { SyncApiClient, MigrationRecord } from '../api/client';
+import * as objects from '../vcs/objects';
+import * as refs from '../vcs/refs';
 
-export class HistoryProvider implements vscode.TreeDataProvider<HistoryItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<HistoryItem | undefined>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+export class CommitHistoryProvider implements vscode.TreeDataProvider<CommitItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<void>();
+  onDidChangeTreeData = this._onDidChangeTreeData.event;
+  private context: vscode.ExtensionContext;
 
-  private migrations: MigrationRecord[] = [];
-  private client: SyncApiClient;
-
-  constructor(client: SyncApiClient) {
-    this.client = client;
+  constructor(context: vscode.ExtensionContext) {
+    this.context = context;
   }
 
-  refresh(): void {
-    this.loadHistory();
-  }
+  refresh() { this._onDidChangeTreeData.fire(); }
 
-  private async loadHistory(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('vpcSync');
-    const url = config.get<string>('serverUrl');
-    const key = config.get<string>('apiKey');
+  getTreeItem(element: CommitItem): vscode.TreeItem { return element; }
 
-    if (!url || !key) {
-      this.migrations = [];
-      this._onDidChangeTreeData.fire(undefined);
-      return;
+  getChildren(): CommitItem[] {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root || !objects.hasVpcRepo(root)) { return []; }
+
+    const headHash = refs.resolveRef(root, 'HEAD');
+    if (!headHash) { return []; }
+
+    const commits: CommitItem[] = [];
+    const visited = new Set<string>();
+    const queue = [headHash];
+    const limit = 50;
+
+    while (queue.length > 0 && commits.length < limit) {
+      const hash = queue.shift()!;
+      if (!hash || visited.has(hash)) { continue; }
+      visited.add(hash);
+
+      try {
+        const commit = objects.readCommit(root, hash);
+        const date = commit.authorDate
+          ? new Date(commit.authorDate * 1000).toLocaleDateString()
+          : '';
+        const shortHash = commit.hash.slice(0, 10);
+
+        const item = new CommitItem(
+          `${commit.message}`,
+          `${shortHash} by ${commit.authorName} on ${date}`,
+          commit.hash,
+        );
+        commits.push(item);
+
+        for (const parent of commit.parents) {
+          if (!visited.has(parent)) { queue.push(parent); }
+        }
+      } catch { break; }
     }
 
-    try {
-      const result = await this.client.getMigrations(url, key);
-      this.migrations = result.migrations;
-    } catch {
-      this.migrations = [];
-    }
-
-    this._onDidChangeTreeData.fire(undefined);
-  }
-
-  getTreeItem(element: HistoryItem): vscode.TreeItem {
-    return element;
-  }
-
-  getChildren(): HistoryItem[] {
-    if (this.migrations.length === 0) {
-      return [new HistoryItem('No migration history', '', vscode.TreeItemCollapsibleState.None, true)];
-    }
-
-    return this.migrations.map(m => {
-      const icon = this.getStatusIcon(m.status);
-      const date = m.applied_at || m.created_at;
-      const dateStr = new Date(date).toLocaleDateString();
-      const desc = `${m.status} - ${dateStr}`;
-      return new HistoryItem(`v${m.version} ${m.name || ''}`.trim(), desc, vscode.TreeItemCollapsibleState.None, false, icon, m);
-    });
-  }
-
-  private getStatusIcon(status: string): vscode.ThemeIcon {
-    switch (status) {
-      case 'applied': return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('testing.iconPassed'));
-      case 'pending': return new vscode.ThemeIcon('circle-outline');
-      case 'rolled_back': return new vscode.ThemeIcon('debug-reverse-continue', new vscode.ThemeColor('testing.iconSkipped'));
-      case 'failed': return new vscode.ThemeIcon('error', new vscode.ThemeColor('testing.iconFailed'));
-      default: return new vscode.ThemeIcon('circle-outline');
-    }
+    return commits;
   }
 }
 
-export class HistoryItem extends vscode.TreeItem {
-  constructor(
-    label: string,
-    description: string,
-    collapsibleState: vscode.TreeItemCollapsibleState,
-    isEmpty = false,
-    icon?: vscode.ThemeIcon,
-    public readonly migration?: MigrationRecord,
-  ) {
-    super(label, collapsibleState);
+class CommitItem extends vscode.TreeItem {
+  constructor(label: string, description: string, hash: string) {
+    super(label, vscode.TreeItemCollapsibleState.None);
     this.description = description;
-
-    if (isEmpty) {
-      this.iconPath = new vscode.ThemeIcon('history');
-      this.contextValue = 'empty';
-    } else {
-      this.iconPath = icon || new vscode.ThemeIcon('circle-outline');
-      this.contextValue = 'historyItem';
-      if (migration) {
-        this.tooltip = `Status: ${migration.status}\nSource: ${migration.source}\nApplied by: ${migration.applied_by || '-'}`;
-        this.command = {
-          command: 'vpcSync.showSQL',
-          title: 'Show SQL',
-          arguments: [migration.sql_up],
-        };
-      }
-    }
+    this.tooltip = hash;
+    this.iconPath = new vscode.ThemeIcon('git-commit');
+    this.contextValue = 'commit';
   }
 }

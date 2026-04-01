@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { verifyToken } = require('../utils/jwt');
 
 // Map route prefixes to permission keys
@@ -30,6 +31,33 @@ async function authenticateAdmin(req, res, next) {
       return res.status(401).json({ error: 'Invalid token format' });
     }
 
+    // Support VPSHub Personal Access Tokens (vpshub_xxx)
+    if (token.startsWith('vpshub_')) {
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const pool = req.app.locals.pool;
+      const { rows } = await pool.query(
+        `SELECT a.id, a.username, a.email, a.display_name, a.allowed_ips, a.permissions
+         FROM vpshub_tokens t
+         JOIN vpc_admins a ON a.id = t.user_id
+         WHERE t.token_hash = $1 AND a.is_active = true`,
+        [tokenHash]
+      );
+
+      if (rows.length === 0) {
+        return res.status(401).json({ error: 'Invalid or revoked token' });
+      }
+
+      const admin = rows[0];
+      if (!admin.permissions) admin.permissions = { all: true };
+      req.admin = admin;
+
+      // Update last_used_at (fire-and-forget)
+      pool.query('UPDATE vpshub_tokens SET last_used_at = NOW() WHERE token_hash = $1', [tokenHash]).catch(() => {});
+
+      return next();
+    }
+
+    // Otherwise treat as JWT
     let decoded;
     try {
       decoded = verifyToken(token);

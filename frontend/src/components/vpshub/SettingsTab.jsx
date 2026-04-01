@@ -85,6 +85,32 @@ export default function SettingsTab({ project }) {
         </div>
       </div>
 
+      {/* VPC Sync CLI Download */}
+      <div className="border rounded-lg bg-card p-6">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center">
+            <Download className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-semibold">VPC Sync &mdash; CLI</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Our custom version control CLI. Push, pull, clone, branch, merge &mdash; no Git needed.
+            </p>
+            <div className="flex gap-2 mt-4">
+              <a
+                href="/downloads/vpc-sync-cli.tar.gz"
+                download
+                className="inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-emerald-500 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Download vpc-sync-cli.tar.gz
+              </a>
+              <Badge variant="outline" className="self-center">v1.0.0</Badge>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Extension Download */}
       <div className="border rounded-lg bg-card p-6">
         <div className="flex items-start gap-4">
@@ -105,7 +131,7 @@ export default function SettingsTab({ project }) {
                 <Download className="w-4 h-4" />
                 Download vpc-sync.vsix
               </a>
-              <Badge variant="outline" className="self-center">v3.0.0</Badge>
+              <Badge variant="outline" className="self-center">v6.3.0</Badge>
             </div>
           </div>
         </div>

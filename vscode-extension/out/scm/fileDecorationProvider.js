@@ -37,33 +37,12 @@ exports.VpcFileDecorationProvider = void 0;
 const vscode = __importStar(require("vscode"));
 class VpcFileDecorationProvider {
     constructor() {
-        this._onDidChangeFileDecorations = new vscode.EventEmitter();
-        this.onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
-        this.fileStatuses = new Map();
-    }
-    updateStatuses(statuses) {
-        this.fileStatuses = statuses;
-        this._onDidChangeFileDecorations.fire(undefined);
+        this._onDidChange = new vscode.EventEmitter();
+        this.onDidChangeFileDecorations = this._onDidChange.event;
     }
     provideFileDecoration(uri) {
-        const status = this.fileStatuses.get(uri.fsPath);
-        if (!status) {
-            return undefined;
-        }
-        switch (status) {
-            case 'new':
-                return new vscode.FileDecoration('N', 'New migration — not pushed', new vscode.ThemeColor('gitDecoration.untrackedResourceForeground'));
-            case 'staged':
-                return new vscode.FileDecoration('S', 'Staged for push', new vscode.ThemeColor('gitDecoration.addedResourceForeground'));
-            case 'pushed':
-                return new vscode.FileDecoration('P', 'PR in review', new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'));
-            case 'applied':
-                return new vscode.FileDecoration('A', 'Applied to database', new vscode.ThemeColor('gitDecoration.ignoredResourceForeground'));
-            case 'failed':
-                return new vscode.FileDecoration('F', 'Migration failed', new vscode.ThemeColor('gitDecoration.deletedResourceForeground'));
-            default:
-                return undefined;
-        }
+        // Decorations are handled by the SCM resource state decorations
+        return undefined;
     }
 }
 exports.VpcFileDecorationProvider = VpcFileDecorationProvider;

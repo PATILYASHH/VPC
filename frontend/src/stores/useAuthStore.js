@@ -29,6 +29,13 @@ const useAuthStore = create((set, get) => ({
     return data.admin;
   },
 
+  loginWithAuthenticator: async (email, totpCode) => {
+    const { data } = await api.post('/admin/auth/login/authenticator', { email, totpCode });
+    localStorage.setItem('vpc-token', data.token);
+    set({ admin: data.admin, token: data.token, isAuthenticated: true });
+    return data.admin;
+  },
+
   logout: () => {
     localStorage.removeItem('vpc-token');
     set({ admin: null, token: null, isAuthenticated: false });

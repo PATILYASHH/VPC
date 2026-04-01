@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, GitPullRequest, GitMerge, X, MessageSquare, FileCode, GitCommit, Send } from 'lucide-react';
+import { ArrowLeft, GitPullRequest, GitMerge, X, MessageSquare, FileCode, GitCommit, Send, Zap, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import api from '@/lib/api';
 import { toast } from 'sonner';
@@ -26,6 +26,9 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [merging, setMerging] = useState(false);
+  const [aiReviewing, setAiReviewing] = useState(false);
+  const [aiResolving, setAiResolving] = useState(false);
+  const [mergeError, setMergeError] = useState(null);
 
   useEffect(() => { loadPR(); }, [prNumber]);
 
@@ -51,18 +54,57 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
 
   async function handleMerge() {
     setMerging(true);
+    setMergeError(null);
     try {
       const { data } = await api.post(`/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge`);
       if (data.success) {
         toast.success('Pull request merged!');
         loadPR();
       } else {
+        setMergeError(data.error || 'Merge failed');
         toast.error(data.error || 'Merge failed');
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to merge');
+      const errMsg = err.response?.data?.error || 'Failed to merge';
+      setMergeError(errMsg);
+      toast.error(errMsg);
     } finally {
       setMerging(false);
+    }
+  }
+
+  async function handleAiReview() {
+    setAiReviewing(true);
+    try {
+      const { data } = await api.post(`/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/ai-review`);
+      if (data.error) {
+        toast.error(data.error);
+      } else {
+        toast.success('AI review completed');
+        loadPR(); // Reload to show the AI review comment
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI review failed');
+    } finally {
+      setAiReviewing(false);
+    }
+  }
+
+  async function handleAiResolve() {
+    setAiResolving(true);
+    try {
+      const { data } = await api.post(`/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/ai-resolve`);
+      if (data.resolved) {
+        toast.success('No conflicts — merge is clean!');
+      } else if (data.resolutions) {
+        toast.success(`AI resolved ${data.resolutions.length} conflict(s). Review below.`);
+      } else if (data.error) {
+        toast.error(data.error);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI resolve failed');
+    } finally {
+      setAiResolving(false);
     }
   }
 
@@ -212,9 +254,17 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
               onChange={e => setNewComment(e.target.value)}
             />
             <div className="flex items-center justify-between">
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 {pr.status === 'open' && (
                   <>
+                    <Button size="sm" onClick={handleAiReview} disabled={aiReviewing} variant="outline" className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10">
+                      <Zap className="w-4 h-4 mr-1" /> {aiReviewing ? 'Reviewing...' : 'AI Review'}
+                    </Button>
+                    {mergeError && mergeError.includes('conflict') && (
+                      <Button size="sm" onClick={handleAiResolve} disabled={aiResolving} variant="outline" className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
+                        <Wand2 className="w-4 h-4 mr-1" /> {aiResolving ? 'Resolving...' : 'AI Resolve'}
+                      </Button>
+                    )}
                     <Button size="sm" onClick={handleMerge} disabled={merging} className="bg-purple-600 hover:bg-purple-700">
                       <GitMerge className="w-4 h-4 mr-1" /> {merging ? 'Merging...' : 'Merge'}
                     </Button>
