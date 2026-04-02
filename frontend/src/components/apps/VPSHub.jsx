@@ -24,9 +24,9 @@ export default function VPSHub() {
   const repoCount = repoData?.repos?.length || 0;
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] text-foreground">
+    <div className="flex flex-col h-full surface-0 text-foreground">
       {/* Top Bar */}
-      <div className="border-b border-white/[0.06] bg-[#161b22]">
+      <div className="border-b border-white/[0.06] surface-1">
         <div className="flex items-center gap-3 px-4 py-2.5">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-violet-500/15 flex items-center justify-center">

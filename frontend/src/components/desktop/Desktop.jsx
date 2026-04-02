@@ -17,16 +17,16 @@ export default function Desktop() {
   });
 
   return (
-    <div className="h-screen w-screen overflow-hidden relative bg-[#0a0e1a]">
+    <div className="h-screen w-screen overflow-hidden relative" style={{ background: 'var(--desktop-bg)' }}>
       {/* Gradient background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0d1525] via-[#0a1020] to-[#0f0a20] opacity-100" />
+      <div className="absolute inset-0" style={{ background: `linear-gradient(to bottom right, var(--desktop-gradient-from), var(--desktop-gradient-via), var(--desktop-gradient-to))` }} />
       {/* Subtle dot pattern */}
       <div className="absolute inset-0 opacity-[0.03]" style={{
-        backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)',
+        backgroundImage: `radial-gradient(circle, var(--dot-pattern) 1px, transparent 1px)`,
         backgroundSize: '32px 32px',
       }} />
       {/* Ambient glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/[0.04] rounded-full blur-[120px]" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full blur-[120px]" style={{ background: 'var(--glow-color)' }} />
 
       {/* Desktop icon grid */}
       <div className="absolute inset-0 bottom-12 p-6 z-10">

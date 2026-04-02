@@ -300,6 +300,51 @@ export class SyncApiClient {
     });
   }
 
+  // ─── VPSHub PR APIs (Admin API) ──────────────────────────────
+
+  async vpshubCreatePR(baseUrl: string, token: string, owner: string, repo: string, title: string, description: string, sourceBranch: string, targetBranch: string): Promise<any> {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls`, {
+      method: 'POST',
+      headers: this.vpshubHeaders(token),
+      body: JSON.stringify({ title, description, source_branch: sourceBranch, target_branch: targetBranch }),
+    });
+  }
+
+  async vpshubGetPRs(baseUrl: string, token: string, owner: string, repo: string, status?: string): Promise<any> {
+    const qs = status ? `?status=${status}` : '';
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls${qs}`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubGetPRDiff(baseUrl: string, token: string, owner: string, repo: string, prNumber: number): Promise<any> {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/diff`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubMergePR(baseUrl: string, token: string, owner: string, repo: string, prNumber: number): Promise<any> {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
+      method: 'POST',
+      headers: this.vpshubHeaders(token),
+      body: '{}',
+    });
+  }
+
+  async vpshubCheckMerge(baseUrl: string, token: string, owner: string, repo: string, prNumber: number): Promise<{ mergeable: boolean; conflicts: { path: string; type: string }[] }> {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge-check`, {
+      headers: this.vpshubHeaders(token),
+    });
+  }
+
+  async vpshubCommentOnPR(baseUrl: string, token: string, owner: string, repo: string, prNumber: number, body: string): Promise<any> {
+    return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/comments`, {
+      method: 'POST',
+      headers: this.vpshubHeaders(token),
+      body: JSON.stringify({ body }),
+    });
+  }
+
   // Legacy pull endpoints (backward compat)
   async fetchMigration(url: string, key: string): Promise<any> {
     return request(`${url}/pull/migration`, {

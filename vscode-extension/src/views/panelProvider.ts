@@ -146,7 +146,7 @@ body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);col
 <div class="branch">&#9741; ${e(branch)}</div>
 
 <div class="btns">
-  <button class="btn btn-push" onclick="post('push')">Push${ahead>0?' ('+ahead+')':''}</button>
+  <button class="btn btn-push" onclick="post('push')">Create PR${ahead>0?' ('+ahead+')':''}</button>
   <button class="btn btn-pull" onclick="post('pull')">Pull${behind>0?' ('+behind+')':''}</button>
 </div>
 

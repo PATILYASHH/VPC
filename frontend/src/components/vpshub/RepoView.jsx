@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe, Bot } from 'lucide-react';
+import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useApiQuery } from '@/hooks/useApi';
@@ -18,7 +18,7 @@ const TABS = [
   { id: 'commits', label: 'Commits', icon: GitCommit },
   { id: 'pulls', label: 'Pull Requests', icon: GitPullRequest },
   { id: 'issues', label: 'Issues', icon: CircleDot },
-  { id: 'agent', label: 'Agent', icon: Bot },
+  { id: 'agent', label: 'VPAI', icon: Sparkles },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -69,7 +69,7 @@ export default function RepoView({ repo, onBack }) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b border-white/[0.06] bg-[#161b22]">
+      <div className="border-b border-white/[0.06] surface-1">
         <div className="px-4 py-3 flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5 text-muted-foreground hover:text-foreground">
             <ArrowLeft className="w-4 h-4" />
@@ -135,7 +135,7 @@ export default function RepoView({ repo, onBack }) {
                 <ChevronDown className="w-3 h-3 opacity-40" />
               </button>
               {showBranchPicker && (
-                <div className="absolute top-full left-0 mt-1 bg-[#1c2128] border border-white/[0.08] rounded-xl shadow-2xl z-50 min-w-[200px] max-h-60 overflow-auto">
+                <div className="absolute top-full left-0 mt-1 surface-2 border border-white/[0.08] rounded-xl shadow-2xl z-50 min-w-[200px] max-h-60 overflow-auto">
                   <div className="p-2 border-b border-white/[0.06]">
                     <p className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider px-2 py-1">Branches</p>
                   </div>

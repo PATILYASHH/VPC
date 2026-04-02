@@ -8,6 +8,14 @@ let currentApiKey = null;
 let runtimeModel = 'claude-sonnet-4-20250514';
 let runtimeMaxTokens = 4000;
 
+// Log AI backend on first use
+let _loggedBackend = false;
+function logBackend(mode) {
+  if (_loggedBackend) return;
+  _loggedBackend = true;
+  console.log(`[VPAI] Using AI backend: ${mode === 'api' ? 'Anthropic API' : 'Claude CLI (local)'}`);
+}
+
 function getClient() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -43,11 +51,19 @@ function runClaudeCLI(prompt, systemPrompt) {
 
 /** Check if claude CLI is available on this machine */
 let _cliAvailable = null;
+let _cliCheckedAt = 0;
 function isClaudeCLIAvailable() {
-  if (_cliAvailable !== null) return Promise.resolve(_cliAvailable);
+  // Re-check every 5 minutes in case CLI was installed/removed
+  if (_cliAvailable !== null && Date.now() - _cliCheckedAt < 300000) {
+    return Promise.resolve(_cliAvailable);
+  }
   return new Promise((resolve) => {
-    execFile('claude', ['--version'], { timeout: 5000 }, (err) => {
-      _cliAvailable = !err;
+    const { exec } = require('child_process');
+    // Try both 'claude' and common install paths
+    exec('which claude || command -v claude || claude --version', { timeout: 5000 }, (err, stdout) => {
+      _cliAvailable = !err && stdout.trim().length > 0;
+      _cliCheckedAt = Date.now();
+      if (_cliAvailable) console.log('[VPAI] Claude CLI detected:', stdout.trim().split('\n')[0]);
       resolve(_cliAvailable);
     });
   });
@@ -288,12 +304,13 @@ Rules:
 - Keep the BEST of both changes — don't discard either side unless it's truly redundant
 - Maintain code correctness and consistency
 - Remove ALL conflict markers from output
-- Return ONLY the resolved file content, no explanation
 
 Return a JSON object with:
 - "resolved_content": The full resolved file content (string)
-- "strategy": Brief description of how you resolved it (1 sentence)
-- "confidence": "high" | "medium" | "low"`;
+- "strategy": Brief technical description of how you resolved it (1 sentence)
+- "confidence": "high" | "medium" | "low"
+- "plain_summary": A simple, non-technical explanation of what the conflict was and how you fixed it. Write it so a non-developer can understand. Example: "Both sides changed the page title. One version says 'Welcome' and the other says 'Hello'. I kept both changes combined."
+- "changes_made": Array of objects with { "description": "what was changed", "side_chosen": "yours" | "theirs" | "combined" }`;
 
   const userPrompt = `Resolve conflicts in ${filePath}:\n\n${conflictedContent.slice(0, 20000)}`;
 
@@ -356,6 +373,7 @@ Be concise and actionable. Use markdown formatting.`;
 async function _callAI(systemPrompt, userPrompt, resultKey) {
   const ai = getClient();
   if (ai) {
+    logBackend('api');
     try {
       const response = await ai.messages.create({
         model: runtimeModel,
@@ -377,6 +395,7 @@ async function _callAI(systemPrompt, userPrompt, resultKey) {
   const cliOk = await isClaudeCLIAvailable();
   if (!cliOk) return { available: false, error: 'No API key and no claude CLI available' };
 
+  logBackend('cli');
   try {
     const text = await runClaudeCLI(userPrompt, systemPrompt);
     const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();

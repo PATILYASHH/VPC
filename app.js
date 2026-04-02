@@ -57,4 +57,72 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('[VPC] Jarvis Telegram init failed:', err.message);
   }
+
+  // Auto-upgrade check every 5 hours
+  const AUTO_UPGRADE_INTERVAL = 5 * 60 * 60 * 1000; // 5 hours
+  setInterval(async () => {
+    try {
+      const { rows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'auto_upgrade'");
+      const settings = rows[0]?.value ? JSON.parse(rows[0].value) : { enabled: false };
+      if (!settings.enabled) return;
+
+      console.log('[VPC Auto-Upgrade] Checking for updates...');
+      const { execSync, exec } = require('child_process');
+      const rootDir = __dirname;
+      const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+      const localHash = execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+
+      try { execSync('git fetch origin --quiet', { cwd: rootDir, timeout: 15000 }); } catch { return; }
+
+      const remoteHash = execSync(`git rev-parse origin/${branch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
+      if (localHash === remoteHash) {
+        console.log('[VPC Auto-Upgrade] Already up to date.');
+        return;
+      }
+
+      const behindCount = parseInt(execSync(`git rev-list HEAD..origin/${branch} --count`, { cwd: rootDir, encoding: 'utf8' }).trim()) || 0;
+      console.log(`[VPC Auto-Upgrade] ${behindCount} new commits. Starting auto-upgrade...`);
+
+      const run = (cmd) => new Promise((resolve, reject) => {
+        exec(cmd, { cwd: rootDir, timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+          if (err) reject(new Error(`${cmd}: ${stderr || err.message}`));
+          else resolve(stdout);
+        });
+      });
+
+      await run(`git pull origin ${branch}`);
+      console.log('[VPC Auto-Upgrade] git pull done');
+      await run('cd backend && npm install --production');
+      console.log('[VPC Auto-Upgrade] backend deps done');
+      await run('cd frontend && npm install');
+      console.log('[VPC Auto-Upgrade] frontend deps done');
+      await run('cd frontend && npx vite build');
+      console.log('[VPC Auto-Upgrade] frontend build done');
+
+      // Run migrations
+      try {
+        const fs = require('fs');
+        const migrationsDir = require('path').join(rootDir, 'backend', 'migrations');
+        if (fs.existsSync(migrationsDir)) {
+          const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+          for (const file of files) {
+            const sql = fs.readFileSync(require('path').join(migrationsDir, file), 'utf8');
+            try { await pool.query(sql); } catch {}
+          }
+        }
+      } catch {}
+
+      // Save pending restart flag — user must restart manually
+      await pool.query(
+        `INSERT INTO vpc_settings (key, value) VALUES ('upgrade_pending_restart', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [JSON.stringify({ upgraded_at: new Date().toISOString(), branch, auto: true, commits: behindCount })]
+      ).catch(() => {});
+
+      console.log(`[VPC Auto-Upgrade] Complete! ${behindCount} commits applied. Waiting for manual restart.`);
+    } catch (err) {
+      console.error('[VPC Auto-Upgrade] Error:', err.message);
+    }
+  }, AUTO_UPGRADE_INTERVAL);
+  console.log('[VPC] Auto-upgrade check scheduled (every 5 hours)');
 });

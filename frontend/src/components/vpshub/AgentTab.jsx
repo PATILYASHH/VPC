@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bot, Send, Sparkles, Search, GitPullRequest, Loader2 } from 'lucide-react';
+import { Sparkles, Send, Search, GitPullRequest, Loader2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import api from '@/lib/api';
 import { toast } from 'sonner';
@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 const QUICK_ACTIONS = [
   { label: 'Analyze Repository', icon: Search, action: 'analyze', description: 'Get a full analysis of the codebase' },
   { label: 'Review Open PRs', icon: GitPullRequest, action: 'review_prs', description: 'AI review of open pull requests' },
+  { label: 'Resolve PR Conflicts', icon: AlertTriangle, action: 'resolve_conflicts', description: 'Find and resolve merge conflicts' },
   { label: 'Find Issues', icon: Sparkles, action: 'find_issues', description: 'Detect bugs and improvements' },
 ];
 
@@ -68,6 +69,7 @@ export default function AgentTab({ owner, repo }) {
   async function handleQuickAction(action) {
     if (action === 'analyze') return handleAnalyze();
     if (action === 'review_prs') return sendMessage('Review all open pull requests in this repository. List each PR and provide a summary and any concerns.');
+    if (action === 'resolve_conflicts') return sendMessage('Check all open pull requests for merge conflicts. List each PR with conflicts and explain what the conflicts are in simple terms. Suggest how to resolve them.');
     if (action === 'find_issues') return sendMessage('Analyze this codebase and find potential bugs, security issues, and areas for improvement. Be specific about file locations.');
   }
 
@@ -83,11 +85,11 @@ export default function AgentTab({ owner, repo }) {
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-14 h-14 rounded-2xl bg-violet-500/15 flex items-center justify-center mb-4">
-              <Bot className="w-7 h-7 text-violet-400" />
+              <Sparkles className="w-7 h-7 text-violet-400" />
             </div>
-            <h3 className="text-lg font-semibold mb-1">VPSHub Agent</h3>
+            <h3 className="text-lg font-semibold mb-1">VPAI</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-md">
-              AI-powered assistant for your repository. Ask questions, analyze code, resolve conflicts, or get suggestions.
+              Your AI assistant for code review, conflict resolution, and repository analysis. Ask anything about your code.
             </p>
 
             {/* Quick actions */}
@@ -97,7 +99,7 @@ export default function AgentTab({ owner, repo }) {
                   key={qa.action}
                   onClick={() => handleQuickAction(qa.action)}
                   disabled={loading || analyzing}
-                  className="flex flex-col items-start gap-2 p-3 rounded-lg border border-white/[0.06] bg-[#161b22] hover:bg-[#1c2129] transition-colors text-left"
+                  className="flex flex-col items-start gap-2 p-3 rounded-lg border border-white/[0.06] surface-1 hover:bg-[#1c2129] transition-colors text-left"
                 >
                   <qa.icon className="w-4 h-4 text-violet-400" />
                   <div>
@@ -113,13 +115,13 @@ export default function AgentTab({ owner, repo }) {
             <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
               {msg.role === 'assistant' && (
                 <div className="w-7 h-7 rounded-full bg-violet-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Bot className="w-4 h-4 text-violet-400" />
+                  <Sparkles className="w-4 h-4 text-violet-400" />
                 </div>
               )}
               <div className={`max-w-[80%] rounded-lg px-4 py-2.5 text-sm ${
                 msg.role === 'user'
                   ? 'bg-violet-600/20 text-foreground border border-violet-500/20'
-                  : 'bg-[#161b22] border border-white/[0.06]'
+                  : 'surface-1 border border-white/[0.06]'
               }`}>
                 <div className="whitespace-pre-wrap break-words">{msg.content}</div>
               </div>
@@ -130,9 +132,9 @@ export default function AgentTab({ owner, repo }) {
         {(loading || analyzing) && (
           <div className="flex gap-3">
             <div className="w-7 h-7 rounded-full bg-violet-500/15 flex items-center justify-center flex-shrink-0">
-              <Bot className="w-4 h-4 text-violet-400" />
+              <Sparkles className="w-4 h-4 text-violet-400" />
             </div>
-            <div className="bg-[#161b22] border border-white/[0.06] rounded-lg px-4 py-2.5 text-sm text-muted-foreground">
+            <div className="surface-1 border border-white/[0.06] rounded-lg px-4 py-2.5 text-sm text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
               {analyzing ? 'Analyzing repository...' : 'Thinking...'}
             </div>
@@ -151,7 +153,7 @@ export default function AgentTab({ owner, repo }) {
             onChange={e => setInput(e.target.value)}
             placeholder="Ask about the code, request changes, or describe an issue..."
             disabled={loading || analyzing}
-            className="flex-1 px-3 py-2 text-sm bg-[#161b22] border border-white/[0.06] rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 placeholder:text-muted-foreground/50"
+            className="flex-1 px-3 py-2 text-sm surface-1 border border-white/[0.06] rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 placeholder:text-muted-foreground/50"
           />
           <Button type="submit" size="sm" disabled={!input.trim() || loading || analyzing} className="bg-violet-600 hover:bg-violet-700">
             <Send className="w-4 h-4" />

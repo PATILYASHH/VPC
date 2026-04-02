@@ -18,7 +18,7 @@ export default function VpcSyncDownloads() {
   const serverUrl = window.location.origin;
 
   return (
-    <div className="h-full overflow-auto bg-[#0d1117]">
+    <div className="h-full overflow-auto surface-0">
       {/* Hero */}
       <div className="relative overflow-hidden border-b border-white/[0.06]">
         <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 via-transparent to-cyan-600/10" />
@@ -41,7 +41,7 @@ export default function VpcSyncDownloads() {
         {/* Download Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* CLI Download */}
-          <div className="border border-white/[0.06] rounded-xl bg-[#161b22] p-6 flex flex-col">
+          <div className="border border-white/[0.06] rounded-xl surface-1 p-6 flex flex-col">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center">
                 <Terminal className="w-5 h-5 text-emerald-400" />
@@ -68,7 +68,7 @@ export default function VpcSyncDownloads() {
           </div>
 
           {/* VS Code Extension */}
-          <div className="border border-white/[0.06] rounded-xl bg-[#161b22] p-6 flex flex-col">
+          <div className="border border-white/[0.06] rounded-xl surface-1 p-6 flex flex-col">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-11 h-11 rounded-xl bg-blue-500/10 flex items-center justify-center">
                 <Code className="w-5 h-5 text-blue-400" />
@@ -96,7 +96,7 @@ export default function VpcSyncDownloads() {
         </div>
 
         {/* Installation Guide */}
-        <div className="border border-white/[0.06] rounded-xl bg-[#161b22] overflow-hidden">
+        <div className="border border-white/[0.06] rounded-xl surface-1 overflow-hidden">
           <div className="px-6 py-4 border-b border-white/[0.06] flex items-center gap-2">
             <Package className="w-4 h-4 text-violet-400" />
             <h2 className="font-semibold text-sm">Quick Install</h2>
@@ -162,7 +162,7 @@ export default function VpcSyncDownloads() {
         </div>
 
         {/* All Commands Reference */}
-        <div className="border border-white/[0.06] rounded-xl bg-[#161b22] overflow-hidden">
+        <div className="border border-white/[0.06] rounded-xl surface-1 overflow-hidden">
           <div className="px-6 py-4 border-b border-white/[0.06] flex items-center gap-2">
             <Terminal className="w-4 h-4 text-emerald-400" />
             <h2 className="font-semibold text-sm">Command Reference</h2>
@@ -192,7 +192,7 @@ export default function VpcSyncDownloads() {
         </div>
 
         {/* VS Code Setup */}
-        <div className="border border-white/[0.06] rounded-xl bg-[#161b22] overflow-hidden">
+        <div className="border border-white/[0.06] rounded-xl surface-1 overflow-hidden">
           <div className="px-6 py-4 border-b border-white/[0.06] flex items-center gap-2">
             <Monitor className="w-4 h-4 text-blue-400" />
             <h2 className="font-semibold text-sm">VS Code Extension Setup</h2>
@@ -243,7 +243,7 @@ export default function VpcSyncDownloads() {
 function CodeBlock({ id, text, copied, onCopy }) {
   return (
     <div className="relative group">
-      <pre className="text-[11px] bg-[#0d1117] border border-white/[0.06] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground leading-relaxed">
+      <pre className="text-[11px] surface-0 border border-white/[0.06] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground leading-relaxed">
         {text}
       </pre>
       <button

@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -13,6 +13,7 @@ import WebHosting from '@/components/apps/WebHosting';
 import VPSHub from '@/components/apps/VPSHub';
 import AgentSettings from '@/components/apps/AgentSettings';
 import VpcStore from '@/components/apps/VpcStore';
+import SystemSettings from '@/components/apps/SystemSettings';
 
 const APP_REGISTRY = {
   'vpshub': {
@@ -222,6 +223,20 @@ const APP_REGISTRY = {
     defaultHeight: 750,
     minWidth: 800,
     minHeight: 600,
+  },
+  'system-settings': {
+    id: 'system-settings',
+    title: 'Settings',
+    description: 'Themes & Preferences',
+    icon: Settings,
+    iconColor: 'text-zinc-400',
+    iconBg: 'bg-zinc-500/15',
+    category: 'system',
+    component: SystemSettings,
+    defaultWidth: 750,
+    defaultHeight: 550,
+    minWidth: 600,
+    minHeight: 400,
   },
 };
 

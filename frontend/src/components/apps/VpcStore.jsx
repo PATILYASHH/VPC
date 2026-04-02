@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Download, Terminal, Code, Package, Copy, Check, Monitor,
-  ArrowLeft, Star, Shield, Zap, GitBranch, FolderSync,
-  Search, Filter, ChevronRight, ExternalLink, Clock,
-  HardDrive, Cpu, Box, Layers
+  ArrowLeft, Shield, Zap, GitBranch, FolderSync,
+  Search, ChevronRight, Clock,
+  HardDrive, Cpu, Box, Layers, RefreshCw, ArrowUpCircle,
+  CheckCircle2, Loader2, GitCommit, Star, Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import api from '@/lib/api';
+import { toast } from 'sonner';
 
 // ─── Product Catalog ─────────────────────────────────────────
 
@@ -15,18 +18,22 @@ const PRODUCTS = [
     id: 'vpc-sync-cli',
     title: 'VPC Sync CLI',
     subtitle: 'Version Control from Terminal',
+    developer: 'VPC Team',
     category: 'cli',
     icon: Terminal,
     iconColor: 'text-emerald-400',
     iconBg: 'bg-emerald-500/10',
     accentColor: 'emerald',
+    accentGradient: 'from-emerald-600/20 to-cyan-600/10',
     version: '1.0.0',
     size: '22 KB',
+    rating: 4.8,
+    downloads: '50+',
     downloadUrl: '/downloads/vpc-sync-cli.tar.gz',
     filename: 'vpc-sync-cli.tar.gz',
     featured: true,
     isNew: true,
-    description: 'Full version control system from your terminal. Init, add, commit, push, pull, branch, merge, diff — everything you need, zero Git dependency.',
+    description: 'Full version control from terminal. Init, commit, push, pull, branch, merge — zero Git dependency.',
     longDescription: 'VPC Sync CLI is our custom-built version control system. It uses SHA-256 content-addressable storage to track your code with full branching, merging, and remote sync capabilities. Works directly with VPSHub repositories over HTTP.',
     features: [
       { icon: GitBranch, label: 'Branch & merge with 3-way conflict detection' },
@@ -64,44 +71,48 @@ const PRODUCTS = [
     id: 'vpc-sync-extension',
     title: 'VPC Sync for VS Code',
     subtitle: 'IDE Integration',
+    developer: 'VPC Team',
     category: 'extension',
     icon: Code,
     iconColor: 'text-blue-400',
     iconBg: 'bg-blue-500/10',
     accentColor: 'blue',
-    version: '6.3.0',
-    size: '35 KB',
+    accentGradient: 'from-blue-600/20 to-indigo-600/10',
+    version: '7.0.0',
+    size: '56 KB',
+    rating: 4.9,
+    downloads: '100+',
     downloadUrl: '/downloads/vpc-sync.vsix',
     filename: 'vpc-sync.vsix',
     featured: true,
     isNew: false,
-    description: 'Git-like Source Control in VS Code. Connect with VPSHub token, select a repo, push and pull with one click. Full SCM integration.',
-    longDescription: 'The VPC Sync VS Code extension gives you a complete Git-like experience inside VS Code. Connect with your VPSHub token, select a repository, and get Push/Pull buttons, staged/unstaged file tracking, commit history, and branch display — all using the custom VPC VCS protocol.',
+    description: 'Git-like Source Control in VS Code. Push creates PR, pull with one click. Full SCM + VPAI conflict resolution.',
+    longDescription: 'The VPC Sync VS Code extension gives you a complete Git-like experience inside VS Code. Connect with your VPSHub token, select a repository, and get Push/Pull buttons, staged/unstaged file tracking, commit history, and branch display. Every push creates a PR for review.',
     features: [
-      { icon: Layers, label: 'Git-like SCM panel — staged, changes, untracked' },
-      { icon: GitBranch, label: 'Push & Pull buttons with commit counts' },
-      { icon: Shield, label: 'Connect with VPSHub token + repo selector' },
+      { icon: Layers, label: 'Git-like SCM panel with staged & unstaged files' },
+      { icon: GitBranch, label: 'Push creates PR automatically for review' },
+      { icon: Sparkles, label: 'VPAI conflict resolution integration' },
       { icon: Zap, label: 'Real-time file change detection & status bar' },
     ],
-    requirements: 'VS Code 1.80+',
+    requirements: 'VS Code 1.85+',
     platforms: ['VS Code'],
     commands: null,
     installSteps: [
-      { title: 'Open VS Code', code: null, text: 'Open VS Code and go to the Extensions panel' },
-      { title: 'Install VSIX', code: null, text: 'Click the ··· menu → "Install from VSIX..." → select vpc-sync.vsix' },
-      { title: 'Configure', code: null, text: 'Set vpcSync.vpshubUrl, vpshubToken, vpshubOwner, vpshubRepo in settings' },
+      { title: 'Open VS Code', code: null, text: 'Open VS Code and press Ctrl+Shift+P' },
+      { title: 'Install VSIX', code: null, text: 'Type "Install from VSIX" and select vpc-sync-7.0.0.vsix' },
+      { title: 'Connect', code: null, text: 'Click the VPC Sync icon in the sidebar. Enter your server URL, username, and token.' },
     ],
     changelog: [
-      { version: '6.3.0', date: '2026-03-29', changes: ['Proper connection form UI in sidebar', 'All fields in one view — URL, Username, Token', 'Click Connect to load repos, click repo to clone', 'Connected view with branch, Push/Pull, sync status'] },
-      { version: '6.2.0', date: '2026-03-29', changes: ['Sidebar icon in activity bar', 'Welcome view with Connect button'] },
-      { version: '6.1.0', date: '2026-03-29', changes: ['Compact Git-like design — native SCM only', 'Quick Pick connect flow', 'Status bar branch + sync arrows'] },
+      { version: '7.0.0', date: '2026-04-01', changes: ['Push always creates PR (no direct merge)', 'VPAI conflict detection after push', 'Conflict notification with "Open PR" button', 'Merge-check integration'] },
+      { version: '6.3.0', date: '2026-03-29', changes: ['Connection form with repo selector', 'Connected view with branch, Push/Pull, sync status'] },
     ],
   },
 ];
 
 const CATEGORIES = [
-  { id: 'all', label: 'All', icon: Box },
-  { id: 'cli', label: 'CLI Tools', icon: Terminal },
+  { id: 'all', label: 'Discover', icon: Sparkles },
+  { id: 'system', label: 'System', icon: Monitor },
+  { id: 'cli', label: 'Developer Tools', icon: Terminal },
   { id: 'extension', label: 'Extensions', icon: Code },
 ];
 
@@ -113,7 +124,8 @@ export default function VpcStore() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filtered = PRODUCTS.filter(p => {
-    if (activeCategory !== 'all' && p.category !== activeCategory) return false;
+    if (activeCategory !== 'all' && activeCategory !== 'system' && p.category !== activeCategory) return false;
+    if (activeCategory === 'system') return false; // system tab only shows upgrade
     if (searchQuery && !p.title.toLowerCase().includes(searchQuery.toLowerCase()) && !p.description.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     return true;
   });
@@ -123,114 +135,405 @@ export default function VpcStore() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-[#0d1117]">
-      {/* Store Header */}
-      <div className="relative overflow-hidden border-b border-white/[0.06]">
-        <div className="absolute inset-0 bg-gradient-to-br from-amber-600/8 via-transparent to-orange-600/8" />
-        <div className="relative px-6 py-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-              <Package className="w-5 h-5 text-amber-400" />
-            </div>
+    <div className="h-full flex flex-col surface-0">
+      {/* Store Header — App Store style */}
+      <div className="border-b border-white/[0.06]">
+        <div className="px-6 pt-5 pb-4">
+          <div className="flex items-center justify-between mb-5">
             <div>
-              <h1 className="text-lg font-bold tracking-tight">VPC Store</h1>
-              <p className="text-xs text-muted-foreground">Download tools & extensions for VPC</p>
+              <h1 className="text-2xl font-bold tracking-tight">VPC Store</h1>
+              <p className="text-xs text-muted-foreground/50 mt-0.5">Tools, extensions & system updates</p>
             </div>
-            <Badge variant="outline" className="ml-auto text-[10px] border-amber-500/30 text-amber-400">
-              {PRODUCTS.length} available
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
+                {PRODUCTS.length} apps
+              </Badge>
+            </div>
           </div>
 
-          {/* Search */}
+          {/* Search bar */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" />
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/30" />
             <input
               type="text"
-              placeholder="Search tools & extensions..."
+              placeholder="Search apps and tools..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:border-amber-500/40 focus:ring-1 focus:ring-amber-500/20 transition-all"
+              className="w-full pl-10 pr-4 py-2.5 bg-white/[0.05] border border-white/[0.06] rounded-xl text-sm placeholder:text-muted-foreground/30 focus:outline-none focus:border-white/[0.15] focus:bg-white/[0.07] transition-all"
             />
           </div>
         </div>
-      </div>
 
-      {/* Category Tabs */}
-      <div className="px-6 py-2 border-b border-white/[0.04] flex items-center gap-1">
-        {CATEGORIES.map(cat => (
-          <button
-            key={cat.id}
-            onClick={() => setActiveCategory(cat.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              activeCategory === cat.id
-                ? 'bg-amber-500/15 text-amber-400'
-                : 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-white/[0.04]'
-            }`}
-          >
-            <cat.icon className="w-3.5 h-3.5" />
-            {cat.label}
-          </button>
-        ))}
+        {/* Category tabs — pill style */}
+        <div className="px-6 pb-3 flex items-center gap-1.5 overflow-x-auto">
+          {CATEGORIES.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => setActiveCategory(cat.id)}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
+                activeCategory === cat.id
+                  ? 'bg-white/[0.12] text-foreground'
+                  : 'text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-white/[0.04]'
+              }`}
+            >
+              <cat.icon className="w-3.5 h-3.5" />
+              {cat.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        {/* Featured Banner */}
-        {activeCategory === 'all' && !searchQuery && (
-          <div className="px-6 pt-5 pb-2">
-            <FeaturedBanner product={PRODUCTS[0]} onSelect={setSelectedProduct} />
+        {/* Software Upgrade */}
+        {(activeCategory === 'all' || activeCategory === 'system') && !searchQuery && (
+          <div className="px-6 pt-5">
+            <SoftwareUpgrade />
           </div>
         )}
 
-        {/* Product Grid */}
-        <div className="px-6 py-4">
-          {activeCategory === 'all' && !searchQuery && (
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">All Tools</h2>
-          )}
-          {filtered.length === 0 ? (
-            <div className="text-center py-12">
-              <Package className="w-8 h-8 text-muted-foreground/20 mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground/50">No tools found</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filtered.map(product => (
-                <ProductCard key={product.id} product={product} onSelect={setSelectedProduct} />
+        {/* Featured Hero — only on Discover tab */}
+        {activeCategory === 'all' && !searchQuery && (
+          <div className="px-6 pt-5">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">Featured</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {PRODUCTS.filter(p => p.featured).map(product => (
+                <FeaturedCard key={product.id} product={product} onSelect={setSelectedProduct} />
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* App list */}
+        {(activeCategory !== 'all' && activeCategory !== 'system') && (
+          <div className="px-6 py-5">
+            {filtered.length === 0 ? (
+              <div className="text-center py-16">
+                <Package className="w-10 h-10 text-muted-foreground/10 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground/30">No apps found</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filtered.map(product => (
+                  <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Search results */}
+        {searchQuery && (
+          <div className="px-6 py-5">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">
+              Results for "{searchQuery}"
+            </h2>
+            {filtered.length === 0 ? (
+              <div className="text-center py-12">
+                <Search className="w-8 h-8 text-muted-foreground/10 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground/30">No matching apps</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filtered.map(product => (
+                  <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* All apps list — on Discover tab below featured */}
+        {activeCategory === 'all' && !searchQuery && (
+          <div className="px-6 py-5">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">All Apps</h2>
+            <div className="space-y-2">
+              {PRODUCTS.map(product => (
+                <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="h-4" />
       </div>
     </div>
   );
 }
 
-// ─── Featured Banner ─────────────────────────────────────────
+// ─── Software Upgrade ────────────────────────────────────────
 
-function FeaturedBanner({ product, onSelect }) {
+function SoftwareUpgrade() {
+  const [status, setStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const [showCommits, setShowCommits] = useState(false);
+  const [autoUpgrade, setAutoUpgrade] = useState(false);
+  const [pendingRestart, setPendingRestart] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [togglingAuto, setTogglingAuto] = useState(false);
+
+  useEffect(() => {
+    // Load cached upgrade check
+    try {
+      const cached = localStorage.getItem('vpc-upgrade-check');
+      if (cached) {
+        const data = JSON.parse(cached);
+        if (Date.now() - new Date(data.lastChecked).getTime() < 600000) {
+          setStatus(data);
+        } else {
+          checkForUpdates();
+        }
+      } else {
+        checkForUpdates();
+      }
+    } catch { checkForUpdates(); }
+
+    // Load auto-upgrade setting + pending restart status
+    loadAutoUpgradeSettings();
+  }, []);
+
+  async function loadAutoUpgradeSettings() {
+    try {
+      const { data } = await api.get('/admin/vpshub/system/auto-upgrade');
+      setAutoUpgrade(!!data.enabled);
+      setPendingRestart(!!data.pendingRestart);
+    } catch {}
+  }
+
+  async function toggleAutoUpgrade() {
+    setTogglingAuto(true);
+    try {
+      const { data } = await api.post('/admin/vpshub/system/auto-upgrade', { enabled: !autoUpgrade });
+      setAutoUpgrade(data.enabled);
+      toast.success(data.enabled ? 'Auto-upgrade enabled (checks every 5 hours)' : 'Auto-upgrade disabled');
+    } catch (err) {
+      toast.error('Failed to update setting');
+    } finally {
+      setTogglingAuto(false);
+    }
+  }
+
+  async function checkForUpdates() {
+    setChecking(true);
+    try {
+      const { data } = await api.get('/admin/vpshub/system/upgrade-check');
+      setStatus(data);
+      localStorage.setItem('vpc-upgrade-check', JSON.stringify(data));
+    } catch (err) {
+      setStatus({ error: err.response?.data?.error || 'Failed to check' });
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function applyUpgrade() {
+    if (!window.confirm('Upgrade VPC to the latest version?\n\nThe server will NOT restart automatically.\nYou can restart when ready.')) return;
+    setUpgrading(true);
+    try {
+      await api.post('/admin/vpshub/system/upgrade-apply', {
+        branch: status?.current?.branch || 'main',
+        skipRestart: true,
+      });
+      toast.success('Upgrade in progress... You will need to restart when done.');
+      // Poll until upgrade completes (check pending restart flag)
+      const poll = setInterval(async () => {
+        try {
+          const { data } = await api.get('/admin/vpshub/system/auto-upgrade');
+          if (data.pendingRestart) {
+            clearInterval(poll);
+            setPendingRestart(true);
+            setUpgrading(false);
+            localStorage.removeItem('vpc-upgrade-check');
+            checkForUpdates();
+            toast.success('Upgrade complete! Restart server when ready.');
+          }
+        } catch {}
+      }, 5000);
+      setTimeout(() => { clearInterval(poll); setUpgrading(false); }, 180000);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Upgrade failed');
+      setUpgrading(false);
+    }
+  }
+
+  async function restartServer() {
+    if (!window.confirm('Restart the VPC server now?\n\nThe page will reload when the server is back.')) return;
+    setRestarting(true);
+    try {
+      await api.post('/admin/vpshub/system/restart');
+      toast.success('Restarting server...');
+      setTimeout(() => {
+        const poll = setInterval(async () => {
+          try {
+            await fetch('/health');
+            clearInterval(poll);
+            setPendingRestart(false);
+            setRestarting(false);
+            localStorage.removeItem('vpc-upgrade-check');
+            window.location.reload();
+          } catch {}
+        }, 3000);
+        setTimeout(() => clearInterval(poll), 120000);
+      }, 3000);
+    } catch {
+      // Server probably already restarting
+      setTimeout(() => {
+        const poll = setInterval(async () => {
+          try { await fetch('/health'); clearInterval(poll); window.location.reload(); } catch {}
+        }, 3000);
+        setTimeout(() => clearInterval(poll), 120000);
+      }, 2000);
+    }
+  }
+
+  const hasUpdate = status?.updateAvailable;
+
+  return (
+    <div className={`rounded-2xl overflow-hidden border transition-all ${
+      pendingRestart ? 'border-amber-500/25 bg-gradient-to-r from-amber-500/8 via-[#12161f] to-orange-500/5' :
+      hasUpdate ? 'border-violet-500/20 bg-gradient-to-r from-violet-500/8 via-[#12161f] to-indigo-500/8' :
+      'border-white/[0.06] surface-1'
+    }`}>
+      {/* Main row */}
+      <div className="p-4 flex items-center gap-4">
+        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+          pendingRestart ? 'bg-amber-500/15' : hasUpdate ? 'bg-violet-500/15' : 'bg-white/[0.04]'
+        }`}>
+          {upgrading ? <Loader2 className="w-6 h-6 text-violet-400 animate-spin" /> :
+           restarting ? <Loader2 className="w-6 h-6 text-amber-400 animate-spin" /> :
+           pendingRestart ? <RefreshCw className="w-6 h-6 text-amber-400" /> :
+           hasUpdate ? <ArrowUpCircle className="w-6 h-6 text-violet-400" /> :
+           <CheckCircle2 className="w-6 h-6 text-emerald-500/70" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">Software Update</span>
+            {pendingRestart && <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px]">RESTART NEEDED</Badge>}
+            {!pendingRestart && hasUpdate && <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-[9px]">NEW</Badge>}
+          </div>
+          <p className="text-[11px] text-muted-foreground/50 mt-0.5">
+            {restarting ? 'Restarting server...' :
+             upgrading ? 'Downloading & installing update...' :
+             pendingRestart ? 'Upgrade installed. Restart to apply changes.' :
+             hasUpdate ? `${status.behindCount} update${status.behindCount !== 1 ? 's' : ''} available` :
+             status?.error && !status?.current ? status.error :
+             status ? 'VPC is up to date' : 'Checking...'}
+          </p>
+          {status?.current && !pendingRestart && (
+            <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground/30">
+              <span className="font-mono">{status.current.hash}</span>
+              <span>{status.current.branch}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {pendingRestart && !restarting && (
+            <Button size="sm" onClick={restartServer} className="bg-amber-600 hover:bg-amber-700 text-xs h-8 px-4">
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart
+            </Button>
+          )}
+          {hasUpdate && !upgrading && !pendingRestart && (
+            <Button size="sm" onClick={applyUpgrade} className="bg-violet-600 hover:bg-violet-700 text-xs h-8 px-4">
+              Update
+            </Button>
+          )}
+          <button
+            onClick={checkForUpdates}
+            disabled={checking || upgrading || restarting}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-muted-foreground hover:bg-white/[0.06] transition-colors disabled:opacity-30"
+          >
+            {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Expandable commits */}
+      {hasUpdate && status.newCommits?.length > 0 && !pendingRestart && (
+        <div className="px-4 pb-3 border-t border-white/[0.04]">
+          <button onClick={() => setShowCommits(!showCommits)} className="flex items-center gap-1 text-[11px] text-violet-400/70 hover:text-violet-400 mt-2 mb-1 transition-colors">
+            <ChevronRight className={`w-3 h-3 transition-transform ${showCommits ? 'rotate-90' : ''}`} />
+            What's new
+          </button>
+          {showCommits && (
+            <div className="space-y-0.5 max-h-[160px] overflow-y-auto mt-1">
+              {status.newCommits.map((c, i) => (
+                <div key={i} className="flex items-center gap-2 py-1 px-2 rounded text-[11px]">
+                  <span className="font-mono text-violet-400/50 shrink-0">{c.hash}</span>
+                  <span className="text-muted-foreground/60 truncate">{c.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {upgrading && (
+        <div className="px-4 pb-3">
+          <div className="h-1 bg-white/[0.04] rounded-full overflow-hidden">
+            <div className="h-full bg-violet-500/50 rounded-full animate-pulse" style={{ width: '60%' }} />
+          </div>
+        </div>
+      )}
+
+      {/* Auto-upgrade toggle */}
+      <div className="px-4 py-2.5 border-t border-white/[0.04] flex items-center justify-between">
+        <div>
+          <span className="text-[11px] text-muted-foreground/50">Automatic Updates</span>
+          <span className="text-[10px] text-muted-foreground/25 ml-2">Checks every 5 hours</span>
+        </div>
+        <button
+          onClick={toggleAutoUpgrade}
+          disabled={togglingAuto}
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            autoUpgrade ? 'bg-violet-600' : 'bg-white/[0.08]'
+          }`}
+        >
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+            autoUpgrade ? 'left-[18px]' : 'left-0.5'
+          }`} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Featured Card (App Store hero style) ────────────────────
+
+function FeaturedCard({ product, onSelect }) {
   return (
     <button
       onClick={() => onSelect(product)}
-      className="w-full text-left border border-white/[0.06] rounded-2xl bg-gradient-to-br from-emerald-500/5 via-[#161b22] to-cyan-500/5 p-6 hover:border-emerald-500/30 transition-all group"
+      className={`w-full text-left rounded-2xl border border-white/[0.06] bg-gradient-to-br ${product.accentGradient} p-5 hover:border-white/[0.12] transition-all group overflow-hidden relative`}
     >
-      <div className="flex items-start gap-4">
-        <div className={`w-14 h-14 rounded-2xl ${product.iconBg} flex items-center justify-center shrink-0`}>
+      {/* Subtle glow */}
+      <div className="absolute top-0 right-0 w-32 h-32 rounded-full bg-white/[0.02] blur-3xl" />
+
+      <div className="relative flex items-start gap-4">
+        <div className={`w-14 h-14 rounded-[18px] ${product.iconBg} flex items-center justify-center shrink-0 shadow-lg`}>
           <product.icon className={`w-7 h-7 ${product.iconColor}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            {product.isNew && (
-              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[9px] px-1.5 py-0">NEW</Badge>
-            )}
-            <Badge variant="outline" className="text-[10px] border-white/[0.1]">v{product.version}</Badge>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider font-medium">{product.developer}</span>
+            {product.isNew && <Badge className="bg-emerald-500/20 text-emerald-400 border-0 text-[8px] px-1.5 py-0">NEW</Badge>}
           </div>
-          <h3 className="text-base font-semibold mb-1">{product.title}</h3>
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">{product.description}</p>
-          <div className="flex items-center gap-3 mt-3">
-            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium group-hover:gap-2 transition-all">
-              View Details <ChevronRight className="w-3 h-3" />
-            </span>
-            <span className="text-[10px] text-muted-foreground/40">{product.size}</span>
+          <h3 className="text-base font-bold mb-0.5">{product.title}</h3>
+          <p className="text-[11px] text-muted-foreground/50 leading-relaxed line-clamp-2">{product.description}</p>
+
+          <div className="flex items-center gap-4 mt-3">
+            <button className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
+              product.accentColor === 'emerald' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-blue-500 text-white hover:bg-blue-400'
+            }`}>
+              <Download className="w-3 h-3" /> Get
+            </button>
+            <div className="flex items-center gap-0.5">
+              {[...Array(5)].map((_, i) => (
+                <Star key={i} className={`w-3 h-3 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.08]'}`} />
+              ))}
+              <span className="text-[10px] text-muted-foreground/30 ml-1">{product.rating}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -238,15 +541,14 @@ function FeaturedBanner({ product, onSelect }) {
   );
 }
 
-// ─── Product Card ────────────────────────────────────────────
+// ─── App List Item (App Store list style) ────────────────────
 
-function ProductCard({ product, onSelect }) {
+function AppListItem({ product, onSelect }) {
   const [downloading, setDownloading] = useState(false);
 
   function handleDownload(e) {
     e.stopPropagation();
     setDownloading(true);
-    // Trigger download via hidden link
     const a = document.createElement('a');
     a.href = product.downloadUrl;
     a.download = product.filename;
@@ -257,70 +559,41 @@ function ProductCard({ product, onSelect }) {
   return (
     <div
       onClick={() => onSelect(product)}
-      className="border border-white/[0.06] rounded-xl bg-[#161b22] p-5 flex flex-col cursor-pointer hover:border-white/[0.12] hover:bg-[#1c2128] transition-all group"
+      className="flex items-center gap-4 p-3 rounded-xl hover:bg-white/[0.03] cursor-pointer transition-all group"
     >
-      <div className="flex items-center gap-3 mb-3">
-        <div className={`w-11 h-11 rounded-xl ${product.iconBg} flex items-center justify-center shrink-0`}>
-          <product.icon className={`w-5 h-5 ${product.iconColor}`} />
+      <div className={`w-12 h-12 rounded-[14px] ${product.iconBg} flex items-center justify-center shrink-0`}>
+        <product.icon className={`w-6 h-6 ${product.iconColor}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold truncate">{product.title}</h3>
+          {product.isNew && <Badge className="bg-emerald-500/20 text-emerald-400 border-0 text-[8px] px-1.5 py-0">NEW</Badge>}
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-sm truncate">{product.title}</h3>
-            {product.isNew && (
-              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[9px] px-1.5 py-0">NEW</Badge>
-            )}
+        <p className="text-[11px] text-muted-foreground/40 truncate">{product.description}</p>
+        <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-0.5">
+            {[...Array(5)].map((_, i) => (
+              <Star key={i} className={`w-2.5 h-2.5 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.06]'}`} />
+            ))}
           </div>
-          <p className="text-[11px] text-muted-foreground/60">{product.subtitle}</p>
+          <span className="text-[10px] text-muted-foreground/25">{product.downloads} downloads</span>
         </div>
-        <Badge variant="outline" className="text-[10px] border-white/[0.08] shrink-0">v{product.version}</Badge>
       </div>
-
-      <p className="text-xs text-muted-foreground mb-4 leading-relaxed line-clamp-2 flex-1">
-        {product.description}
-      </p>
-
-      {/* Tags */}
-      <div className="flex flex-wrap gap-1.5 mb-4">
-        {product.platforms.map(p => (
-          <span key={p} className="px-2 py-0.5 rounded-md bg-white/[0.04] text-[10px] text-muted-foreground/60 border border-white/[0.04]">
-            {p}
-          </span>
-        ))}
-        <span className="px-2 py-0.5 rounded-md bg-white/[0.04] text-[10px] text-muted-foreground/60 border border-white/[0.04]">
-          {product.size}
-        </span>
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-2 mt-auto">
-        <button
-          onClick={handleDownload}
-          className={`flex-1 inline-flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all ${
-            downloading
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : product.accentColor === 'emerald'
-                ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                : 'bg-blue-600 text-white hover:bg-blue-500'
-          }`}
-        >
-          {downloading ? (
-            <><Check className="w-3.5 h-3.5" /> Downloaded</>
-          ) : (
-            <><Download className="w-3.5 h-3.5" /> Download</>
-          )}
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onSelect(product); }}
-          className="px-3 py-2 rounded-lg text-xs font-medium border border-white/[0.08] text-muted-foreground hover:bg-white/[0.04] transition-colors"
-        >
-          Details
-        </button>
-      </div>
+      <button
+        onClick={handleDownload}
+        className={`px-4 py-1.5 rounded-full text-[11px] font-semibold shrink-0 transition-all ${
+          downloading
+            ? 'bg-emerald-500/20 text-emerald-400'
+            : 'bg-white/[0.08] text-blue-400 hover:bg-white/[0.12]'
+        }`}
+      >
+        {downloading ? <Check className="w-3.5 h-3.5" /> : 'Get'}
+      </button>
     </div>
   );
 }
 
-// ─── Product Detail View ─────────────────────────────────────
+// ─── Product Detail View (App Store detail page) ─────────────
 
 function ProductDetail({ product, onBack }) {
   const [copiedCmd, setCopiedCmd] = useState(null);
@@ -346,70 +619,70 @@ function ProductDetail({ product, onBack }) {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
-    { id: 'install', label: 'Installation' },
+    { id: 'install', label: 'Install' },
     ...(product.commands ? [{ id: 'commands', label: 'Commands' }] : []),
-    { id: 'changelog', label: 'Changelog' },
+    { id: 'changelog', label: "What's New" },
   ];
 
   return (
-    <div className="h-full flex flex-col bg-[#0d1117]">
+    <div className="h-full flex flex-col surface-0">
       {/* Detail Header */}
-      <div className="border-b border-white/[0.06] bg-[#161b22]">
-        <div className="px-6 py-4">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground/60 hover:text-muted-foreground mb-4 transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Back to Store
+      <div className="border-b border-white/[0.06]">
+        <div className="px-6 pt-4 pb-5">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-muted-foreground/40 hover:text-muted-foreground mb-5 transition-colors">
+            <ArrowLeft className="w-3.5 h-3.5" /> Store
           </button>
 
-          <div className="flex items-start gap-4">
-            <div className={`w-16 h-16 rounded-2xl ${product.iconBg} flex items-center justify-center shrink-0`}>
-              <product.icon className={`w-8 h-8 ${product.iconColor}`} />
+          <div className="flex items-start gap-5">
+            <div className={`w-[72px] h-[72px] rounded-[20px] ${product.iconBg} flex items-center justify-center shrink-0 shadow-lg shadow-black/20`}>
+              <product.icon className={`w-9 h-9 ${product.iconColor}`} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h1 className="text-xl font-bold">{product.title}</h1>
-                {product.isNew && (
-                  <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-[9px]">NEW</Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground mb-3">{product.subtitle}</p>
-              <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-xl font-bold">{product.title}</h1>
+              <p className="text-xs text-muted-foreground/40 mt-0.5">{product.developer}</p>
+
+              <div className="flex items-center gap-3 mt-3">
                 <button
                   onClick={handleDownload}
-                  className={`inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`inline-flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold transition-all ${
                     downloading
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      ? 'bg-emerald-500/20 text-emerald-400'
                       : product.accentColor === 'emerald'
-                        ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                        : 'bg-blue-600 text-white hover:bg-blue-500'
+                        ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+                        : 'bg-blue-500 text-white hover:bg-blue-400'
                   }`}
                 >
-                  {downloading ? <Check className="w-4 h-4" /> : <Download className="w-4 h-4" />}
-                  {downloading ? 'Downloaded!' : `Download ${product.filename}`}
+                  {downloading ? <><Check className="w-4 h-4" /> Done</> : <><Download className="w-4 h-4" /> Get</>}
                 </button>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground/50">
-                  <span className="flex items-center gap-1"><Box className="w-3 h-3" /> v{product.version}</span>
-                  <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" /> {product.size}</span>
-                  <span className="flex items-center gap-1"><Cpu className="w-3 h-3" /> {product.requirements}</span>
+
+                <div className="flex items-center gap-0.5">
+                  {[...Array(5)].map((_, i) => (
+                    <Star key={i} className={`w-3.5 h-3.5 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.08]'}`} />
+                  ))}
+                  <span className="text-xs text-muted-foreground/30 ml-1.5">{product.rating}</span>
                 </div>
+              </div>
+
+              <div className="flex items-center gap-5 mt-3 text-[11px] text-muted-foreground/30">
+                <span className="flex items-center gap-1"><Box className="w-3 h-3" /> v{product.version}</span>
+                <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" /> {product.size}</span>
+                <span className="flex items-center gap-1"><Cpu className="w-3 h-3" /> {product.requirements}</span>
+                <span className="flex items-center gap-1"><Download className="w-3 h-3" /> {product.downloads}</span>
               </div>
             </div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="px-6 flex items-center gap-0.5 border-t border-white/[0.04]">
+        <div className="px-6 flex items-center gap-0.5">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+              className={`px-3.5 py-2.5 text-xs font-medium border-b-2 transition-colors ${
                 activeTab === tab.id
-                  ? `border-${product.accentColor}-400 text-foreground`
-                  : 'border-transparent text-muted-foreground/50 hover:text-muted-foreground'
+                  ? 'border-white text-foreground'
+                  : 'border-transparent text-muted-foreground/30 hover:text-muted-foreground/60'
               }`}
             >
               {tab.label}
@@ -421,35 +694,28 @@ function ProductDetail({ product, onBack }) {
       {/* Tab Content */}
       <div className="flex-1 overflow-auto p-6">
         {activeTab === 'overview' && (
-          <div className="max-w-3xl space-y-6">
-            {/* Description */}
-            <div>
-              <p className="text-sm text-muted-foreground leading-relaxed">{product.longDescription}</p>
-            </div>
+          <div className="max-w-3xl space-y-8">
+            <p className="text-sm text-muted-foreground/60 leading-relaxed">{product.longDescription}</p>
 
-            {/* Features */}
             <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Features</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/25 mb-4">Features</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {product.features.map((feat, i) => (
-                  <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-white/[0.04] bg-white/[0.02]">
-                    <div className={`w-8 h-8 rounded-lg ${product.iconBg} flex items-center justify-center shrink-0`}>
+                  <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+                    <div className={`w-9 h-9 rounded-xl ${product.iconBg} flex items-center justify-center shrink-0`}>
                       <feat.icon className={`w-4 h-4 ${product.iconColor}`} />
                     </div>
-                    <span className="text-xs text-muted-foreground leading-relaxed pt-1.5">{feat.label}</span>
+                    <span className="text-xs text-muted-foreground/50 leading-relaxed pt-2">{feat.label}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Platforms */}
             <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">Platforms</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/25 mb-3">Compatibility</h3>
               <div className="flex gap-2">
                 {product.platforms.map(p => (
-                  <span key={p} className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs text-muted-foreground">
-                    {p}
-                  </span>
+                  <span key={p} className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.05] text-xs text-muted-foreground/40">{p}</span>
                 ))}
               </div>
             </div>
@@ -458,59 +724,48 @@ function ProductDetail({ product, onBack }) {
 
         {activeTab === 'install' && (
           <div className="max-w-3xl space-y-5">
-            <h3 className="text-sm font-semibold mb-4">Installation Guide</h3>
             {product.installSteps.map((step, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className={`w-6 h-6 rounded-full bg-${product.accentColor}-500/20 text-${product.accentColor}-400 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5`}>
+              <div key={i} className="flex items-start gap-4">
+                <div className={`w-7 h-7 rounded-full bg-white/[0.06] text-muted-foreground/40 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5`}>
                   {i + 1}
-                </span>
+                </div>
                 <div className="flex-1">
                   <p className="text-xs font-medium mb-1.5">{step.title}</p>
                   {step.code ? (
                     <div className="relative group">
-                      <pre className="text-[11px] bg-[#0d1117] border border-white/[0.06] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground">
+                      <pre className="text-[11px] surface-0 border border-white/[0.06] rounded-xl p-3.5 overflow-x-auto font-mono text-muted-foreground/50">
                         {step.code.replace('{SERVER}', serverUrl)}
                       </pre>
                       <button
                         onClick={() => copyCommand(`install-${i}`, step.code)}
-                        className="absolute top-2 right-2 p-1.5 rounded-md bg-white/[0.06] border border-white/[0.08] opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity"
                       >
-                        {copiedCmd === `install-${i}`
-                          ? <Check className="w-3 h-3 text-emerald-400" />
-                          : <Copy className="w-3 h-3 text-muted-foreground" />
-                        }
+                        {copiedCmd === `install-${i}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground/40" />}
                       </button>
                     </div>
                   ) : (
-                    <p className="text-[11px] text-muted-foreground">{step.text}</p>
+                    <p className="text-[11px] text-muted-foreground/40">{step.text}</p>
                   )}
                 </div>
               </div>
             ))}
 
-            {/* Quick start after install */}
             {product.commands && (
-              <div className="mt-6 pt-6 border-t border-white/[0.06]">
+              <div className="mt-6 pt-6 border-t border-white/[0.04]">
                 <h4 className="text-xs font-semibold mb-3">Quick Start</h4>
                 <div className="relative group">
-                  <pre className="text-[11px] bg-[#0d1117] border border-white/[0.06] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground leading-relaxed">
-{`# Create a new repo
-vpc init
+                  <pre className="text-[11px] surface-0 border border-white/[0.06] rounded-xl p-3.5 overflow-x-auto font-mono text-muted-foreground/50 leading-relaxed">
+{`vpc init
 vpc add -A
 vpc commit -m "Initial commit"
-
-# Connect to VPSHub
 vpc remote add origin ${serverUrl}/vcs/your-user/your-repo
 vpc push origin main`}
                   </pre>
                   <button
                     onClick={() => copyCommand('quickstart', `vpc init\nvpc add -A\nvpc commit -m "Initial commit"\nvpc remote add origin ${serverUrl}/vcs/your-user/your-repo\nvpc push origin main`)}
-                    className="absolute top-2 right-2 p-1.5 rounded-md bg-white/[0.06] border border-white/[0.08] opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity"
                   >
-                    {copiedCmd === 'quickstart'
-                      ? <Check className="w-3 h-3 text-emerald-400" />
-                      : <Copy className="w-3 h-3 text-muted-foreground" />
-                    }
+                    {copiedCmd === 'quickstart' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground/40" />}
                   </button>
                 </div>
               </div>
@@ -520,46 +775,35 @@ vpc push origin main`}
 
         {activeTab === 'commands' && product.commands && (
           <div className="max-w-3xl">
-            <h3 className="text-sm font-semibold mb-4">Command Reference</h3>
-            <div className="border border-white/[0.06] rounded-xl overflow-hidden">
-              <div className="divide-y divide-white/[0.04]">
-                {product.commands.map((c, i) => (
-                  <div key={i} className="flex items-center gap-4 px-4 py-2.5 hover:bg-white/[0.02] transition-colors group">
-                    <code className="text-[11px] font-mono text-emerald-400 w-[240px] shrink-0">{c.cmd}</code>
-                    <span className="text-[11px] text-muted-foreground flex-1">{c.desc}</span>
-                    <button
-                      onClick={() => copyCommand(`cmd-${i}`, c.cmd)}
-                      className="p-1 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
-                    >
-                      {copiedCmd === `cmd-${i}`
-                        ? <Check className="w-3 h-3 text-emerald-400" />
-                        : <Copy className="w-3 h-3 text-muted-foreground" />
-                      }
-                    </button>
-                  </div>
-                ))}
-              </div>
+            <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+              {product.commands.map((c, i) => (
+                <div key={i} className="flex items-center gap-4 px-4 py-2.5 border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors group">
+                  <code className="text-[11px] font-mono text-emerald-400/80 w-[220px] shrink-0">{c.cmd}</code>
+                  <span className="text-[11px] text-muted-foreground/40 flex-1">{c.desc}</span>
+                  <button
+                    onClick={() => copyCommand(`cmd-${i}`, c.cmd)}
+                    className="p-1 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity"
+                  >
+                    {copiedCmd === `cmd-${i}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}
 
         {activeTab === 'changelog' && (
           <div className="max-w-3xl space-y-6">
-            <h3 className="text-sm font-semibold mb-4">Release History</h3>
             {product.changelog.map((release, i) => (
-              <div key={i} className="border-l-2 border-white/[0.08] pl-4 pb-4">
+              <div key={i}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline" className={`text-[10px] border-${product.accentColor}-500/30 text-${product.accentColor}-400`}>
-                    v{release.version}
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground/40 flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {release.date}
-                  </span>
+                  <span className="text-sm font-semibold">Version {release.version}</span>
+                  <span className="text-[10px] text-muted-foreground/25">{release.date}</span>
                 </div>
-                <ul className="space-y-1">
+                <ul className="space-y-1.5 pl-1">
                   {release.changes.map((change, j) => (
-                    <li key={j} className="text-xs text-muted-foreground flex items-start gap-2">
-                      <span className="text-emerald-500 mt-1.5 shrink-0">+</span>
+                    <li key={j} className="text-xs text-muted-foreground/50 flex items-start gap-2">
+                      <span className="text-emerald-500/50 mt-1 shrink-0">+</span>
                       {change}
                     </li>
                   ))}

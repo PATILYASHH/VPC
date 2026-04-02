@@ -3,7 +3,8 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
+  /* ─── Dark (Default) ─── */
+  :root, .theme-dark {
     --background: 222 47% 11%;
     --foreground: 210 40% 98%;
     --card: 217 33% 14%;
@@ -28,10 +29,32 @@
     --input: 217 33% 22%;
     --ring: 217 91% 60%;
     --radius: 0.5rem;
+    /* Desktop surface colors */
+    --desktop-bg: #0a0e1a;
+    --desktop-gradient-from: #0d1525;
+    --desktop-gradient-via: #0a1020;
+    --desktop-gradient-to: #0f0a20;
+    --surface-0: #0d1117;
+    --surface-1: #161b22;
+    --surface-2: #1c2128;
+    --surface-3: #21262d;
+    --surface-overlay: rgba(255,255,255,0.02);
+    --surface-hover: rgba(255,255,255,0.04);
+    --surface-border: rgba(255,255,255,0.06);
+    --surface-border-active: rgba(255,255,255,0.1);
+    --taskbar-bg: rgba(13,17,23,0.85);
+    --titlebar-bg: rgba(22,27,34,0.95);
+    --titlebar-inactive: rgba(19,23,30,0.9);
+    --window-shadow: rgba(0,0,0,0.5);
+    --text-on-surface: rgba(255,255,255,0.9);
+    --text-subtle: rgba(255,255,255,0.5);
+    --dot-pattern: rgba(255,255,255,0.5);
+    --glow-color: hsl(var(--primary) / 0.04);
   }
 
-  .light {
-    --background: 210 40% 98%;
+  /* ─── Light ─── */
+  .theme-light {
+    --background: 210 20% 98%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
     --card-foreground: 222 47% 11%;
@@ -41,9 +64,9 @@
     --primary-foreground: 0 0% 100%;
     --secondary: 215 16% 47%;
     --secondary-foreground: 0 0% 100%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 210 40% 96%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
     --accent-foreground: 222 47% 11%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
@@ -51,9 +74,174 @@
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 50%;
     --warning-foreground: 222 47% 11%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
     --ring: 217 91% 50%;
+    --desktop-bg: #e8ecf1;
+    --desktop-gradient-from: #dfe4eb;
+    --desktop-gradient-via: #e8ecf1;
+    --desktop-gradient-to: #e4e0f0;
+    --surface-0: #ffffff;
+    --surface-1: #f6f8fa;
+    --surface-2: #f0f2f5;
+    --surface-3: #e8ebef;
+    --surface-overlay: rgba(0,0,0,0.02);
+    --surface-hover: rgba(0,0,0,0.04);
+    --surface-border: rgba(0,0,0,0.08);
+    --surface-border-active: rgba(0,0,0,0.15);
+    --taskbar-bg: rgba(255,255,255,0.85);
+    --titlebar-bg: rgba(246,248,250,0.98);
+    --titlebar-inactive: rgba(240,242,245,0.95);
+    --window-shadow: rgba(0,0,0,0.12);
+    --text-on-surface: rgba(0,0,0,0.87);
+    --text-subtle: rgba(0,0,0,0.5);
+    --dot-pattern: rgba(0,0,0,0.3);
+    --glow-color: hsl(var(--primary) / 0.06);
+  }
+
+  /* ─── Midnight Blue ─── */
+  .theme-midnight {
+    --background: 230 30% 8%;
+    --foreground: 220 20% 95%;
+    --card: 230 25% 12%;
+    --card-foreground: 220 20% 95%;
+    --popover: 230 25% 12%;
+    --popover-foreground: 220 20% 95%;
+    --primary: 210 100% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 15% 50%;
+    --secondary-foreground: 220 20% 95%;
+    --muted: 230 25% 15%;
+    --muted-foreground: 220 15% 60%;
+    --accent: 230 25% 18%;
+    --accent-foreground: 220 20% 95%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 220 20% 95%;
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+    --border: 230 25% 18%;
+    --input: 230 25% 18%;
+    --ring: 210 100% 55%;
+    --desktop-bg: #0b0f1a;
+    --desktop-gradient-from: #0a1228;
+    --desktop-gradient-via: #0b0f1a;
+    --desktop-gradient-to: #0d0a22;
+    --surface-0: #0f1320;
+    --surface-1: #151a2a;
+    --surface-2: #1a2035;
+    --surface-3: #1f263d;
+    --surface-overlay: rgba(100,150,255,0.02);
+    --surface-hover: rgba(100,150,255,0.05);
+    --surface-border: rgba(100,150,255,0.08);
+    --surface-border-active: rgba(100,150,255,0.15);
+    --taskbar-bg: rgba(11,15,26,0.9);
+    --titlebar-bg: rgba(21,26,42,0.95);
+    --titlebar-inactive: rgba(15,19,32,0.9);
+    --window-shadow: rgba(0,0,30,0.5);
+    --text-on-surface: rgba(200,220,255,0.9);
+    --text-subtle: rgba(150,180,220,0.5);
+    --dot-pattern: rgba(100,150,255,0.4);
+    --glow-color: rgba(60,120,255,0.06);
+  }
+
+  /* ─── Sunset ─── */
+  .theme-sunset {
+    --background: 15 25% 10%;
+    --foreground: 30 30% 95%;
+    --card: 15 20% 14%;
+    --card-foreground: 30 30% 95%;
+    --popover: 15 20% 14%;
+    --popover-foreground: 30 30% 95%;
+    --primary: 25 95% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 20 15% 50%;
+    --secondary-foreground: 30 30% 95%;
+    --muted: 15 20% 18%;
+    --muted-foreground: 20 15% 60%;
+    --accent: 15 20% 22%;
+    --accent-foreground: 30 30% 95%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 30 30% 95%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 10%;
+    --border: 15 20% 22%;
+    --input: 15 20% 22%;
+    --ring: 25 95% 55%;
+    --desktop-bg: #1a120d;
+    --desktop-gradient-from: #251510;
+    --desktop-gradient-via: #1a120d;
+    --desktop-gradient-to: #200d18;
+    --surface-0: #1c140f;
+    --surface-1: #261b14;
+    --surface-2: #2e221a;
+    --surface-3: #362920;
+    --surface-overlay: rgba(255,150,50,0.02);
+    --surface-hover: rgba(255,150,50,0.05);
+    --surface-border: rgba(255,150,50,0.08);
+    --surface-border-active: rgba(255,150,50,0.15);
+    --taskbar-bg: rgba(26,18,13,0.9);
+    --titlebar-bg: rgba(38,27,20,0.95);
+    --titlebar-inactive: rgba(28,20,15,0.9);
+    --window-shadow: rgba(20,5,0,0.5);
+    --text-on-surface: rgba(255,230,200,0.9);
+    --text-subtle: rgba(200,160,120,0.5);
+    --dot-pattern: rgba(255,150,50,0.3);
+    --glow-color: rgba(255,120,30,0.05);
+  }
+
+  /* ─── Nord ─── */
+  .theme-nord {
+    --background: 220 16% 16%;
+    --foreground: 219 28% 88%;
+    --card: 220 16% 20%;
+    --card-foreground: 219 28% 88%;
+    --popover: 220 16% 20%;
+    --popover-foreground: 219 28% 88%;
+    --primary: 193 43% 67%;
+    --primary-foreground: 220 16% 16%;
+    --secondary: 210 15% 50%;
+    --secondary-foreground: 219 28% 88%;
+    --muted: 220 16% 24%;
+    --muted-foreground: 219 20% 60%;
+    --accent: 220 16% 26%;
+    --accent-foreground: 219 28% 88%;
+    --destructive: 354 42% 56%;
+    --destructive-foreground: 219 28% 88%;
+    --success: 92 28% 65%;
+    --success-foreground: 220 16% 16%;
+    --warning: 40 71% 73%;
+    --warning-foreground: 220 16% 16%;
+    --border: 220 16% 26%;
+    --input: 220 16% 26%;
+    --ring: 193 43% 67%;
+    --desktop-bg: #2e3440;
+    --desktop-gradient-from: #2e3440;
+    --desktop-gradient-via: #3b4252;
+    --desktop-gradient-to: #2e3440;
+    --surface-0: #2e3440;
+    --surface-1: #3b4252;
+    --surface-2: #434c5e;
+    --surface-3: #4c566a;
+    --surface-overlay: rgba(136,192,208,0.03);
+    --surface-hover: rgba(136,192,208,0.06);
+    --surface-border: rgba(136,192,208,0.1);
+    --surface-border-active: rgba(136,192,208,0.18);
+    --taskbar-bg: rgba(46,52,64,0.92);
+    --titlebar-bg: rgba(59,66,82,0.95);
+    --titlebar-inactive: rgba(46,52,64,0.9);
+    --window-shadow: rgba(0,0,0,0.3);
+    --text-on-surface: rgba(216,222,233,0.9);
+    --text-subtle: rgba(216,222,233,0.5);
+    --dot-pattern: rgba(136,192,208,0.3);
+    --glow-color: rgba(136,192,208,0.04);
+  }
+
+  .light, .theme-light {
+    color-scheme: light;
   }
 }
 
@@ -111,3 +299,58 @@
 .animate-scale-in {
   animation: scale-in 150ms ease-out;
 }
+
+/* Utility classes for theme surfaces */
+.surface-0 { background-color: var(--surface-0); }
+.surface-1 { background-color: var(--surface-1); }
+.surface-2 { background-color: var(--surface-2); }
+.surface-3 { background-color: var(--surface-3); }
+
+/* Light theme: swap white-alpha to black-alpha for visibility */
+.theme-light .border-white\/\[0\.04\],
+.theme-light .border-white\/\[0\.05\],
+.theme-light .border-white\/\[0\.06\],
+.theme-light .border-white\/\[0\.08\],
+.theme-light .border-white\/\[0\.1\],
+.theme-light .border-white\/\[0\.12\] {
+  border-color: rgba(0,0,0,0.1) !important;
+}
+.theme-light .bg-white\/\[0\.02\],
+.theme-light .bg-white\/\[0\.03\],
+.theme-light .bg-white\/\[0\.04\],
+.theme-light .bg-white\/\[0\.05\],
+.theme-light .bg-white\/\[0\.06\] {
+  background-color: rgba(0,0,0,0.03) !important;
+}
+.theme-light .hover\:bg-white\/\[0\.04\]:hover,
+.theme-light .hover\:bg-white\/\[0\.05\]:hover,
+.theme-light .hover\:bg-white\/\[0\.06\]:hover,
+.theme-light .hover\:bg-white\/\[0\.08\]:hover {
+  background-color: rgba(0,0,0,0.06) !important;
+}
+.theme-light .bg-white\/\[0\.08\],
+.theme-light .bg-white\/\[0\.1\],
+.theme-light .bg-white\/\[0\.12\] {
+  background-color: rgba(0,0,0,0.06) !important;
+}
+.theme-light .hover\:bg-white\/\[0\.1\]:hover,
+.theme-light .hover\:bg-white\/\[0\.12\]:hover {
+  background-color: rgba(0,0,0,0.08) !important;
+}
+.theme-light .hover\:border-white\/\[0\.1\]:hover,
+.theme-light .hover\:border-white\/\[0\.12\]:hover {
+  border-color: rgba(0,0,0,0.15) !important;
+}
+.theme-light .ring-white\/\[0\.08\],
+.theme-light .ring-white\/\[0\.1\],
+.theme-light .ring-white\/\[0\.04\],
+.theme-light .ring-white\/\[0\.05\] {
+  --tw-ring-color: rgba(0,0,0,0.1) !important;
+}
+.theme-light .text-foreground\/90 { color: rgba(0,0,0,0.87) !important; }
+.theme-light .text-foreground\/80 { color: rgba(0,0,0,0.8) !important; }
+.theme-light .text-foreground\/70 { color: rgba(0,0,0,0.7) !important; }
+.theme-light .text-foreground\/60 { color: rgba(0,0,0,0.6) !important; }
+.theme-light .text-foreground\/50 { color: rgba(0,0,0,0.5) !important; }
+.theme-light .shadow-2xl { box-shadow: 0 10px 40px rgba(0,0,0,0.12) !important; }
+.theme-light .shadow-xl { box-shadow: 0 6px 20px rgba(0,0,0,0.08) !important; }

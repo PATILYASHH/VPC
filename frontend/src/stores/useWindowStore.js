@@ -1,12 +1,82 @@
 import { create } from 'zustand';
 import APP_REGISTRY from '@/lib/appRegistry';
 
+const STORAGE_KEY = 'vpc-desktop-windows';
+
 let windowCounter = 0;
 
+// Restore saved windows from localStorage
+function loadSavedWindows() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    const data = JSON.parse(saved);
+
+    // Validate that saved apps still exist in registry
+    const windows = {};
+    let maxZ = 10;
+    for (const [id, win] of Object.entries(data.windows || {})) {
+      if (APP_REGISTRY[win.appId]) {
+        windows[id] = win;
+        if (win.zIndex > maxZ) maxZ = win.zIndex;
+        // Update windowCounter to avoid ID collisions
+        const num = parseInt(id.split('-').pop()) || 0;
+        if (num > windowCounter) windowCounter = num;
+      }
+    }
+
+    if (Object.keys(windows).length === 0) return null;
+
+    return {
+      windows,
+      nextZIndex: maxZ + 1,
+      activeWindowId: data.activeWindowId && windows[data.activeWindowId] ? data.activeWindowId : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveWindows(state) {
+  try {
+    const toSave = {};
+    for (const [id, win] of Object.entries(state.windows)) {
+      toSave[id] = {
+        id: win.id,
+        appId: win.appId,
+        title: win.title,
+        x: win.x,
+        y: win.y,
+        width: win.width,
+        height: win.height,
+        minWidth: win.minWidth,
+        minHeight: win.minHeight,
+        isMinimized: win.isMinimized,
+        isMaximized: win.isMaximized,
+        zIndex: win.zIndex,
+        prevBounds: win.prevBounds,
+      };
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      windows: toSave,
+      activeWindowId: state.activeWindowId,
+    }));
+  } catch { /* quota exceeded or private mode */ }
+}
+
+// Debounce saves to avoid thrashing during drag/resize
+let saveTimer = null;
+function debouncedSave(state) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveWindows(state), 300);
+}
+
+const restored = loadSavedWindows();
+
 const useWindowStore = create((set, get) => ({
-  windows: {},
-  nextZIndex: 10,
-  activeWindowId: null,
+  windows: restored?.windows || {},
+  nextZIndex: restored?.nextZIndex || 10,
+  activeWindowId: restored?.activeWindowId || null,
 
   openWindow: (appId) => {
     const state = get();
@@ -159,5 +229,8 @@ const useWindowStore = create((set, get) => ({
     }));
   },
 }));
+
+// Subscribe to state changes and persist
+useWindowStore.subscribe((state) => debouncedSave(state));
 
 export default useWindowStore;

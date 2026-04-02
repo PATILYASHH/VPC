@@ -1133,10 +1133,249 @@ router.get('/downloads/info', (req, res) => {
   });
 });
 
+// ─── Software Upgrade ───────────────────────────────────────
+
+// Check for updates from GitHub
+router.get('/system/upgrade-check', async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    const path = require('path');
+    const rootDir = path.join(__dirname, '..', '..');
+
+    // Get current local commit
+    const localHash = execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+    const localDate = execSync('git log -1 --format=%ci', { cwd: rootDir, encoding: 'utf8' }).trim();
+    const localMsg = execSync('git log -1 --format=%s', { cwd: rootDir, encoding: 'utf8' }).trim();
+    const localBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+
+    // Fetch latest from remote (without merging)
+    try {
+      execSync('git fetch origin --quiet', { cwd: rootDir, timeout: 15000 });
+    } catch (fetchErr) {
+      return res.json({
+        current: { hash: localHash.slice(0, 12), date: localDate, message: localMsg, branch: localBranch },
+        updateAvailable: false,
+        error: 'Could not reach GitHub. Check network connection.',
+      });
+    }
+
+    // Compare local vs remote
+    const remoteHash = execSync(`git rev-parse origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
+    const updateAvailable = localHash !== remoteHash;
+
+    let remoteInfo = {};
+    let behindCount = 0;
+    let newCommits = [];
+
+    if (updateAvailable) {
+      const remoteDate = execSync(`git log -1 --format=%ci origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
+      const remoteMsg = execSync(`git log -1 --format=%s origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
+      behindCount = parseInt(execSync(`git rev-list HEAD..origin/${localBranch} --count`, { cwd: rootDir, encoding: 'utf8' }).trim()) || 0;
+
+      // Get list of new commits (max 20)
+      const logOutput = execSync(`git log HEAD..origin/${localBranch} --format="%h|%s|%ci|%an" -20`, { cwd: rootDir, encoding: 'utf8' }).trim();
+      if (logOutput) {
+        newCommits = logOutput.split('\n').map(line => {
+          const [hash, message, date, author] = line.split('|');
+          return { hash, message, date, author };
+        });
+      }
+
+      remoteInfo = { hash: remoteHash.slice(0, 12), date: remoteDate, message: remoteMsg };
+    }
+
+    // Get repo info
+    let repoUrl = '';
+    try {
+      repoUrl = execSync('git remote get-url origin', { cwd: rootDir, encoding: 'utf8' }).trim();
+    } catch {}
+
+    res.json({
+      current: { hash: localHash.slice(0, 12), date: localDate, message: localMsg, branch: localBranch },
+      remote: updateAvailable ? remoteInfo : null,
+      updateAvailable,
+      behindCount,
+      newCommits,
+      repoUrl,
+      lastChecked: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[VPC] Upgrade check error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Apply upgrade — git pull, npm install, rebuild frontend
+router.post('/system/upgrade-apply', async (req, res) => {
+  try {
+    const { exec } = require('child_process');
+    const path = require('path');
+    const rootDir = path.join(__dirname, '..', '..');
+    const branch = req.body.branch || 'main';
+    const skipRestart = req.body.skipRestart || false;
+
+    res.json({ started: true, message: skipRestart ? 'Upgrade started. Restart manually when ready.' : 'Upgrade started. Server will restart.' });
+
+    const run = (cmd) => new Promise((resolve, reject) => {
+      exec(cmd, { cwd: rootDir, timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) reject(new Error(`${cmd}: ${stderr || err.message}`));
+        else resolve(stdout);
+      });
+    });
+
+    try {
+      console.log('[VPC Upgrade] Step 1: git pull...');
+      await run(`git pull origin ${branch}`);
+
+      console.log('[VPC Upgrade] Step 2: npm install (backend)...');
+      await run('cd backend && npm install --production');
+
+      console.log('[VPC Upgrade] Step 3: npm install (frontend)...');
+      await run('cd frontend && npm install');
+
+      console.log('[VPC Upgrade] Step 4: build frontend...');
+      await run('cd frontend && npx vite build');
+
+      console.log('[VPC Upgrade] Step 5: run migrations...');
+      try {
+        const fs = require('fs');
+        const pool = req.app.locals.pool;
+        const migrationsDir = path.join(rootDir, 'backend', 'migrations');
+        if (fs.existsSync(migrationsDir)) {
+          const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+          for (const file of files) {
+            const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+            try { await pool.query(sql); } catch {}
+          }
+        }
+      } catch (migErr) {
+        console.error('[VPC Upgrade] Migration warning:', migErr.message);
+      }
+
+      if (skipRestart) {
+        console.log('[VPC Upgrade] Complete! Waiting for manual restart.');
+        // Save state so frontend knows upgrade is done but restart pending
+        const pool = req.app.locals.pool;
+        await pool.query(
+          `INSERT INTO vpc_settings (key, value) VALUES ('upgrade_pending_restart', $1)
+           ON CONFLICT (key) DO UPDATE SET value = $1`,
+          [JSON.stringify({ upgraded_at: new Date().toISOString(), branch })]
+        ).catch(() => {});
+      } else {
+        console.log('[VPC Upgrade] Complete! Restarting server...');
+        setTimeout(() => {
+          try { require('child_process').execSync('pm2 restart all', { timeout: 5000 }); }
+          catch { process.exit(0); }
+        }, 1000);
+      }
+    } catch (upgradeErr) {
+      console.error('[VPC Upgrade] Failed:', upgradeErr.message);
+    }
+  } catch (err) {
+    console.error('[VPC] Upgrade apply error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restart server manually
+router.post('/system/restart', async (req, res) => {
+  res.json({ restarting: true });
+  // Clear pending restart flag
+  const pool = req.app.locals.pool;
+  await pool.query("DELETE FROM vpc_settings WHERE key = 'upgrade_pending_restart'").catch(() => {});
+  setTimeout(() => {
+    try { require('child_process').execSync('pm2 restart all', { timeout: 5000 }); }
+    catch { process.exit(0); }
+  }, 500);
+});
+
+// Get/Set auto-upgrade preference
+router.get('/system/auto-upgrade', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'auto_upgrade'");
+    const settings = rows[0]?.value ? JSON.parse(rows[0].value) : { enabled: false };
+
+    // Check if restart is pending
+    const { rows: pendingRows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'upgrade_pending_restart'");
+    settings.pendingRestart = !!pendingRows[0];
+    if (pendingRows[0]?.value) {
+      try { settings.pendingRestartInfo = JSON.parse(pendingRows[0].value); } catch {}
+    }
+
+    res.json(settings);
+  } catch (err) {
+    res.json({ enabled: false });
+  }
+});
+
+router.post('/system/auto-upgrade', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { enabled } = req.body;
+    const value = JSON.stringify({ enabled: !!enabled, updatedAt: new Date().toISOString() });
+    await pool.query(
+      `INSERT INTO vpc_settings (key, value) VALUES ('auto_upgrade', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1`,
+      [value]
+    );
+    res.json({ enabled: !!enabled });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Merge Check ────────────────────────────────────────────
+
+const vcsMerge = require('../services/vpcVcsMerge');
+const vcsCore = require('../services/vpcVcsCore');
+
+// Check if a PR can merge cleanly (dry run)
+router.get('/repos/:owner/:repo/pulls/:number/merge-check', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const repo = await loadRepo(pool, req.params.owner, req.params.repo);
+    if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+    const pr = await prService.getPullRequest(pool, repo.id, parseInt(req.params.number));
+    if (!pr) return res.status(404).json({ error: 'Pull request not found' });
+
+    const repoPath = gitService.getRepoPath(repo.owner_username, repo.slug);
+    const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.source_branch}`);
+    const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.target_branch}`);
+
+    if (!sourceHash || !targetHash) {
+      return res.json({ mergeable: false, conflicts: [], error: 'Branch not found' });
+    }
+
+    // Dry-run merge — mergeCommits returns { success: false, conflicts } without writing when conflicts exist
+    const result = vcsMerge.mergeCommits(repoPath, {
+      ours: targetHash, theirs: sourceHash,
+      authorName: 'check', authorEmail: 'check@vpshub',
+      message: 'merge-check',
+    });
+
+    if (result.success) {
+      return res.json({ mergeable: true, conflicts: [] });
+    }
+
+    res.json({
+      mergeable: false,
+      conflicts: result.conflicts.map(c => ({
+        path: c.path,
+        type: c.type,
+        conflictCount: c.conflictCount || 1,
+      })),
+    });
+  } catch (err) {
+    console.error('[VPSHub] Merge check error:', err.message);
+    res.status(500).json({ error: 'Failed to check merge status' });
+  }
+});
+
 // ─── AI Code Review & Agent ──────────────────────────────────
 
 const aiReviewService = require('../services/aiReviewService');
-const vcsCore = require('../services/vpcVcsCore');
 
 // AI Review a code PR
 router.post('/repos/:owner/:repo/pulls/:number/ai-review', async (req, res) => {
@@ -1149,8 +1388,8 @@ router.post('/repos/:owner/:repo/pulls/:number/ai-review', async (req, res) => {
     const pr = await prService.getPullRequest(pool, repoInfo.id, parseInt(number));
     if (!pr) return res.status(404).json({ error: 'PR not found' });
 
-    const diff = await prService.getPrDiff(pool, repoInfo.id, owner, repo, pr.source_branch, pr.target_branch);
-    const files = await prService.getPrFiles(pool, repoInfo.id, owner, repo, pr.source_branch, pr.target_branch);
+    const diff = await prService.getPrDiff(owner, repo, pr.source_branch, pr.target_branch);
+    const files = await prService.getPrFiles(owner, repo, pr.source_branch, pr.target_branch);
     const fileList = files.map(f => f.path);
 
     const result = await aiReviewService.reviewCode(diff, fileList, {
@@ -1171,7 +1410,7 @@ router.post('/repos/:owner/:repo/pulls/:number/ai-review', async (req, res) => {
       }${review.review_notes || ''}`;
 
       await prService.addComment(pool, {
-        prId: pr.id, authorId: req.user?.id || repoInfo.owner_id, body,
+        repoId: repoInfo.id, prId: pr.id, authorId: req.admin.id, body,
       });
     }
 
@@ -1194,7 +1433,6 @@ router.post('/repos/:owner/:repo/pulls/:number/ai-resolve', async (req, res) => 
     if (!pr) return res.status(404).json({ error: 'PR not found' });
 
     const repoPath = gitService.getRepoPath(owner, repo);
-    const vcsMerge = require('../services/vpcVcsMerge');
 
     // Attempt merge to get conflicts
     const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.source_branch}`);
@@ -1221,6 +1459,106 @@ router.post('/repos/:owner/:repo/pulls/:number/ai-resolve', async (req, res) => 
     res.json({ resolved: false, conflicts: mergeResult.conflicts.length, resolutions });
   } catch (err) {
     console.error('[VPSHub] AI resolve error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// VPAI: Auto-resolve conflicts and apply to source branch
+router.post('/repos/:owner/:repo/pulls/:number/ai-auto-resolve', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { owner, repo, number } = req.params;
+    const repoInfo = await gitService.getRepositoryBySlug(pool, owner, repo);
+    if (!repoInfo) return res.status(404).json({ error: 'Repository not found' });
+
+    const pr = await prService.getPullRequest(pool, repoInfo.id, parseInt(number));
+    if (!pr) return res.status(404).json({ error: 'PR not found' });
+    if (pr.status !== 'open') return res.status(400).json({ error: 'PR is not open' });
+
+    const repoPath = gitService.getRepoPath(owner, repo);
+
+    // Get conflicts via dry-run merge
+    const sourceHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.source_branch}`);
+    const targetHash = vcsCore.resolveRef(repoPath, `refs/heads/${pr.target_branch}`);
+    if (!sourceHash || !targetHash) return res.status(400).json({ error: 'Branch not found' });
+
+    const mergeResult = vcsMerge.mergeCommits(repoPath, {
+      ours: targetHash, theirs: sourceHash,
+      authorName: 'VPAI', authorEmail: 'vpai@vpshub',
+      message: 'check',
+    });
+
+    if (mergeResult.success) {
+      return res.json({ resolved: true, message: 'No conflicts — PR is clean', resolutions: [] });
+    }
+
+    // Resolve each conflict with AI
+    const resolutions = [];
+    const resolvedFiles = [];
+    const { approved = [] } = req.body; // Optional: list of file paths user approved
+
+    for (const conflict of mergeResult.conflicts) {
+      // Skip files not in approved list (if provided)
+      if (approved.length > 0 && !approved.includes(conflict.path)) {
+        resolutions.push({ path: conflict.path, skipped: true, reason: 'Not approved' });
+        continue;
+      }
+
+      try {
+        const result = await aiReviewService.resolveConflicts(conflict.content, conflict.path, { pool });
+        if (result.error) {
+          resolutions.push({ path: conflict.path, skipped: true, reason: result.error });
+          continue;
+        }
+
+        const resolution = result.resolution || result;
+        resolutions.push({
+          path: conflict.path,
+          applied: true,
+          strategy: resolution.strategy || 'AI merged both sides',
+          confidence: resolution.confidence || 'medium',
+          plain_summary: resolution.plain_summary || resolution.strategy || '',
+        });
+        resolvedFiles.push({
+          path: conflict.path,
+          content: resolution.resolved_content,
+        });
+      } catch (aiErr) {
+        resolutions.push({ path: conflict.path, skipped: true, reason: aiErr.message });
+      }
+    }
+
+    // Apply resolved files to source branch
+    if (resolvedFiles.length > 0) {
+      await prService.applyResolvedFiles(pool, {
+        repoId: repoInfo.id,
+        repoPath,
+        sourceBranch: pr.source_branch,
+        resolvedFiles,
+        authorName: 'VPAI',
+      });
+
+      // Add summary comment to PR
+      const summary = resolutions
+        .filter(r => r.applied)
+        .map(r => `- **${r.path}**: ${r.plain_summary || r.strategy}`)
+        .join('\n');
+
+      await prService.addComment(pool, {
+        repoId: repoInfo.id, prId: pr.id, authorId: req.admin.id,
+        body: `## VPAI Auto-Resolution\n\nResolved ${resolvedFiles.length} conflict(s):\n\n${summary}\n\n*Review the changes and merge when ready.*`,
+      });
+    }
+
+    res.json({
+      resolved: resolvedFiles.length === mergeResult.conflicts.length,
+      total_conflicts: mergeResult.conflicts.length,
+      applied: resolvedFiles.length,
+      skipped: mergeResult.conflicts.length - resolvedFiles.length,
+      resolutions,
+    });
+  } catch (err) {
+    console.error('[VPSHub] VPAI auto-resolve error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

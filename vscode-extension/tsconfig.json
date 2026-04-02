@@ -13,5 +13,14 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "out"]
+  "exclude": [
+    "node_modules",
+    "out",
+    "src/commands/hosting.ts",
+    "src/commands/issues.ts",
+    "src/views/codePRsProvider.ts",
+    "src/views/dashboardProvider.ts",
+    "src/views/hostingProvider.ts",
+    "src/views/issuesProvider.ts"
+  ]
 }

@@ -14,9 +14,11 @@ export default function WindowTitleBar({ windowId, isActive }) {
 
   return (
     <div
-      className={`window-drag-handle h-10 flex items-center justify-between px-3 select-none cursor-default border-b transition-colors ${
-        isActive ? 'bg-[#161b22] border-white/[0.06]' : 'bg-[#13171e] border-white/[0.04]'
-      }`}
+      className="window-drag-handle h-10 flex items-center justify-between px-3 select-none cursor-default border-b transition-colors duration-150"
+      style={{
+        background: isActive ? 'var(--titlebar-bg)' : 'var(--titlebar-inactive)',
+        borderColor: isActive ? 'var(--surface-border-active)' : 'var(--surface-border)',
+      }}
     >
       <div className="flex items-center gap-2 min-w-0">
         {Icon && <Icon className={`w-3.5 h-3.5 shrink-0 ${isActive ? (appDef.iconColor || 'text-muted-foreground') : 'text-muted-foreground/60'}`} />}

@@ -272,6 +272,59 @@ async function updateComment(pool, commentId, userId, body) {
   return rows[0] || null;
 }
 
+// ─── Apply AI-resolved files to source branch ───────────────
+
+async function applyResolvedFiles(pool, { repoId, repoPath, sourceBranch, resolvedFiles, authorName }) {
+  const sourceRef = `refs/heads/${sourceBranch}`;
+  const sourceHash = vcsCore.resolveRef(repoPath, sourceRef);
+  if (!sourceHash) throw new Error(`Branch '${sourceBranch}' not found`);
+
+  // Read current commit and its tree
+  const commit = vcsCore.readCommit(repoPath, sourceHash);
+  const currentFiles = vcsCore.walkTree(repoPath, commit.tree);
+
+  // Build new file list with resolved content replacing conflicted files
+  const resolvedMap = new Map(resolvedFiles.map(f => [f.path, f.content]));
+  const newFiles = [];
+
+  for (const file of currentFiles) {
+    if (resolvedMap.has(file.path)) {
+      // Replace with AI-resolved content
+      const content = resolvedMap.get(file.path);
+      const newHash = vcsCore.createBlob(repoPath, content);
+      newFiles.push({ path: file.path, hash: newHash, mode: file.mode || '100644' });
+      resolvedMap.delete(file.path);
+    } else {
+      newFiles.push(file);
+    }
+  }
+
+  // Add any new files from resolutions that weren't in the tree
+  for (const [path, content] of resolvedMap) {
+    const newHash = vcsCore.createBlob(repoPath, content);
+    newFiles.push({ path, hash: newHash, mode: '100644' });
+  }
+
+  // Build new tree and commit
+  const newTreeHash = vcsCore.buildTreeFromFiles(repoPath, newFiles);
+  const newCommitHash = vcsCore.createCommit(repoPath, {
+    tree: newTreeHash,
+    parents: [sourceHash],
+    authorName: authorName || 'VPAI',
+    authorEmail: `${(authorName || 'vpai').toLowerCase().replace(/\s/g, '')}@vpshub`,
+    message: `VPAI: Auto-resolve ${resolvedFiles.length} conflict(s)`,
+  });
+
+  // Update source branch ref
+  vcsCore.updateRef(repoPath, sourceRef, newCommitHash);
+
+  // Sync to DB
+  await vcsCore.syncRefsToDb(pool, repoId, repoPath);
+  await vcsCore.syncCommitsToDb(pool, repoId, repoPath, newCommitHash);
+
+  return { commitHash: newCommitHash };
+}
+
 module.exports = {
   createPullRequest,
   listPullRequests,
@@ -288,4 +341,5 @@ module.exports = {
   getComments,
   deleteComment,
   updateComment,
+  applyResolvedFiles,
 };

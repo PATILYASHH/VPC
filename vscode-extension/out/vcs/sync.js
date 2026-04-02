@@ -43,6 +43,7 @@ exports.cloneRepo = cloneRepo;
 exports.getSyncStatus = getSyncStatus;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const vscode = __importStar(require("vscode"));
 const objects = __importStar(require("./objects"));
 const refs = __importStar(require("./refs"));
 const index = __importStar(require("./index"));
@@ -76,8 +77,8 @@ function setRemoteConfig(root, url, username, token) {
     config.remotes.origin = { url, username, token };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
-// ─── Push ────────────────────────────────────────────────────
-async function push(root, client, branchName) {
+// ─── Push (always creates PR — no direct merge) ─────────────
+async function push(root, client, branchName, prTitle) {
     const remote = getRemoteConfig(root);
     if (!remote) {
         return { success: false, message: 'No remote configured' };
@@ -114,16 +115,81 @@ async function push(root, client, branchName) {
             catch { /* skip */ }
         }
     }
-    // Push to server
+    // Push to a PR branch (never directly to the target branch)
+    const timestamp = Date.now().toString(36);
+    const prBranch = `pr/${remote.username}/${branch}-${timestamp}`;
+    const prRefName = `refs/heads/${prBranch}`;
     const result = await client.vcsPush(remote.url, remote.username, remote.token, toSend, {
-        [`refs/heads/${branch}`]: localHash,
+        [prRefName]: { old: '', new: localHash },
     });
     if (!result.ok) {
-        return { success: false, message: 'Push failed' };
+        return { success: false, message: result.error || 'Push failed' };
     }
-    // Update remote tracking ref
-    refs.updateRef(root, `refs/remotes/origin/${branch}`, localHash);
-    return { success: true, message: `Pushed ${toSend.length} object(s)`, objectCount: toSend.length, newHash: localHash };
+    // Update tracking ref for the PR branch
+    refs.updateRef(root, `refs/remotes/origin/${prBranch}`, localHash);
+    // Create PR via admin API
+    const config = getVscodeConfig();
+    if (!config.serverUrl || !config.token) {
+        return { success: true, message: `Pushed to ${prBranch}. Configure VPSHub token to auto-create PR.`, objectCount: toSend.length };
+    }
+    // Get last commit message for PR title
+    let title = prTitle || '';
+    if (!title) {
+        try {
+            const commit = objects.readCommit(root, localHash);
+            title = commit.message.split('\n')[0] || `Push to ${branch}`;
+        }
+        catch {
+            title = `Push to ${branch}`;
+        }
+    }
+    try {
+        const pr = await client.vpshubCreatePR(config.serverUrl, config.token, config.owner, config.repo, title, `Pushed from VS Code.\n\nBranch: \`${prBranch}\` → \`${branch}\``, prBranch, branch);
+        const prNum = pr.pr?.pr_number || pr.pr_number || '?';
+        // Check if PR has merge conflicts
+        let hasConflicts = false;
+        let conflictFiles = [];
+        if (typeof prNum === 'number') {
+            try {
+                const mergeCheck = await client.vpshubCheckMerge(config.serverUrl, config.token, config.owner, config.repo, prNum);
+                if (!mergeCheck.mergeable && mergeCheck.conflicts?.length > 0) {
+                    hasConflicts = true;
+                    conflictFiles = mergeCheck.conflicts.map((c) => c.path);
+                }
+            }
+            catch { /* merge check is best-effort */ }
+        }
+        const conflictMsg = hasConflicts
+            ? ` (${conflictFiles.length} conflict${conflictFiles.length > 1 ? 's' : ''} — VPAI can resolve)`
+            : '';
+        return {
+            success: true,
+            message: `PR #${prNum} created: ${prBranch} → ${branch}${conflictMsg}`,
+            objectCount: toSend.length,
+            newHash: localHash,
+            prNumber: typeof prNum === 'number' ? prNum : undefined,
+            hasConflicts,
+            conflictFiles,
+        };
+    }
+    catch (prErr) {
+        return {
+            success: true,
+            message: `Pushed to ${prBranch} but PR creation failed: ${prErr.message}`,
+            objectCount: toSend.length,
+        };
+    }
+}
+function getVscodeConfig() {
+    const config = vscode.workspace.getConfiguration('vpcSync');
+    const repository = config.get('repository') || '';
+    const [owner, repo] = repository.includes('/') ? repository.split('/') : ['', ''];
+    return {
+        serverUrl: config.get('serverUrl') || '',
+        token: config.get('token') || '',
+        owner,
+        repo,
+    };
 }
 // ─── Pull ────────────────────────────────────────────────────
 async function pull(root, client, branchName) {

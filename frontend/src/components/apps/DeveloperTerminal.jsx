@@ -88,7 +88,7 @@ export default function DeveloperTerminal() {
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#0d1117] text-[#c9d1d9]" onClick={() => inputRef.current?.focus()}>
+    <div className="h-full flex flex-col surface-0 text-[#c9d1d9]" onClick={() => inputRef.current?.focus()}>
       {/* Output */}
       <div ref={outputRef} className="flex-1 overflow-auto p-3 font-mono text-xs space-y-1">
         {history.map((entry, i) => (

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, GitPullRequest, GitMerge, X, MessageSquare, FileCode, GitCommit, Send, Zap, Wand2 } from 'lucide-react';
+import { ArrowLeft, GitPullRequest, GitMerge, X, MessageSquare, FileCode, GitCommit, Send, Zap, Sparkles, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import api from '@/lib/api';
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
+import VPAIResolver from './VPAIResolver';
 
 function timeAgo(date) {
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -29,6 +30,8 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
   const [aiReviewing, setAiReviewing] = useState(false);
   const [aiResolving, setAiResolving] = useState(false);
   const [mergeError, setMergeError] = useState(null);
+  const [mergeCheck, setMergeCheck] = useState(null);
+  const [showVPAI, setShowVPAI] = useState(false);
 
   useEffect(() => { loadPR(); }, [prNumber]);
 
@@ -45,6 +48,14 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
       setFiles(diffRes.data.files);
       setCommits(diffRes.data.commits);
       setComments(commentsRes.data.comments);
+
+      // Check merge status for open PRs
+      if (prRes.data.pull?.status === 'open') {
+        try {
+          const { data } = await api.get(`/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge-check`);
+          setMergeCheck(data);
+        } catch { /* ignore */ }
+      }
     } catch (err) {
       toast.error('Failed to load pull request');
     } finally {
@@ -129,7 +140,7 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
   }
 
   async function handleAddComment(e) {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     if (!newComment.trim()) return;
     try {
       const { data } = await api.post(`/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/comments`, {
@@ -209,6 +220,72 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
       {/* Tab content */}
       {tab === 'conversation' && (
         <div className="space-y-4">
+          {/* Merge status banner */}
+          {pr.status === 'open' && mergeCheck && (
+            mergeCheck.mergeable ? (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-green-500/8 border border-green-500/20">
+                <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-green-400">Ready to merge</div>
+                  <div className="text-xs text-green-500/70">No conflicts detected. This PR can be merged cleanly.</div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 overflow-hidden">
+                <div className="flex items-center gap-3 p-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-amber-400">
+                      {mergeCheck.conflicts?.length || 0} conflict{(mergeCheck.conflicts?.length || 0) !== 1 ? 's' : ''} detected
+                    </div>
+                    <div className="text-xs text-amber-500/70">
+                      These files have conflicting changes that need to be resolved before merging.
+                    </div>
+                    {mergeCheck.conflicts?.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {mergeCheck.conflicts.map(c => (
+                          <span key={c.path} className="inline-flex items-center px-2 py-0.5 text-xs font-mono bg-amber-500/10 text-amber-400 rounded border border-amber-500/20">
+                            {c.path}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => setShowVPAI(true)}
+                    className="bg-violet-600 hover:bg-violet-700 shrink-0"
+                  >
+                    <Sparkles className="w-4 h-4 mr-1.5" /> Let VPAI Resolve
+                  </Button>
+                </div>
+              </div>
+            )
+          )}
+
+          {/* VPAI Resolver panel */}
+          {showVPAI && mergeCheck && !mergeCheck.mergeable && (
+            <VPAIResolver
+              owner={owner}
+              repo={repo}
+              prNumber={prNumber}
+              conflicts={mergeCheck.conflicts || []}
+              onResolved={() => {
+                setShowVPAI(false);
+                loadPR();
+              }}
+              onClose={() => setShowVPAI(false)}
+            />
+          )}
+
+          {/* Merge error */}
+          {mergeError && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/8 border border-red-500/20 text-sm text-red-400">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              {mergeError}
+            </div>
+          )}
+
           {/* PR description */}
           {pr.description && (
             <div className="border rounded-lg p-4 bg-card">
@@ -245,43 +322,48 @@ export default function CodePRDetail({ owner, repo, prNumber, onBack }) {
             </div>
           )}
 
-          {/* Add comment */}
-          <form onSubmit={handleAddComment} className="border rounded-lg p-3 bg-card">
-            <textarea
-              className="w-full min-h-[80px] px-3 py-2 text-sm bg-background border rounded-md resize-y focus:outline-none focus:ring-1 focus:ring-primary mb-2"
-              placeholder="Leave a comment..."
-              value={newComment}
-              onChange={e => setNewComment(e.target.value)}
-            />
-            <div className="flex items-center justify-between">
-              <div className="flex gap-2 flex-wrap">
-                {pr.status === 'open' && (
-                  <>
-                    <Button size="sm" onClick={handleAiReview} disabled={aiReviewing} variant="outline" className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10">
-                      <Zap className="w-4 h-4 mr-1" /> {aiReviewing ? 'Reviewing...' : 'AI Review'}
-                    </Button>
-                    {mergeError && mergeError.includes('conflict') && (
-                      <Button size="sm" onClick={handleAiResolve} disabled={aiResolving} variant="outline" className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10">
-                        <Wand2 className="w-4 h-4 mr-1" /> {aiResolving ? 'Resolving...' : 'AI Resolve'}
-                      </Button>
-                    )}
+          {/* Actions */}
+          {pr.status === 'open' && (
+            <div className="border rounded-lg p-4 bg-card space-y-3">
+              {/* Comment input */}
+              <textarea
+                className="w-full min-h-[70px] px-3 py-2 text-sm bg-background border rounded-md resize-y focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="Leave a comment..."
+                value={newComment}
+                onChange={e => setNewComment(e.target.value)}
+              />
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" onClick={handleAiReview} disabled={aiReviewing} variant="outline" className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10">
+                    <Zap className="w-4 h-4 mr-1" /> {aiReviewing ? 'Reviewing...' : 'AI Review'}
+                  </Button>
+                  {mergeCheck?.mergeable !== false ? (
                     <Button size="sm" onClick={handleMerge} disabled={merging} className="bg-purple-600 hover:bg-purple-700">
                       <GitMerge className="w-4 h-4 mr-1" /> {merging ? 'Merging...' : 'Merge'}
                     </Button>
-                    <Button size="sm" variant="outline" onClick={handleClose}>
-                      <X className="w-4 h-4 mr-1" /> Close
+                  ) : (
+                    <Button size="sm" onClick={() => setShowVPAI(true)} className="bg-violet-600 hover:bg-violet-700">
+                      <Sparkles className="w-4 h-4 mr-1" /> VPAI Resolve
                     </Button>
-                  </>
-                )}
-                {pr.status === 'closed' && (
-                  <Button size="sm" variant="outline" onClick={handleReopen}>Reopen</Button>
-                )}
+                  )}
+                  <Button size="sm" variant="outline" onClick={handleClose}>
+                    <X className="w-4 h-4 mr-1" /> Close
+                  </Button>
+                </div>
+                <Button size="sm" onClick={handleAddComment} disabled={!newComment.trim()}>
+                  <Send className="w-4 h-4 mr-1" /> Comment
+                </Button>
               </div>
-              <Button type="submit" size="sm" disabled={!newComment.trim()}>
-                <Send className="w-4 h-4 mr-1" /> Comment
-              </Button>
             </div>
-          </form>
+          )}
+
+          {pr.status === 'closed' && (
+            <div className="border rounded-lg p-3 bg-card">
+              <Button size="sm" variant="outline" onClick={handleReopen}>Reopen</Button>
+            </div>
+          )}
         </div>
       )}
 

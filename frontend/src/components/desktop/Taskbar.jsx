@@ -32,7 +32,7 @@ export default function Taskbar() {
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-12 z-[9999] bg-[#0d1117]/90 backdrop-blur-xl border-t border-white/[0.06] flex items-center px-2 gap-1">
+    <div className="fixed bottom-0 left-0 right-0 h-11 z-[9999] backdrop-blur-2xl border-t flex items-center px-2 gap-1" style={{ background: 'var(--taskbar-bg)', borderColor: 'var(--surface-border-active)' }}>
       {/* VPC launcher button */}
       <button
         onClick={toggleLauncher}
@@ -86,7 +86,10 @@ export default function Taskbar() {
       {/* Right: admin info + clock + logout */}
       <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
         <span className="font-medium text-foreground/70">{admin?.username}</span>
-        <span className="font-mono text-[11px] text-foreground/50">{format(time, 'HH:mm')}</span>
+        <div className="text-right">
+          <div className="font-mono text-[11px] text-foreground/60 leading-none">{format(time, 'HH:mm')}</div>
+          <div className="font-mono text-[9px] text-foreground/30 leading-none mt-0.5">{format(time, 'dd MMM')}</div>
+        </div>
         <button
           onClick={logout}
           className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-red-500/10 hover:text-red-400 transition-colors"

@@ -38,6 +38,8 @@ const useAuthStore = create((set, get) => ({
 
   logout: () => {
     localStorage.removeItem('vpc-token');
+    localStorage.removeItem('vpc-desktop-windows');
+    localStorage.removeItem('vpc-desktop-prefs');
     set({ admin: null, token: null, isAuthenticated: false });
   },
 

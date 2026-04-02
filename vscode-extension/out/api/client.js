@@ -222,6 +222,44 @@ class SyncApiClient {
             body: JSON.stringify(body),
         });
     }
+    // ─── VPSHub PR APIs (Admin API) ──────────────────────────────
+    async vpshubCreatePR(baseUrl, token, owner, repo, title, description, sourceBranch, targetBranch) {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls`, {
+            method: 'POST',
+            headers: this.vpshubHeaders(token),
+            body: JSON.stringify({ title, description, source_branch: sourceBranch, target_branch: targetBranch }),
+        });
+    }
+    async vpshubGetPRs(baseUrl, token, owner, repo, status) {
+        const qs = status ? `?status=${status}` : '';
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls${qs}`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubGetPRDiff(baseUrl, token, owner, repo, prNumber) {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/diff`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubMergePR(baseUrl, token, owner, repo, prNumber) {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge`, {
+            method: 'POST',
+            headers: this.vpshubHeaders(token),
+            body: '{}',
+        });
+    }
+    async vpshubCheckMerge(baseUrl, token, owner, repo, prNumber) {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/merge-check`, {
+            headers: this.vpshubHeaders(token),
+        });
+    }
+    async vpshubCommentOnPR(baseUrl, token, owner, repo, prNumber, body) {
+        return request(`${baseUrl}/api/admin/vpshub/repos/${owner}/${repo}/pulls/${prNumber}/comments`, {
+            method: 'POST',
+            headers: this.vpshubHeaders(token),
+            body: JSON.stringify({ body }),
+        });
+    }
     // Legacy pull endpoints (backward compat)
     async fetchMigration(url, key) {
         return request(`${url}/pull/migration`, {

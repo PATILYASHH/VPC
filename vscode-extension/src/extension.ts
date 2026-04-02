@@ -211,15 +211,53 @@ async function doCommit() {
   updateStatusBar();
 }
 
-// ─── Push ────────────────────────────────────────────────
+// ─── Push (creates PR) ──────────────────────────────────
 
 async function doPush() {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!root) return;
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Pushing...' }, async () => {
+
+  // Get PR title from user
+  const title = await vscode.window.showInputBox({
+    prompt: 'PR title (what does this change do?)',
+    placeHolder: 'e.g. Fix login button styling',
+  });
+  if (!title) return; // user cancelled
+
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Creating PR...' }, async () => {
     try {
-      const r = await sync.push(root, client);
-      vscode.window.showInformationMessage(r.message);
+      const r = await sync.push(root, client, undefined, title);
+      if (r.prNumber) {
+        if (r.hasConflicts && r.conflictFiles && r.conflictFiles.length > 0) {
+          // Show conflict-aware notification with option to open PR for VPAI resolution
+          vscode.window.showWarningMessage(
+            `PR #${r.prNumber} created with ${r.conflictFiles.length} conflict(s). Open in VPSHub to let VPAI resolve them.`,
+            'Open PR', 'Dismiss'
+          ).then(action => {
+            if (action === 'Open PR') {
+              const config = vscode.workspace.getConfiguration('vpcSync');
+              const serverUrl = config.get<string>('serverUrl') || '';
+              const repository = config.get<string>('repository') || '';
+              if (serverUrl && repository) {
+                vscode.env.openExternal(vscode.Uri.parse(`${serverUrl}/#/vpshub/${repository}/pulls/${r.prNumber}`));
+              }
+            }
+          });
+        } else {
+          vscode.window.showInformationMessage(r.message, 'View PR').then(action => {
+            if (action === 'View PR') {
+              const config = vscode.workspace.getConfiguration('vpcSync');
+              const serverUrl = config.get<string>('serverUrl') || '';
+              const repository = config.get<string>('repository') || '';
+              if (serverUrl && repository) {
+                vscode.env.openExternal(vscode.Uri.parse(`${serverUrl}/#/vpshub/${repository}/pulls/${r.prNumber}`));
+              }
+            }
+          });
+        }
+      } else {
+        vscode.window.showInformationMessage(r.message);
+      }
     } catch (e: any) { vscode.window.showErrorMessage(`Push: ${e.message}`); }
     scmProvider?.refresh();
     updateStatusBar();

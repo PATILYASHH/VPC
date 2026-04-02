@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { GitPullRequest, Plus, MessageSquare, GitMerge, X, Check } from 'lucide-react';
+import { GitPullRequest, Plus, MessageSquare, GitMerge, X, Check, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import api from '@/lib/api';
@@ -191,6 +191,11 @@ export default function CodePullRequests({ owner, repo, branches, onSelectPR }) 
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm truncate">{pr.title}</span>
                   <StatusBadge status={pr.status} />
+                  {pr.status === 'open' && pr.description?.includes('conflict') && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30" title="VPAI can resolve conflicts">
+                      <Sparkles className="w-2.5 h-2.5" /> Conflicts
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
                   #{pr.pr_number} opened {timeAgo(pr.created_at)} by {pr.author_username}
