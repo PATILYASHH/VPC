@@ -74,8 +74,8 @@ const PRODUCTS = [
     iconBg: 'bg-blue-500/10',
     accentColor: 'blue',
     accentGradient: 'from-blue-600/20 to-indigo-600/10',
-    version: '7.0.0',
-    size: '56 KB',
+    version: '7.1.0',
+    size: '57 KB',
     downloadUrl: '/downloads/vpc-sync.vsix',
     filename: 'vpc-sync.vsix',
     featured: true,
@@ -97,6 +97,7 @@ const PRODUCTS = [
       { title: 'Connect', code: null, text: 'Click the VPC Sync icon in the sidebar. Enter your server URL, username, and token.' },
     ],
     changelog: [
+      { version: '7.1.0', date: '2026-04-02', changes: ['Commit from sidebar panel (Stage All & Commit)', 'Step-by-step workflow UI', 'Fix: PR creation field name mismatch'] },
       { version: '7.0.0', date: '2026-04-01', changes: ['Push always creates PR (no direct merge)', 'VPAI conflict detection after push', 'Conflict notification with "Open PR" button', 'Merge-check integration'] },
       { version: '6.3.0', date: '2026-03-29', changes: ['Connection form with repo selector', 'Connected view with branch, Push/Pull, sync status'] },
     ],
@@ -139,6 +140,9 @@ export default function VpcStore() {
               <p className="text-xs text-muted-foreground/50 mt-0.5">Tools, extensions & system updates</p>
             </div>
             <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
+                VPC OS v2.0.0
+              </Badge>
               <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
                 {PRODUCTS.length} apps
               </Badge>
@@ -389,58 +393,89 @@ function SoftwareUpgrade() {
       hasUpdate ? 'border-violet-500/20 bg-gradient-to-r from-violet-500/8 via-[#12161f] to-indigo-500/8' :
       'border-white/[0.06] surface-1'
     }`}>
-      {/* Main row */}
-      <div className="p-4 flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-          pendingRestart ? 'bg-amber-500/15' : hasUpdate ? 'bg-violet-500/15' : 'bg-white/[0.04]'
-        }`}>
-          {upgrading ? <Loader2 className="w-6 h-6 text-violet-400 animate-spin" /> :
-           restarting ? <Loader2 className="w-6 h-6 text-amber-400 animate-spin" /> :
-           pendingRestart ? <RefreshCw className="w-6 h-6 text-amber-400" /> :
-           hasUpdate ? <ArrowUpCircle className="w-6 h-6 text-violet-400" /> :
-           <CheckCircle2 className="w-6 h-6 text-emerald-500/70" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold">Software Update</span>
-            {pendingRestart && <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px]">RESTART NEEDED</Badge>}
-            {!pendingRestart && hasUpdate && <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-[9px]">NEW</Badge>}
-          </div>
-          <p className="text-[11px] text-muted-foreground/50 mt-0.5">
-            {restarting ? 'Restarting server...' :
-             upgrading ? 'Downloading & installing update...' :
-             pendingRestart ? 'Upgrade installed. Restart to apply changes.' :
-             hasUpdate ? `${status.behindCount} update${status.behindCount !== 1 ? 's' : ''} available` :
-             status?.error && !status?.current ? status.error :
-             status ? 'VPC is up to date' : 'Checking...'}
-          </p>
-          {status?.current && !pendingRestart && (
-            <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground/30">
-              <span className="font-mono">{status.current.hash}</span>
-              <span>{status.current.branch}</span>
+      {/* Pending restart — prominent banner */}
+      {pendingRestart && !restarting && (
+        <div className="p-4 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 flex items-center justify-center shrink-0">
+              <RefreshCw className="w-6 h-6 text-amber-400" />
             </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {pendingRestart && !restarting && (
-            <Button size="sm" onClick={restartServer} className="bg-amber-600 hover:bg-amber-700 text-xs h-8 px-4">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Restart
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold">Upgrade Ready</span>
+                <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-[9px]">RESTART TO APPLY</Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground/50 mt-0.5">
+                New version has been downloaded and installed. Restart VPC to make it live.
+              </p>
+            </div>
+            <Button onClick={restartServer} className="bg-amber-600 hover:bg-amber-500 text-white shrink-0 h-10 px-6">
+              <RefreshCw className="w-4 h-4 mr-2" /> Restart VPC
             </Button>
-          )}
-          {hasUpdate && !upgrading && !pendingRestart && (
-            <Button size="sm" onClick={applyUpgrade} className="bg-violet-600 hover:bg-violet-700 text-xs h-8 px-4">
-              Update
-            </Button>
-          )}
-          <button
-            onClick={checkForUpdates}
-            disabled={checking || upgrading || restarting}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-muted-foreground hover:bg-white/[0.06] transition-colors disabled:opacity-30"
-          >
-            {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Restarting state */}
+      {restarting && (
+        <div className="p-4 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex items-center gap-4">
+            <Loader2 className="w-8 h-8 text-amber-400 animate-spin shrink-0" />
+            <div className="flex-1">
+              <span className="text-sm font-semibold">Restarting VPC...</span>
+              <p className="text-[11px] text-muted-foreground/50 mt-0.5">Page will reload automatically when the server is back online.</p>
+              <div className="mt-2 h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500/50 rounded-full animate-pulse" style={{ width: '80%' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Normal state — main row */}
+      {!pendingRestart && !restarting && (
+        <div className="p-4 flex items-center gap-4">
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+            upgrading ? 'bg-violet-500/15' : hasUpdate ? 'bg-violet-500/15' : 'bg-white/[0.04]'
+          }`}>
+            {upgrading ? <Loader2 className="w-6 h-6 text-violet-400 animate-spin" /> :
+             hasUpdate ? <ArrowUpCircle className="w-6 h-6 text-violet-400" /> :
+             <CheckCircle2 className="w-6 h-6 text-emerald-500/70" />}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">Software Update</span>
+              {hasUpdate && <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-[9px]">NEW</Badge>}
+            </div>
+            <p className="text-[11px] text-muted-foreground/50 mt-0.5">
+              {upgrading ? 'Downloading & installing update...' :
+               hasUpdate ? `${status.behindCount} update${status.behindCount !== 1 ? 's' : ''} available` :
+               status?.error && !status?.current ? status.error :
+               status ? 'VPC is up to date' : 'Checking...'}
+            </p>
+            {status?.current && (
+              <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground/30">
+                <span className="font-mono">{status.current.hash}</span>
+                <span>{status.current.branch}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {hasUpdate && !upgrading && (
+              <Button size="sm" onClick={applyUpgrade} className="bg-violet-600 hover:bg-violet-700 text-xs h-8 px-4">
+                Update
+              </Button>
+            )}
+            <button
+              onClick={checkForUpdates}
+              disabled={checking || upgrading}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-muted-foreground hover:bg-white/[0.06] transition-colors disabled:opacity-30"
+            >
+              {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Expandable commits */}
       {hasUpdate && status.newCommits?.length > 0 && !pendingRestart && (
