@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Copy, AlertTriangle, Eraser } from 'lucide-react';
+import { Copy, AlertTriangle, Eraser, HardDrive, Download, RotateCcw, Trash2, Clock, Loader2, CheckCircle2, XCircle, Play } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -177,6 +177,9 @@ export default function BanaSettings({ project }) {
         </Button>
       </div>
 
+      {/* Backups */}
+      <BackupSection projectId={project.id} />
+
       {/* Danger Zone */}
       <div className="border border-destructive/30 rounded-lg p-4">
         <div className="flex items-center gap-2 mb-2">
@@ -216,6 +219,258 @@ export default function BanaSettings({ project }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Backup Section ─────────────────────────────────────────
+
+function BackupSection({ projectId }) {
+  const [schedule, setSchedule] = useState({ enabled: false, interval: 'daily', keepCount: 7 });
+  const [loadingSchedule, setLoadingSchedule] = useState(true);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
+  const [restoringId, setRestoringId] = useState(null);
+  const queryClient = useQueryClient();
+  const base = `/admin/bana/projects/${projectId}`;
+
+  const { data: backupData, isLoading: backupsLoading } = useApiQuery(
+    ['project-backups', projectId],
+    `${base}/backups`,
+    { refetchInterval: 10000 }
+  );
+
+  useEffect(() => {
+    api.get(`${base}/backup-schedule`).then(({ data }) => {
+      setSchedule(data);
+    }).catch(() => {}).finally(() => setLoadingSchedule(false));
+  }, [projectId]);
+
+  async function saveSchedule(updates) {
+    const newSchedule = { ...schedule, ...updates };
+    setSchedule(newSchedule);
+    setSavingSchedule(true);
+    try {
+      await api.post(`${base}/backup-schedule`, newSchedule);
+      toast.success(newSchedule.enabled ? `Auto-backup: ${newSchedule.interval}` : 'Auto-backup disabled');
+    } catch {
+      toast.error('Failed to save schedule');
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function createBackup() {
+    setCreatingBackup(true);
+    try {
+      await api.post(`${base}/backups`, { backupType: 'full' });
+      toast.success('Backup started');
+      queryClient.invalidateQueries({ queryKey: ['project-backups'] });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Backup failed');
+    } finally {
+      setCreatingBackup(false);
+    }
+  }
+
+  async function restoreBackup(backupId) {
+    if (!confirm('Restore this backup? This will overwrite the current database with the backup data.')) return;
+    if (!confirm('Are you absolutely sure? Current data will be replaced.')) return;
+    setRestoringId(backupId);
+    try {
+      await api.post(`${base}/backups/${backupId}/restore`);
+      toast.success('Database restored from backup!');
+      queryClient.invalidateQueries({ queryKey: ['project-backups'] });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Restore failed');
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
+  async function deleteBackup(backupId) {
+    if (!confirm('Delete this backup permanently?')) return;
+    try {
+      await api.delete(`${base}/backups/${backupId}`);
+      toast.success('Backup deleted');
+      queryClient.invalidateQueries({ queryKey: ['project-backups'] });
+    } catch {
+      toast.error('Failed to delete');
+    }
+  }
+
+  async function downloadBackup(backupId, filename) {
+    try {
+      const response = await api.get(`${base}/backups/${backupId}/download`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(response.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Download failed');
+    }
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  }
+
+  function timeAgo(date) {
+    if (!date) return '';
+    const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    const d = Math.floor(s / 86400);
+    return d < 30 ? `${d}d ago` : new Date(date).toLocaleDateString();
+  }
+
+  const backups = backupData?.backups || [];
+  const INTERVALS = [
+    { id: 'hourly', label: 'Every Hour' },
+    { id: 'daily', label: 'Daily' },
+    { id: 'weekly', label: 'Weekly' },
+    { id: 'monthly', label: 'Monthly' },
+  ];
+
+  return (
+    <div className="border rounded-lg p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold">Backups</h3>
+        </div>
+        <Button size="sm" onClick={createBackup} disabled={creatingBackup}>
+          {creatingBackup ? <Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> : <Play className="w-3 h-3 mr-1.5" />}
+          {creatingBackup ? 'Creating...' : 'Backup Now'}
+        </Button>
+      </div>
+
+      {/* Auto-backup schedule */}
+      <div className="border rounded-lg p-3 mb-4 bg-muted/30">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <p className="text-xs font-medium">Automatic Backups</p>
+            <p className="text-[10px] text-muted-foreground">Schedule regular backups with auto-cleanup</p>
+          </div>
+          {loadingSchedule ? (
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+          ) : (
+            <button
+              onClick={() => saveSchedule({ enabled: !schedule.enabled })}
+              disabled={savingSchedule}
+              className={`relative w-9 h-5 rounded-full transition-colors ${schedule.enabled ? 'bg-primary' : 'bg-muted'}`}
+            >
+              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${schedule.enabled ? 'left-[18px]' : 'left-0.5'}`} />
+            </button>
+          )}
+        </div>
+
+        {schedule.enabled && (
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <Label className="text-[10px] text-muted-foreground">Frequency</Label>
+              <select
+                value={schedule.interval}
+                onChange={e => saveSchedule({ interval: e.target.value })}
+                className="w-full mt-1 px-2 py-1.5 text-xs bg-background border rounded-md"
+              >
+                {INTERVALS.map(i => (
+                  <option key={i.id} value={i.id}>{i.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="w-24">
+              <Label className="text-[10px] text-muted-foreground">Keep last</Label>
+              <select
+                value={schedule.keepCount}
+                onChange={e => saveSchedule({ keepCount: parseInt(e.target.value) })}
+                className="w-full mt-1 px-2 py-1.5 text-xs bg-background border rounded-md"
+              >
+                {[3, 5, 7, 10, 14, 30].map(n => (
+                  <option key={n} value={n}>{n} backups</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Backup list */}
+      {backupsLoading ? (
+        <div className="text-center py-4"><LoadingSpinner /></div>
+      ) : backups.length === 0 ? (
+        <div className="text-center py-6 text-muted-foreground">
+          <HardDrive className="w-8 h-8 mx-auto mb-2 opacity-20" />
+          <p className="text-xs">No backups yet</p>
+          <p className="text-[10px] text-muted-foreground/50">Click "Backup Now" or enable auto-backups</p>
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-[280px] overflow-y-auto">
+          {backups.map(b => (
+            <div key={b.id} className="flex items-center gap-3 p-2.5 rounded-lg border bg-card text-xs">
+              {/* Status icon */}
+              <div className="shrink-0">
+                {b.status === 'completed' ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> :
+                 b.status === 'running' ? <Loader2 className="w-4 h-4 text-blue-400 animate-spin" /> :
+                 b.status === 'restored' ? <RotateCcw className="w-4 h-4 text-violet-400" /> :
+                 <XCircle className="w-4 h-4 text-red-400" />}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium truncate">{b.backup_type} backup</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                    b.status === 'completed' ? 'bg-emerald-500/15 text-emerald-500' :
+                    b.status === 'running' ? 'bg-blue-500/15 text-blue-400' :
+                    b.status === 'restored' ? 'bg-violet-500/15 text-violet-400' :
+                    'bg-red-500/15 text-red-400'
+                  }`}>{b.status}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
+                  <span className="flex items-center gap-1"><Clock className="w-2.5 h-2.5" />{timeAgo(b.created_at)}</span>
+                  {b.file_size_bytes > 0 && <span>{formatSize(b.file_size_bytes)}</span>}
+                  {b.notes && <span className="truncate">{b.notes}</span>}
+                </div>
+              </div>
+
+              {/* Actions */}
+              {b.status === 'completed' && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => restoreBackup(b.id)}
+                    disabled={restoringId === b.id}
+                    className="p-1.5 rounded-md hover:bg-violet-500/10 text-muted-foreground hover:text-violet-400 transition-colors"
+                    title="Restore this backup"
+                  >
+                    {restoringId === b.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => downloadBackup(b.id, b.filename)}
+                    className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                    title="Download"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => deleteBackup(b.id)}
+                    className="p-1.5 rounded-md hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

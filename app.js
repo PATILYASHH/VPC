@@ -125,4 +125,69 @@ app.listen(PORT, async () => {
     }
   }, AUTO_UPGRADE_INTERVAL);
   console.log('[VPC] Auto-upgrade check scheduled (every 5 hours)');
+
+  // Auto-backup scheduler — checks every hour for due backups
+  const BACKUP_CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+  setInterval(async () => {
+    try {
+      const { rows: schedules } = await pool.query(
+        "SELECT key, value FROM vpc_settings WHERE key LIKE 'backup_schedule_%'"
+      );
+
+      for (const row of schedules) {
+        try {
+          const schedule = JSON.parse(row.value);
+          if (!schedule.enabled) continue;
+
+          const projectId = row.key.replace('backup_schedule_', '');
+          const { rows: project } = await pool.query('SELECT db_name, name FROM bana_projects WHERE id = $1 AND status = $2', [projectId, 'active']);
+          if (!project[0]) continue;
+
+          // Check when last backup was taken
+          const { rows: lastBackup } = await pool.query(
+            "SELECT created_at FROM backups WHERE database_name = $1 AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
+            [project[0].db_name]
+          );
+
+          const lastAt = lastBackup[0]?.created_at ? new Date(lastBackup[0].created_at).getTime() : 0;
+          const now = Date.now();
+          const intervals = { hourly: 3600000, daily: 86400000, weekly: 604800000, monthly: 2592000000 };
+          const intervalMs = intervals[schedule.interval] || intervals.daily;
+
+          if (now - lastAt >= intervalMs) {
+            console.log(`[VPC Auto-Backup] Running scheduled ${schedule.interval} backup for ${project[0].name}...`);
+            const backupService = require('./backend/services/backupService');
+            await backupService.runBackup(pool, {
+              database: project[0].db_name,
+              backupType: 'full',
+              initiatedBy: null,
+              notes: `Auto-backup (${schedule.interval})`,
+            });
+
+            // Cleanup old backups beyond keepCount
+            const keepCount = schedule.keepCount || 7;
+            const { rows: oldBackups } = await pool.query(
+              `SELECT id, file_path FROM backups WHERE database_name = $1 AND status = 'completed' ORDER BY created_at DESC OFFSET $2`,
+              [project[0].db_name, keepCount]
+            );
+            for (const old of oldBackups) {
+              try {
+                const fs = require('fs');
+                if (fs.existsSync(old.file_path)) fs.unlinkSync(old.file_path);
+                await pool.query('DELETE FROM backups WHERE id = $1', [old.id]);
+              } catch {}
+            }
+            if (oldBackups.length > 0) {
+              console.log(`[VPC Auto-Backup] Cleaned ${oldBackups.length} old backup(s) for ${project[0].name}`);
+            }
+          }
+        } catch (schedErr) {
+          console.error('[VPC Auto-Backup] Schedule error:', schedErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('[VPC Auto-Backup] Error:', err.message);
+    }
+  }, BACKUP_CHECK_INTERVAL);
+  console.log('[VPC] Auto-backup scheduler running (checks every hour)');
 });

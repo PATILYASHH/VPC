@@ -340,7 +340,10 @@ router.post('/repos/:owner/:repo/pulls', async (req, res) => {
     const repo = await loadRepo(pool, req.params.owner, req.params.repo);
     if (!repo) return res.status(404).json({ error: 'Repository not found' });
 
-    const { title, description, sourceBranch, targetBranch } = req.body;
+    const title = req.body.title;
+    const description = req.body.description;
+    const sourceBranch = req.body.sourceBranch || req.body.source_branch;
+    const targetBranch = req.body.targetBranch || req.body.target_branch;
     if (!title || !sourceBranch) {
       return res.status(400).json({ error: 'Title and source branch are required' });
     }

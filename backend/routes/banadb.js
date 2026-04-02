@@ -612,4 +612,121 @@ router.get('/projects/:id/storage/stats', resolveProject, async (req, res) => {
   }
 });
 
+// ─── Project Backups ─────────────────────────────────────────
+
+const backupService = require('../services/backupService');
+
+// List backups for a project
+router.get('/projects/:id/backups', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows: project } = await pool.query('SELECT db_name, name FROM bana_projects WHERE id = $1', [req.params.id]);
+    if (!project[0]) return res.status(404).json({ error: 'Project not found' });
+
+    const { rows } = await pool.query(
+      `SELECT * FROM backups WHERE database_name = $1 ORDER BY created_at DESC LIMIT 50`,
+      [project[0].db_name]
+    );
+    res.json({ backups: rows, projectName: project[0].name });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create backup for a project
+router.post('/projects/:id/backups', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows: project } = await pool.query('SELECT db_name, name FROM bana_projects WHERE id = $1', [req.params.id]);
+    if (!project[0]) return res.status(404).json({ error: 'Project not found' });
+
+    const result = await backupService.runBackup(pool, {
+      database: project[0].db_name,
+      backupType: req.body.backupType || 'full',
+      initiatedBy: req.admin.id,
+      notes: req.body.notes || `Manual backup of ${project[0].name}`,
+    });
+    res.json({ backup: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restore backup for a project
+router.post('/projects/:id/backups/:backupId/restore', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const result = await backupService.restore(pool, req.params.backupId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Download backup
+router.get('/projects/:id/backups/:backupId/download', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query('SELECT * FROM backups WHERE id = $1', [req.params.backupId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Backup not found' });
+    const fs = require('fs');
+    if (!fs.existsSync(rows[0].file_path)) return res.status(404).json({ error: 'Backup file not found' });
+    res.download(rows[0].file_path, rows[0].filename);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete backup
+router.delete('/projects/:id/backups/:backupId', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query('SELECT * FROM backups WHERE id = $1', [req.params.backupId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Backup not found' });
+    const fs = require('fs');
+    if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
+    await pool.query('DELETE FROM backups WHERE id = $1', [req.params.backupId]);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get auto-backup schedule for a project
+router.get('/projects/:id/backup-schedule', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query(
+      "SELECT value FROM vpc_settings WHERE key = $1",
+      [`backup_schedule_${req.params.id}`]
+    );
+    const schedule = rows[0]?.value ? JSON.parse(rows[0].value) : { enabled: false, interval: 'daily', keepCount: 7 };
+    res.json(schedule);
+  } catch (err) {
+    res.json({ enabled: false, interval: 'daily', keepCount: 7 });
+  }
+});
+
+// Set auto-backup schedule for a project
+router.post('/projects/:id/backup-schedule', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { enabled, interval, keepCount } = req.body;
+    const value = JSON.stringify({
+      enabled: !!enabled,
+      interval: interval || 'daily', // hourly, daily, weekly, monthly
+      keepCount: keepCount || 7,
+      updatedAt: new Date().toISOString(),
+    });
+    await pool.query(
+      `INSERT INTO vpc_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = $2`,
+      [`backup_schedule_${req.params.id}`, value]
+    );
+    res.json({ enabled: !!enabled, interval, keepCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

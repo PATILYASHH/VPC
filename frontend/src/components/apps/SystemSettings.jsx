@@ -71,13 +71,7 @@ export default function SystemSettings() {
   const [activeSection, setActiveSection] = useState('appearance');
 
   function applyTheme(themeId) {
-    setTheme(themeId);
-    // Apply theme class to html element
-    const html = document.documentElement;
-    html.className = html.className.replace(/theme-\w+/g, '').trim();
-    if (themeId !== 'dark') {
-      html.classList.add(`theme-${themeId}`);
-    }
+    setTheme(themeId); // Store handles DOM + style injection
   }
 
   const sections = [

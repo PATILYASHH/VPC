@@ -42,7 +42,7 @@ export default function Taskbar() {
         VPC
       </button>
 
-      <div className="w-px h-5 bg-white/[0.08] mx-1" />
+      <div className="w-px h-5 mx-1" style={{ background: 'var(--surface-border)' }} />
 
       {/* Open window tabs */}
       <div className="flex-1 flex items-center gap-0.5 overflow-x-auto">
@@ -81,7 +81,7 @@ export default function Taskbar() {
         })}
       </div>
 
-      <div className="w-px h-5 bg-white/[0.08] mx-1" />
+      <div className="w-px h-5 mx-1" style={{ background: 'var(--surface-border)' }} />
 
       {/* Right: admin info + clock + logout */}
       <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">

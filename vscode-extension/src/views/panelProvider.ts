@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { SyncApiClient } from '../api/client';
 import * as objects from '../vcs/objects';
 import * as refs from '../vcs/refs';
+import * as index from '../vcs/index';
 import * as sync from '../vcs/sync';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
@@ -31,6 +32,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'fetchRepos': return this.fetchRepos(msg);
         case 'cloneRepo': return this.cloneRepo(msg);
         case 'disconnect': return this.disconnect();
+        case 'commit': return this.doCommit(msg.message);
+        case 'stageAll': return vscode.commands.executeCommand('vpcSync.stageAll');
         case 'push': return vscode.commands.executeCommand('vpcSync.push');
         case 'pull': return vscode.commands.executeCommand('vpcSync.pull');
         case 'openScm': return vscode.commands.executeCommand('workbench.view.scm');
@@ -86,6 +89,54 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     this.render();
   }
 
+  private async doCommit(message: string) {
+    if (!message?.trim()) {
+      vscode.window.showWarningMessage('Enter a commit message.');
+      return;
+    }
+    // Stage all + commit via commands
+    await vscode.commands.executeCommand('vpcSync.stageAll');
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) return;
+
+    const idx = index.readIndex(root);
+    const headHash = refs.resolveRef(root, 'HEAD');
+    let hasChanges = false;
+
+    if (headHash) {
+      const headMap = new Map(objects.walkTree(root, objects.readCommit(root, headHash).tree).map((f: any) => [f.path, f.hash]));
+      const idxMap = new Map(idx.entries.map((e: any) => [e.path, e.hash]));
+      for (const [p, h] of idxMap) { if (headMap.get(p) !== h) { hasChanges = true; break; } }
+      if (!hasChanges) for (const [p] of headMap) { if (!idxMap.has(p)) { hasChanges = true; break; } }
+    } else {
+      hasChanges = idx.entries.length > 0;
+    }
+
+    if (!hasChanges) {
+      vscode.window.showInformationMessage('Nothing to commit.');
+      this.render();
+      return;
+    }
+
+    const treeHash = objects.buildTreeFromFiles(root, idx.entries);
+    const config = vscode.workspace.getConfiguration('vpcSync');
+    const username = config.get<string>('username') || 'user';
+    const hash = objects.createCommit(root, {
+      tree: treeHash,
+      parents: headHash ? [headHash] : [],
+      authorName: username,
+      authorEmail: `${username}@vpc`,
+      message: message.trim(),
+    });
+
+    const head = refs.readHead(root);
+    if (head.symbolic && head.ref) refs.updateRef(root, head.ref, hash);
+    else refs.writeHead(root, hash);
+
+    vscode.window.showInformationMessage(`Committed: ${hash.slice(0, 8)} — ${message.trim()}`);
+    this.render();
+  }
+
   private async disconnect() {
     const config = vscode.workspace.getConfiguration('vpcSync');
     await config.update('serverUrl', undefined, vscode.ConfigurationTarget.Workspace);
@@ -125,34 +176,52 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);padding:10px}
 .card{border:1px solid var(--vscode-panel-border);border-radius:6px;padding:10px;margin-bottom:10px;background:var(--vscode-editor-background)}
-.card h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--vscode-descriptionForeground);margin-bottom:8px}
+.card h3{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--vscode-descriptionForeground);margin-bottom:8px}
 .row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0}
 .row .l{color:var(--vscode-descriptionForeground)}
 .row .v{font-weight:600;font-family:var(--vscode-editor-font-family)}
-.branch{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:4px 8px;border-radius:4px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);margin-bottom:8px}
-.btns{display:flex;gap:6px;margin-bottom:8px}
-.btn{flex:1;padding:7px;font-size:12px;font-weight:600;border:none;border-radius:5px;cursor:pointer;text-align:center}
-.btn-push{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
-.btn-push:hover{background:var(--vscode-button-hoverBackground)}
-.btn-pull{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
-.btn-pull:hover{background:var(--vscode-button-secondaryHoverBackground)}
+.branch{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:4px 8px;border-radius:4px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);margin-bottom:10px}
+.btns{display:flex;gap:6px;margin-bottom:6px}
+.btn{flex:1;padding:7px;font-size:11px;font-weight:600;border:none;border-radius:5px;cursor:pointer;text-align:center}
+.btn-primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.btn-primary:hover{background:var(--vscode-button-hoverBackground)}
+.btn-secondary{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground)}
+.btn-secondary:hover{background:var(--vscode-button-secondaryHoverBackground)}
+.btn-sm{padding:5px 10px;font-size:11px}
 .sync{text-align:center;font-size:11px;padding:6px;border-radius:5px;margin-bottom:8px}
 .sync-ok{background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.15);color:#22c55e}
 .sync-pending{background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.15);color:#eab308}
 .link{display:block;text-align:center;font-size:11px;color:var(--vscode-textLink-foreground);cursor:pointer;padding:4px;text-decoration:none}
 .link:hover{text-decoration:underline}
 .sep{border-top:1px solid var(--vscode-panel-border);margin:8px 0}
+.commit-input{width:100%;padding:6px 8px;font-size:12px;font-family:var(--vscode-font-family);border:1px solid var(--vscode-input-border);background:var(--vscode-input-background);color:var(--vscode-input-foreground);border-radius:4px;outline:none;margin-bottom:6px;resize:none}
+.commit-input:focus{border-color:var(--vscode-focusBorder)}
+.step{font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;margin-top:2px}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font-size:9px;font-weight:700;margin-right:4px}
 </style></head><body>
 <div class="branch">&#9741; ${e(branch)}</div>
 
-<div class="btns">
-  <button class="btn btn-push" onclick="post('push')">Create PR${ahead>0?' ('+ahead+')':''}</button>
-  <button class="btn btn-pull" onclick="post('pull')">Pull${behind>0?' ('+behind+')':''}</button>
+${ahead===0&&behind===0
+  ?'<div class="sync sync-ok">&#10003; Up to date</div>'
+  :`<div class="sync sync-pending">${ahead>0?'&#8593; '+ahead+' to push':''}${ahead>0&&behind>0?' &middot; ':''}${behind>0?'&#8595; '+behind+' to pull':''}</div>`}
+
+<!-- Step 1: Commit -->
+<div class="card">
+  <div class="step"><span class="step-num">1</span> Commit Changes</div>
+  <textarea class="commit-input" id="commitMsg" rows="2" placeholder="Commit message..."></textarea>
+  <div class="btns">
+    <button class="btn btn-primary" onclick="doCommit()">Stage All & Commit</button>
+  </div>
 </div>
 
-${ahead===0&&behind===0
-  ?'<div class="sync sync-ok">Up to date</div>'
-  :`<div class="sync sync-pending">${ahead>0?ahead+' to push':''}${ahead>0&&behind>0?' &middot; ':''}${behind>0?behind+' to pull':''}</div>`}
+<!-- Step 2: Push / Pull -->
+<div class="card">
+  <div class="step"><span class="step-num">2</span> Sync with Remote</div>
+  <div class="btns">
+    <button class="btn btn-primary" onclick="post('push')">Create PR${ahead>0?' ('+ahead+')':''}</button>
+    <button class="btn btn-secondary" onclick="post('pull')">Pull${behind>0?' ('+behind+')':''}</button>
+  </div>
+</div>
 
 <a class="link" onclick="post('openScm')">Open Source Control</a>
 
@@ -165,9 +234,24 @@ ${ahead===0&&behind===0
   <div class="row"><span class="l">User</span><span class="v">${e(username)}</span></div>
 </div>
 
-<a class="link" onclick="post('disconnect')" style="color:var(--vscode-errorForeground)">Disconnect</a>
+<div style="display:flex;gap:6px;justify-content:center">
+  <a class="link" onclick="post('refresh')">Refresh</a>
+  <a class="link" onclick="post('disconnect')" style="color:var(--vscode-errorForeground)">Disconnect</a>
+</div>
 
-<script>const vscode=acquireVsCodeApi();function post(c){vscode.postMessage({command:c})}</script>
+<script>
+const vscode=acquireVsCodeApi();
+function post(c){vscode.postMessage({command:c})}
+function doCommit(){
+  const msg=document.getElementById('commitMsg').value.trim();
+  if(!msg){document.getElementById('commitMsg').focus();return;}
+  vscode.postMessage({command:'commit',message:msg});
+  document.getElementById('commitMsg').value='';
+}
+document.getElementById('commitMsg').addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doCommit();}
+});
+</script>
 </body></html>`;
   }
 

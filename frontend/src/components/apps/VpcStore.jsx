@@ -4,7 +4,7 @@ import {
   ArrowLeft, Shield, Zap, GitBranch, FolderSync,
   Search, ChevronRight, Clock,
   HardDrive, Cpu, Box, Layers, RefreshCw, ArrowUpCircle,
-  CheckCircle2, Loader2, GitCommit, Star, Sparkles
+  CheckCircle2, Loader2, GitCommit, Sparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +18,6 @@ const PRODUCTS = [
     id: 'vpc-sync-cli',
     title: 'VPC Sync CLI',
     subtitle: 'Version Control from Terminal',
-    developer: 'VPC Team',
     category: 'cli',
     icon: Terminal,
     iconColor: 'text-emerald-400',
@@ -27,8 +26,6 @@ const PRODUCTS = [
     accentGradient: 'from-emerald-600/20 to-cyan-600/10',
     version: '1.0.0',
     size: '22 KB',
-    rating: 4.8,
-    downloads: '50+',
     downloadUrl: '/downloads/vpc-sync-cli.tar.gz',
     filename: 'vpc-sync-cli.tar.gz',
     featured: true,
@@ -71,7 +68,6 @@ const PRODUCTS = [
     id: 'vpc-sync-extension',
     title: 'VPC Sync for VS Code',
     subtitle: 'IDE Integration',
-    developer: 'VPC Team',
     category: 'extension',
     icon: Code,
     iconColor: 'text-blue-400',
@@ -80,8 +76,6 @@ const PRODUCTS = [
     accentGradient: 'from-blue-600/20 to-indigo-600/10',
     version: '7.0.0',
     size: '56 KB',
-    rating: 4.9,
-    downloads: '100+',
     downloadUrl: '/downloads/vpc-sync.vsix',
     filename: 'vpc-sync.vsix',
     featured: true,
@@ -516,24 +510,19 @@ function FeaturedCard({ product, onSelect }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider font-medium">{product.developer}</span>
             {product.isNew && <Badge className="bg-emerald-500/20 text-emerald-400 border-0 text-[8px] px-1.5 py-0">NEW</Badge>}
+            <Badge variant="outline" className="text-[9px] border-white/[0.1]">v{product.version}</Badge>
           </div>
           <h3 className="text-base font-bold mb-0.5">{product.title}</h3>
           <p className="text-[11px] text-muted-foreground/50 leading-relaxed line-clamp-2">{product.description}</p>
 
-          <div className="flex items-center gap-4 mt-3">
+          <div className="flex items-center gap-3 mt-3">
             <button className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
               product.accentColor === 'emerald' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-blue-500 text-white hover:bg-blue-400'
             }`}>
               <Download className="w-3 h-3" /> Get
             </button>
-            <div className="flex items-center gap-0.5">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className={`w-3 h-3 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.08]'}`} />
-              ))}
-              <span className="text-[10px] text-muted-foreground/30 ml-1">{product.rating}</span>
-            </div>
+            <span className="text-[10px] text-muted-foreground/30">{product.size}</span>
           </div>
         </div>
       </div>
@@ -570,13 +559,9 @@ function AppListItem({ product, onSelect }) {
           {product.isNew && <Badge className="bg-emerald-500/20 text-emerald-400 border-0 text-[8px] px-1.5 py-0">NEW</Badge>}
         </div>
         <p className="text-[11px] text-muted-foreground/40 truncate">{product.description}</p>
-        <div className="flex items-center gap-2 mt-0.5">
-          <div className="flex items-center gap-0.5">
-            {[...Array(5)].map((_, i) => (
-              <Star key={i} className={`w-2.5 h-2.5 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.06]'}`} />
-            ))}
-          </div>
-          <span className="text-[10px] text-muted-foreground/25">{product.downloads} downloads</span>
+        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground/30">
+          <span>v{product.version}</span>
+          <span>{product.size}</span>
         </div>
       </div>
       <button
@@ -639,7 +624,7 @@ function ProductDetail({ product, onBack }) {
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-xl font-bold">{product.title}</h1>
-              <p className="text-xs text-muted-foreground/40 mt-0.5">{product.developer}</p>
+              <p className="text-xs text-muted-foreground/40 mt-0.5">{product.subtitle}</p>
 
               <div className="flex items-center gap-3 mt-3">
                 <button
@@ -654,20 +639,12 @@ function ProductDetail({ product, onBack }) {
                 >
                   {downloading ? <><Check className="w-4 h-4" /> Done</> : <><Download className="w-4 h-4" /> Get</>}
                 </button>
-
-                <div className="flex items-center gap-0.5">
-                  {[...Array(5)].map((_, i) => (
-                    <Star key={i} className={`w-3.5 h-3.5 ${i < Math.floor(product.rating) ? 'text-amber-400 fill-amber-400' : 'text-white/[0.08]'}`} />
-                  ))}
-                  <span className="text-xs text-muted-foreground/30 ml-1.5">{product.rating}</span>
-                </div>
               </div>
 
               <div className="flex items-center gap-5 mt-3 text-[11px] text-muted-foreground/30">
                 <span className="flex items-center gap-1"><Box className="w-3 h-3" /> v{product.version}</span>
                 <span className="flex items-center gap-1"><HardDrive className="w-3 h-3" /> {product.size}</span>
                 <span className="flex items-center gap-1"><Cpu className="w-3 h-3" /> {product.requirements}</span>
-                <span className="flex items-center gap-1"><Download className="w-3 h-3" /> {product.downloads}</span>
               </div>
             </div>
           </div>
