@@ -506,23 +506,34 @@ function SoftwareUpgrade() {
         </div>
       )}
 
-      {/* Auto-upgrade toggle */}
+      {/* Auto-upgrade toggle + Restart */}
       <div className="px-4 py-2.5 border-t border-white/[0.04] flex items-center justify-between">
         <div>
           <span className="text-[11px] text-muted-foreground/50">Automatic Updates</span>
           <span className="text-[10px] text-muted-foreground/25 ml-2">Checks every 5 hours</span>
         </div>
-        <button
-          onClick={toggleAutoUpgrade}
-          disabled={togglingAuto}
-          className={`relative w-9 h-5 rounded-full transition-colors ${
-            autoUpgrade ? 'bg-violet-600' : 'bg-white/[0.08]'
-          }`}
-        >
-          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-            autoUpgrade ? 'left-[18px]' : 'left-0.5'
-          }`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={restartServer}
+            disabled={restarting}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+            title="Restart VPC Server"
+          >
+            {restarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+            Restart
+          </button>
+          <button
+            onClick={toggleAutoUpgrade}
+            disabled={togglingAuto}
+            className={`relative w-9 h-5 rounded-full transition-colors ${
+              autoUpgrade ? 'bg-violet-600' : 'bg-white/[0.08]'
+            }`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              autoUpgrade ? 'left-[18px]' : 'left-0.5'
+            }`} />
+          </button>
+        </div>
       </div>
     </div>
   );
