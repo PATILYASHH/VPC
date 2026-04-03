@@ -1,14 +1,14 @@
 import { useState } from 'react';
-import { Table2, Code2, Users, Key, Settings, CloudDownload, Download, HardDrive } from 'lucide-react';
+import { Table2, Code2, Users, Key, Settings as SettingsIcon, CloudDownload, Download, HardDrive } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import BanaTableEditor from './BanaTableEditor';
-import BanaSqlEditor from './BanaSqlEditor';
-import BanaAuth from './BanaAuth';
-import BanaApiKeys from './BanaApiKeys';
-import BanaSettings from './BanaSettings';
-import BanaPullKeys from './BanaPullKeys';
-import BanaSupabaseImport from './BanaSupabaseImport';
-import BanaBuckets from './BanaBuckets';
+import TableEditor from './TableEditor';
+import SqlEditor from './SqlEditor';
+import Auth from './Auth';
+import ApiKeys from './ApiKeys';
+import Settings from './Settings';
+import PullKeys from './PullKeys';
+import SupabaseImport from './SupabaseImport';
+import Buckets from './Buckets';
 
 const NAV_ITEMS = [
   { id: 'tables', label: 'Table Editor', icon: Table2 },
@@ -18,7 +18,7 @@ const NAV_ITEMS = [
   { id: 'pull', label: 'Pull Keys', icon: Download },
   { id: 'storage', label: 'Buckets', icon: HardDrive },
   { id: 'import', label: 'Import', icon: CloudDownload },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 export default function ProjectDashboard({ project }) {
@@ -52,14 +52,14 @@ export default function ProjectDashboard({ project }) {
 
       {/* Content area */}
       <div className="flex-1 min-w-0">
-        {activeSection === 'tables' && <BanaTableEditor project={project} />}
-        {activeSection === 'sql' && <BanaSqlEditor project={project} />}
-        {activeSection === 'auth' && <BanaAuth project={project} />}
-        {activeSection === 'api' && <BanaApiKeys project={project} />}
-        {activeSection === 'pull' && <BanaPullKeys project={project} />}
-        {activeSection === 'storage' && <BanaBuckets project={project} />}
-        {activeSection === 'import' && <BanaSupabaseImport project={project} />}
-        {activeSection === 'settings' && <BanaSettings project={project} />}
+        {activeSection === 'tables' && <TableEditor project={project} />}
+        {activeSection === 'sql' && <SqlEditor project={project} />}
+        {activeSection === 'auth' && <Auth project={project} />}
+        {activeSection === 'api' && <ApiKeys project={project} />}
+        {activeSection === 'pull' && <PullKeys project={project} />}
+        {activeSection === 'storage' && <Buckets project={project} />}
+        {activeSection === 'import' && <SupabaseImport project={project} />}
+        {activeSection === 'settings' && <Settings project={project} />}
       </div>
     </div>
   );

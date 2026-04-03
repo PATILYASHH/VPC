@@ -1,10 +1,18 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const gitService = require('../services/vpshubGitService');
 const authService = require('../services/vpshubAuthService');
 const prService = require('../services/vpshubPrService');
 const issueService = require('../services/vpshubIssueService');
 const deployService = require('../services/vpshubDeployService');
+
+// Multer memory storage for file uploads (files go into VCS, not disk)
+// No file size limit, no file count limit — users can drop entire projects
+const uploadStorage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024, files: 5000 }, // 500MB per file, 5000 files max
+});
 
 // ─── Repo slug validation ────────────────────────────────────
 
@@ -765,7 +773,7 @@ router.put('/comments/:id', async (req, res) => {
 
 // ─── Database Linking & Deployments ──────────────────────────
 
-// List available BanaDB projects to link
+// List available DB projects to link
 router.get('/projects', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
@@ -800,7 +808,7 @@ router.get('/repos/:owner/:repo/linked-db', async (req, res) => {
   }
 });
 
-// Link repo to BanaDB project
+// Link repo to DB project
 router.post('/repos/:owner/:repo/link-db', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
@@ -1671,6 +1679,354 @@ File structure:\n${fileTree.slice(0, 5000)}\n\nKey files:\n${keyFilesContent.sli
   } catch (err) {
     console.error('[VPSHub] Agent analyze error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── File Upload / Drop ─────────────────────────────────────
+
+// Upload files directly to a repo branch
+// Preview upload — shows what files are new/modified before saving
+router.post('/repos/:owner/:repo/preview-upload', uploadStorage.array('files', 200), async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const repo = await gitService.getRepositoryBySlug(pool, req.params.owner, req.params.repo);
+    if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+    const branch = req.body.branch || 'main';
+    const basePath = req.body.basePath || '';
+
+    const uploadedFiles = (req.files || []).map(f => {
+      const filePath = basePath ? `${basePath}/${f.originalname}` : f.originalname;
+      return { path: filePath, content: f.buffer };
+    });
+
+    const preview = gitService.previewUpload(repo.owner_username, repo.slug, branch, uploadedFiles);
+
+    // Get user's last download to check for server-side changes
+    const lastDownload = await gitService.getLastDownload(pool, repo.id, req.admin.id, branch);
+
+    res.json({
+      ...preview,
+      lastDownload: lastDownload ? {
+        commitHash: lastDownload.commit_hash,
+        downloadedAt: lastDownload.downloaded_at,
+        serverChanged: preview.currentCommit !== lastDownload.commit_hash,
+      } : null,
+      summary: `${preview.newFiles.length} new, ${preview.modifiedFiles.length} updated, ${preview.unchangedFiles.length} unchanged`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to preview: ' + err.message });
+  }
+});
+
+// Regular upload
+router.post('/repos/:owner/:repo/upload', uploadStorage.array('files', 200), async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const repo = await gitService.getRepositoryBySlug(pool, req.params.owner, req.params.repo);
+    if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files provided' });
+    }
+
+    const branch = req.body.branch || 'main';
+    const commitMessage = req.body.message || `Upload ${req.files.length} file(s) via drop`;
+    const basePath = req.body.basePath || ''; // optional subfolder prefix
+
+    // Build file entries preserving relative paths
+    const files = req.files.map(f => {
+      // Use webkitRelativePath from body if available, otherwise originalname
+      const relativePath = f.originalname;
+      const filePath = basePath ? `${basePath}/${relativePath}` : relativePath;
+      return { path: filePath, content: f.buffer };
+    });
+
+    const result = await gitService.uploadFiles(
+      pool, repo.id, repo.owner_username, repo.slug,
+      branch, files, commitMessage, req.admin.username
+    );
+
+    res.json({
+      message: `${result.filesCount} file(s) saved successfully!`,
+      commitHash: result.commitHash,
+      filesCount: result.filesCount,
+    });
+  } catch (err) {
+    console.error('[VPSHub] Upload error:', err.message);
+    res.status(500).json({ error: 'Failed to upload files: ' + err.message });
+  }
+});
+
+// AI review & fix uploaded code
+router.post('/repos/:owner/:repo/ai-review-fix', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const repo = await gitService.getRepositoryBySlug(pool, req.params.owner, req.params.repo);
+    if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+    const aiReviewService = require('../services/aiReviewService');
+    const { requirements, branch } = req.body;
+    const ref = branch || 'main';
+
+    // Get all files in the repo
+    const manifest = await gitService.getFileManifest(repo.owner_username, repo.slug, ref);
+    if (!manifest || manifest.length === 0) {
+      return res.status(400).json({ error: 'No files in repository to review' });
+    }
+
+    // Read content of key code files (skip binaries, large files)
+    const codeExtensions = /\.(js|jsx|ts|tsx|py|java|go|rs|rb|php|html|css|scss|json|yaml|yml|md|sql|sh|c|cpp|h|vue|svelte|dart|kt|swift)$/i;
+    let codeContent = '';
+    let fileCount = 0;
+
+    for (const file of manifest) {
+      if (fileCount >= 50) break; // limit to 50 files
+      if (!codeExtensions.test(file.path)) continue;
+      if (file.size > 100000) continue; // skip files > 100KB
+
+      try {
+        const content = await gitService.getBlob(repo.owner_username, repo.slug, ref, file.path);
+        if (content) {
+          codeContent += `\n--- ${file.path} ---\n${content}\n`;
+          fileCount++;
+        }
+      } catch { /* skip unreadable */ }
+    }
+
+    const prompt = `You are a senior code reviewer. Review the following codebase and provide:
+
+1. **Issues Found**: List bugs, security issues, bad practices
+2. **Fixes Applied**: For each issue, provide the exact fixed code
+3. **Structure Suggestions**: How to organize the code better
+4. **Missing Files**: Any config files, .gitignore, README that should be added
+
+${requirements ? `\n**User Requirements:**\n${requirements}\n\nMake sure the code meets these requirements. Suggest or fix code accordingly.` : ''}
+
+**Repository:** ${req.params.owner}/${repo.slug}
+**Files (${fileCount}):**
+${codeContent.slice(0, 15000)}
+
+Respond in clean markdown. For fixes, show the file path and the corrected code block.`;
+
+    const result = await aiReviewService.chatWithRepo(prompt, {
+      repoName: `${req.params.owner}/${repo.slug}`,
+      branch: ref,
+    }, { pool });
+
+    res.json(result);
+  } catch (err) {
+    console.error('[VPSHub] AI review-fix error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI auto-fix: apply Claude's fixes directly to the repo
+router.post('/repos/:owner/:repo/ai-auto-fix', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const repo = await gitService.getRepositoryBySlug(pool, req.params.owner, req.params.repo);
+    if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+    const aiReviewService = require('../services/aiReviewService');
+    const { requirements, branch } = req.body;
+    const ref = branch || 'main';
+
+    // Get all code files
+    const manifest = await gitService.getFileManifest(repo.owner_username, repo.slug, ref);
+    const codeExtensions = /\.(js|jsx|ts|tsx|py|java|go|rs|rb|php|html|css|scss|json|yaml|yml|md|sql|sh|c|cpp|h|vue|svelte|dart|kt|swift)$/i;
+    let codeContent = '';
+    let fileCount = 0;
+    const fileContents = {};
+
+    for (const file of manifest) {
+      if (fileCount >= 40) break;
+      if (!codeExtensions.test(file.path)) continue;
+      if (file.size > 100000) continue;
+
+      try {
+        const content = await gitService.getBlob(repo.owner_username, repo.slug, ref, file.path);
+        if (content) {
+          codeContent += `\n--- ${file.path} ---\n${content}\n`;
+          fileContents[file.path] = content;
+          fileCount++;
+        }
+      } catch { /* skip */ }
+    }
+
+    const prompt = `You are an expert code fixer. Review and fix the following code.
+${requirements ? `\n**Requirements:** ${requirements}\n` : ''}
+
+IMPORTANT: Return your response as a JSON object with this exact format:
+{
+  "fixes": [
+    { "path": "file/path.js", "content": "entire fixed file content here" }
+  ],
+  "summary": "Brief summary of what was fixed",
+  "newFiles": [
+    { "path": "file/path.js", "content": "content for new files if needed" }
+  ]
+}
+
+Only include files that actually need changes. Return the COMPLETE file content, not just the changed parts.
+
+**Repository:** ${req.params.owner}/${repo.slug}
+**Files:**
+${codeContent.slice(0, 15000)}`;
+
+    const result = await aiReviewService.chatWithRepo(prompt, {
+      repoName: `${req.params.owner}/${repo.slug}`,
+      branch: ref,
+    }, { pool });
+
+    // Parse AI response and apply fixes
+    let fixes = [];
+    let summary = 'AI reviewed and fixed code';
+    let newFiles = [];
+
+    try {
+      const responseText = result.response || result.message || '';
+      // Extract JSON from response (may be wrapped in markdown code blocks)
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+                        responseText.match(/(\{[\s\S]*"fixes"[\s\S]*\})/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[1]);
+        fixes = parsed.fixes || [];
+        summary = parsed.summary || summary;
+        newFiles = parsed.newFiles || [];
+      }
+    } catch {
+      // If AI didn't return valid JSON, just return the review
+      return res.json({
+        applied: false,
+        message: 'AI provided review but fixes could not be auto-applied',
+        review: result.response || result.message,
+      });
+    }
+
+    if (fixes.length === 0 && newFiles.length === 0) {
+      return res.json({ applied: false, message: 'No fixes needed', review: result.response });
+    }
+
+    // Apply fixes as a new commit
+    const allFiles = [...fixes, ...newFiles].map(f => ({
+      path: f.path,
+      content: Buffer.from(f.content),
+    }));
+
+    const commitResult = await gitService.uploadFiles(
+      pool, repo.id, repo.owner_username, repo.slug,
+      ref, allFiles, `AI auto-fix: ${summary}`, 'VPAI'
+    );
+
+    res.json({
+      applied: true,
+      message: summary,
+      filesFixed: fixes.length,
+      newFilesCreated: newFiles.length,
+      commitHash: commitResult.commitHash,
+    });
+  } catch (err) {
+    console.error('[VPSHub] AI auto-fix error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Unified Project (Repo + Database + Sync in one click) ──
+
+router.post('/unified-project', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { name, description, includeDatabase, enableSync, visibility } = req.body;
+
+    if (!name || name.trim().length < 1) {
+      return res.status(400).json({ error: 'Project name is required' });
+    }
+
+    const slug = slugify(name);
+    const results = { repo: null, database: null, syncEnabled: false };
+
+    // Step 1: Create the repository
+    const repo = await gitService.createRepository(pool, {
+      name: name.trim(),
+      slug,
+      description: description || '',
+      visibility: visibility || 'private',
+      ownerId: req.admin.id,
+      ownerUsername: req.admin.username,
+      initReadme: true,
+    });
+    results.repo = { id: repo.id, name: repo.name, slug: repo.slug };
+
+    // Step 2: Create DB project (if requested)
+    if (includeDatabase !== false) {
+      try {
+        const dbService = require('../services/dbService');
+        const dbProject = await dbService.createProject(pool, {
+          name: `${name.trim()} DB`,
+          slug: `${slug}-db`,
+          createdBy: req.admin.id,
+        });
+        results.database = { id: dbProject.id, name: dbProject.name, slug: dbProject.slug };
+
+        // Link repo to database
+        await deployService.linkRepoToProject(pool, repo.id, dbProject.id);
+
+        // Step 3: Enable sync tracking (if requested)
+        if (enableSync !== false) {
+          try {
+            const pullService = require('../services/pullService');
+            await pullService.installTracking(pool, dbProject.id);
+            results.syncEnabled = true;
+          } catch (syncErr) {
+            console.error('[VPSHub] Sync tracking setup failed:', syncErr.message);
+          }
+        }
+      } catch (dbErr) {
+        console.error('[VPSHub] Database creation in unified project failed:', dbErr.message);
+        results.databaseError = dbErr.message;
+      }
+    }
+
+    res.status(201).json({
+      message: 'Project created successfully!',
+      ...results,
+    });
+  } catch (err) {
+    console.error('[VPSHub] Unified project creation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to create project' });
+  }
+});
+
+// List all projects with their linked database and hosting info
+router.get('/projects-overview', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query(`
+      SELECT r.*,
+        a.username as owner_username,
+        bp.id as db_id, bp.name as db_name, bp.slug as db_slug, bp.status as db_status,
+        wh.id as hosting_id, wh.name as hosting_name, wh.slug as hosting_slug, wh.status as hosting_status
+      FROM vpshub_repositories r
+      JOIN vpc_admins a ON a.id = r.owner_id
+      LEFT JOIN db_projects bp ON bp.id = r.linked_project_id
+      LEFT JOIN web_hosting_projects wh ON wh.id = r.linked_hosting_id
+      WHERE r.owner_id = $1
+      ORDER BY r.updated_at DESC
+    `, [req.admin.id]);
+
+    res.json(rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      slug: r.slug,
+      owner: r.owner_username,
+      visibility: r.visibility,
+      updatedAt: r.updated_at,
+      database: r.db_id ? { id: r.db_id, name: r.db_name, slug: r.db_slug, status: r.db_status } : null,
+      hosting: r.hosting_id ? { id: r.hosting_id, name: r.hosting_name, slug: r.hosting_slug, status: r.hosting_status } : null,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load projects overview' });
   }
 });
 

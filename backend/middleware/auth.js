@@ -5,7 +5,6 @@ const { verifyToken } = require('../utils/jwt');
 const ROUTE_PERMISSION_MAP = {
   '/servers': 'servers',
   '/db': 'databases',
-  '/bana': 'banadb',
   '/api-keys': 'api_keys',
   '/integrations': 'integrations',
   '/backup': 'backups',
@@ -13,7 +12,7 @@ const ROUTE_PERMISSION_MAP = {
   '/terminal': 'terminal',
   '/users': 'users',
   '/gallery': 'gallery',
-  '/sync': 'banadb',
+  '/sync': 'db',
   '/web-hosting': 'web_hosting',
   '/settings': 'ai_agent',
   '/vpshub': 'vpshub',

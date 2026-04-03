@@ -36,13 +36,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SyncApiClient = void 0;
 const https = __importStar(require("https"));
 const http = __importStar(require("http"));
-function request(url, options) {
+function request(url, options, retries = 2) {
     return new Promise((resolve, reject) => {
         const parsedUrl = new URL(url);
         const client = parsedUrl.protocol === 'https:' ? https : http;
         const req = client.request(parsedUrl, {
             method: options.method || 'GET',
             headers: options.headers || {},
+            timeout: 60000, // 60s timeout
         }, (res) => {
             let data = '';
             res.on('data', (chunk) => (data += chunk));
@@ -50,18 +51,43 @@ function request(url, options) {
                 try {
                     const json = JSON.parse(data);
                     if (res.statusCode && res.statusCode >= 400) {
-                        reject(new Error(json.error || `HTTP ${res.statusCode}`));
+                        const errMsg = json.error || json.message || `Server error (HTTP ${res.statusCode})`;
+                        reject(new Error(errMsg));
                     }
                     else {
                         resolve(json);
                     }
                 }
                 catch {
-                    reject(new Error(`Invalid response: ${data.slice(0, 200)}`));
+                    if (res.statusCode && res.statusCode >= 400) {
+                        reject(new Error(`Server error (HTTP ${res.statusCode})`));
+                    }
+                    else {
+                        reject(new Error(`Invalid response from server`));
+                    }
                 }
             });
         });
-        req.on('error', reject);
+        req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('Connection timed out. Check your server URL and network.'));
+        });
+        req.on('error', (err) => {
+            if (retries > 0 && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT')) {
+                // Retry after a short delay
+                setTimeout(() => {
+                    request(url, options, retries - 1).then(resolve).catch(reject);
+                }, 1000);
+            }
+            else {
+                const friendly = err.code === 'ECONNREFUSED'
+                    ? 'Cannot connect to server. Is it running?'
+                    : err.code === 'ENOTFOUND'
+                        ? 'Server not found. Check the URL.'
+                        : err.message;
+                reject(new Error(friendly));
+            }
+        });
         if (options.body) {
             req.write(options.body);
         }

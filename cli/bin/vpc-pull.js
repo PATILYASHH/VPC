@@ -6,14 +6,14 @@ import { statusCommand } from '../src/commands/status.js';
 
 program
   .name('vpc-pull')
-  .description('Pull schema migrations from BanaDB')
+  .description('Pull schema migrations from DB')
   .version('1.0.0');
 
 program
   .command('init')
-  .description('Configure connection to a BanaDB project')
-  .requiredOption('--url <url>', 'BanaDB project API URL (e.g. https://server/api/bana/v1/my-project)')
-  .requiredOption('--key <key>', 'Pull API key (starts with bana_pull_)')
+  .description('Configure connection to a DB project')
+  .requiredOption('--url <url>', 'DB project API URL (e.g. https://server/api/db/v1/my-project)')
+  .requiredOption('--key <key>', 'Pull API key (starts with db_pull_)')
   .option('--out <dir>', 'Output directory for migration files', './migrations')
   .action(initCommand);
 

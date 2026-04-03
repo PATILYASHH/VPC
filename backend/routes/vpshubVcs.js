@@ -129,21 +129,9 @@ router.post('/:owner/:repo/negotiate', resolveRepo, authenticateVcs, (req, res) 
       const needs = new Set();
 
       for (const [refName, { old: oldHash, new: newHash }] of Object.entries(refUpdates || {})) {
-        // Verify old hash matches (optimistic locking)
-        const currentHash = vcsCore.resolveRef(req.repoPath, refName);
-        if (oldHash && oldHash !== '0'.repeat(64) && currentHash !== oldHash) {
-          return res.status(409).json({
-            error: 'Ref has been updated',
-            ref: refName,
-            expected: oldHash,
-            actual: currentHash,
-          });
-        }
-
-        // Collect all objects reachable from new that we don't have
+        // Force-push: never reject at negotiate stage — push handler handles divergence
+        // Just collect what objects the server needs
         if (newHash) {
-          // We need to tell the client what objects to send
-          // For now, we'll accept everything they want to send
           needs.add(newHash);
         }
       }
@@ -231,7 +219,7 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
     const pool = req.app.locals.pool;
     const updatedRefs = {};
     let autoMerged = false;
-    let autoPr = null;
+    let autoMergeNotifications = null;
 
     for (const [refName, update] of Object.entries(refUpdates)) {
       // Validate refName to prevent path traversal
@@ -268,46 +256,40 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
             message: `Auto-merge: integrate push into ${branchName}`,
           });
 
-          if (mergeResult.success) {
-            // Auto-merge succeeded — update ref to merge commit
-            vcsCore.updateRef(req.repoPath, refName, mergeResult.commitHash);
-            updatedRefs[refName] = mergeResult.commitHash;
-            autoMerged = true;
-          } else {
-            // Conflicts — create a push branch and auto-PR
-            const pushBranch = `push/${username}/${branchName}`;
-            const pushRefName = `refs/heads/${pushBranch}`;
-            vcsCore.updateRef(req.repoPath, pushRefName, newHash);
+          // Force-push philosophy: ALWAYS accept the push
+          // mergeResult now always has a commitHash (even with conflicts)
+          vcsCore.updateRef(req.repoPath, refName, mergeResult.commitHash);
+          updatedRefs[refName] = mergeResult.commitHash;
+          autoMerged = true;
 
-            try {
-              const prService = require('../services/vpshubPrService');
-              const conflictPaths = mergeResult.conflicts.map(c => c.path);
-              const pr = await prService.createPullRequest(pool, {
-                repoId: req.repoInfo.id,
-                title: `Merge ${pushBranch} into ${branchName}`,
-                description: `Auto-created PR due to merge conflicts during push.\n\n**Conflicting files:**\n${conflictPaths.map(p => '- `' + p + '`').join('\n')}\n\nResolve these conflicts and merge this PR.`,
-                sourceBranch: pushBranch,
-                targetBranch: branchName,
-                authorId: req.vcsUser?.userId || req.repoInfo.owner_id,
-              });
+          if (!mergeResult.success && mergeResult.conflicts) {
+            // Conflicts exist but push is accepted with conflict markers in the code
+            // Trigger background AI auto-resolve
+            const conflictPaths = mergeResult.conflicts.map(c => c.path);
+            console.log(`[VPC VCS] Push accepted with ${conflictPaths.length} conflict(s). Triggering AI auto-resolve...`);
 
-              // Sync the push branch to DB
-              await vcsCore.syncRefsToDb(pool, req.repoInfo.id, req.repoPath);
-              await vcsCore.syncCommitsToDb(pool, req.repoInfo.id, req.repoPath, newHash);
+            // Fire-and-forget: resolve conflicts in background
+            const autoResolve = require('../services/autoResolveService');
+            autoResolve.resolveInBackground(pool, {
+              repoId: req.repoInfo.id,
+              repoPath: req.repoPath,
+              owner: req.repoInfo.owner_username,
+              slug: req.repoInfo.slug,
+              branchName,
+              refName,
+              mergeCommitHash: mergeResult.commitHash,
+              conflicts: mergeResult.conflicts,
+              username,
+              authorId: req.vcsUser?.userId || req.repoInfo.owner_id,
+            }).catch(err => console.error('[VPC VCS] Background auto-resolve error:', err.message));
 
-              autoPr = {
-                pr_number: pr.pr_number,
-                source_branch: pushBranch,
-                target_branch: branchName,
-                conflicts: conflictPaths,
-              };
-            } catch (prErr) {
-              console.error('[VPC VCS] auto-PR creation failed:', prErr.message);
-              return res.status(409).json({
-                error: `Merge conflict in: ${mergeResult.conflicts.map(c => c.path).join(', ')}. Push rejected.`,
-                conflicts: mergeResult.conflicts.map(c => c.path),
-              });
-            }
+            // Track conflict info for response (but push still succeeds)
+            if (!autoMergeNotifications) autoMergeNotifications = [];
+            autoMergeNotifications.push({
+              type: 'conflicts_auto_resolving',
+              message: `${conflictPaths.length} file(s) had conflicts with other changes. AI is resolving them automatically.`,
+              files: conflictPaths,
+            });
           }
         }
       } else {
@@ -317,21 +299,10 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
       }
     }
 
-    // If auto-PR was created, return early with PR info
-    if (autoPr) {
-      await pool.query('UPDATE vpshub_repositories SET updated_at = NOW() WHERE id = $1', [req.repoInfo.id]);
-      return res.json({
-        ok: false,
-        conflict: true,
-        auto_pr: autoPr,
-        message: `Merge conflicts detected. PR #${autoPr.pr_number} created automatically.`,
-      });
-    }
-
-    // Sync to DB
-    await vcsCore.syncRefsToDb(pool, req.repoInfo.id, req.repoPath);
+    // Sync to DB (skip if tables don't exist yet)
+    try { await vcsCore.syncRefsToDb(pool, req.repoInfo.id, req.repoPath); } catch { /* table may not exist */ }
     for (const [, hash] of Object.entries(updatedRefs)) {
-      await vcsCore.syncCommitsToDb(pool, req.repoInfo.id, req.repoPath, hash);
+      try { await vcsCore.syncCommitsToDb(pool, req.repoInfo.id, req.repoPath, hash); } catch { /* table may not exist */ }
     }
 
     // Update repo size and timestamp
@@ -351,6 +322,10 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
       ok: true,
       updated_refs: updatedRefs,
       merged: autoMerged || undefined,
+      message: autoMergeNotifications
+        ? 'Your changes have been saved! AI is resolving some conflicts in the background.'
+        : 'Your changes have been saved!',
+      notifications: autoMergeNotifications || undefined,
     });
 
   } catch (err) {
@@ -498,6 +473,159 @@ function buildPack(objects, refs = {}) {
   parts.push(Buffer.from(JSON.stringify(refs)));
 
   return Buffer.concat(parts);
+}
+
+// ─── ZIP Download (HTTP Clone) ──────────────────────────────
+
+const archiver = require('archiver');
+
+router.get('/:owner/:repo/archive/:ref.zip', resolveRepo, authenticateVcs, (req, res) => {
+  try {
+    const ref = req.params.ref || 'main';
+    const commitHash = vcsCore.resolveRef(req.repoPath, ref);
+    if (!commitHash) return res.status(404).json({ error: 'Ref not found' });
+
+    const commit = vcsCore.readCommit(req.repoPath, commitHash);
+    const files = vcsCore.walkTree(req.repoPath, commit.tree);
+
+    const repoName = `${req.repoInfo.slug}-${ref}`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${repoName}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(res);
+
+    for (const file of files) {
+      try {
+        const content = vcsCore.readBlob(req.repoPath, file.hash);
+        archive.append(content, { name: `${repoName}/${file.path}` });
+      } catch { /* skip unreadable */ }
+    }
+
+    archive.finalize();
+  } catch (err) {
+    console.error('[VPC VCS] archive error:', err.message);
+    res.status(500).json({ error: 'Failed to create archive' });
+  }
+});
+
+// Also support simple GET for download without auth (public repos)
+router.get('/:owner/:repo/download', resolveRepo, async (req, res) => {
+  try {
+    if (req.repoInfo.visibility !== 'public') {
+      // Check auth for private repos
+      const pool = req.app.locals.pool;
+      const authHeader = req.headers.authorization;
+      const user = await authenticateGitRequest(pool, authHeader);
+      if (!user) {
+        res.setHeader('WWW-Authenticate', 'Basic realm="VPSHub"');
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+    }
+
+    const ref = req.query.ref || 'main';
+    const commitHash = vcsCore.resolveRef(req.repoPath, ref);
+    if (!commitHash) return res.status(404).json({ error: 'Ref not found' });
+
+    const commit = vcsCore.readCommit(req.repoPath, commitHash);
+    const files = vcsCore.walkTree(req.repoPath, commit.tree);
+
+    const repoName = `${req.repoInfo.slug}-${ref}`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${repoName}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.pipe(res);
+
+    for (const file of files) {
+      try {
+        const content = vcsCore.readBlob(req.repoPath, file.hash);
+        archive.append(content, { name: `${repoName}/${file.path}` });
+      } catch { /* skip unreadable */ }
+    }
+
+    archive.finalize();
+
+    // Track download for smart upload detection (fire-and-forget)
+    if (req.vcsUser?.userId) {
+      const { trackDownload } = require('../services/vpshubGitService');
+      trackDownload(req.app.locals.pool, req.repoInfo.id, req.vcsUser.userId, ref, commitHash)
+        .catch(() => {});
+    }
+  } catch (err) {
+    console.error('[VPC VCS] download error:', err.message);
+    res.status(500).json({ error: 'Failed to create archive' });
+  }
+});
+
+// ─── Git-compatible discovery (partial) ─────────────────────
+// Allows `git clone` to at least discover refs, even if full protocol isn't supported
+
+router.get('/:owner/:repo/info/refs', resolveRepo, authenticateVcs, (req, res) => {
+  try {
+    const service = req.query.service;
+    const refs = vcsCore.listRefs(req.repoPath, 'refs/');
+    const head = vcsCore.readHead(req.repoPath);
+    let headHash = head.symbolic ? vcsCore.resolveRef(req.repoPath, head.ref) : head.hash;
+
+    if (service === 'git-upload-pack' || service === 'git-receive-pack') {
+      // Git Smart HTTP discovery - return pkt-line format
+      res.setHeader('Content-Type', `application/x-${service}-advertisement`);
+
+      const lines = [];
+      // Service announcement
+      const svcLine = `# service=${service}\n`;
+      lines.push(pktLine(svcLine));
+      lines.push('0000'); // flush
+
+      // HEAD
+      if (headHash) {
+        const defaultBranch = head.symbolic ? head.ref.replace('refs/heads/', '') : 'main';
+        const capabilities = 'multi_ack_detailed side-band-64k thin-pack ofs-delta agent=vpshub/2.0';
+        lines.push(pktLine(`${headHash} HEAD\0${capabilities}\n`));
+      }
+
+      // All refs
+      for (const ref of refs) {
+        lines.push(pktLine(`${ref.hash} ${ref.name}\n`));
+      }
+      lines.push('0000'); // flush
+
+      res.end(lines.join(''));
+    } else {
+      // Dumb HTTP protocol - plain text
+      res.setHeader('Content-Type', 'text/plain');
+      let output = '';
+      if (headHash) output += `${headHash}\tHEAD\n`;
+      for (const ref of refs) {
+        output += `${ref.hash}\t${ref.name}\n`;
+      }
+      res.end(output);
+    }
+  } catch (err) {
+    console.error('[VPC VCS] info/refs error:', err.message);
+    res.status(500).end('Internal Server Error');
+  }
+});
+
+router.get('/:owner/:repo/HEAD', resolveRepo, (req, res) => {
+  try {
+    const head = vcsCore.readHead(req.repoPath);
+    if (head.symbolic) {
+      res.setHeader('Content-Type', 'text/plain');
+      res.end(`ref: ${head.ref}\n`);
+    } else {
+      res.setHeader('Content-Type', 'text/plain');
+      res.end(`${head.hash}\n`);
+    }
+  } catch (err) {
+    res.status(500).end('Internal Server Error');
+  }
+});
+
+function pktLine(data) {
+  const len = data.length + 4;
+  return len.toString(16).padStart(4, '0') + data;
 }
 
 module.exports = router;

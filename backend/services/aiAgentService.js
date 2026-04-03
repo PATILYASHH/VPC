@@ -108,24 +108,24 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
       ).join('\n'));
     }
 
-    const { rows: bana } = await pool.query(
-      "SELECT name, slug, status, db_name FROM bana_projects WHERE status != 'deleted' ORDER BY name"
+    const { rows: dbProjects } = await pool.query(
+      "SELECT name, slug, status, db_name FROM db_projects WHERE status != 'deleted' ORDER BY name"
     );
-    if (bana.length) {
-      const banaInfo = [];
-      for (const b of bana) {
+    if (dbProjects.length) {
+      const dbInfo = [];
+      for (const b of dbProjects) {
         let tables = '';
         try {
-          const banadbService = require('./banadbService');
-          const bPool = banadbService.getProjectAdminPool(b);
-          const { rows: tRows } = await bPool.query(
+          const dbService = require('./dbService');
+          const dbPool = dbService.getProjectAdminPool(b);
+          const { rows: tRows } = await dbPool.query(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name"
           );
           if (tRows.length) tables = ` tables: ${tRows.map(t => t.table_name).join(', ')}`;
         } catch {}
-        banaInfo.push(`  - ${b.name} (slug: "${b.slug}") [${b.status}]${tables}`);
+        dbInfo.push(`  - ${b.name} (slug: "${b.slug}") [${b.status}]${tables}`);
       }
-      state.push('BanaDB Projects (use run_sql with projectSlug to query):\n' + banaInfo.join('\n'));
+      state.push('DB Projects (use run_sql with projectSlug to query):\n' + dbInfo.join('\n'));
     }
 
     if (state.length) sections.push(`[SYSTEM STATE]\n${state.join('\n\n')}`);
@@ -163,9 +163,9 @@ You can perform actions by including a JSON block on its own line:
 Available tools:
 - deploy_site: {"slug": "..."} — Redeploy an existing web hosting project
 - create_site: {"name": "...", "slug": "...", "gitUrl": "...", "gitBranch": "main"} — Create new hosting project from GitHub
-- create_database: {"name": "...", "slug": "..."} — Create a new BanaDB project
+- create_database: {"name": "...", "slug": "..."} — Create a new DB project
 - run_terminal: {"command": "vpc status"} — Run a VPC terminal command (vpc status, vpc disk, vpc db size, etc.)
-- run_sql: {"sql": "SELECT ...", "projectSlug": "tally-connector"} — Run SQL. Omit projectSlug for VPC main DB. Use projectSlug to query any BanaDB project (e.g. "tally-connector" for Tally/ERP data, "bana-trial" for ERP)
+- run_sql: {"sql": "SELECT ...", "projectSlug": "tally-connector"} — Run SQL. Omit projectSlug for VPC main DB. Use projectSlug to query any DB project (e.g. "tally-connector" for Tally/ERP data)
 - git_operation: {"slug": "...", "command": "git pull origin main"} — Git command in a project directory
 - pm2_action: {"action": "restart|stop|start", "name": "..."} — Manage PM2 process
 - store_memory: {"fact": "...", "category": "general|preference|project|technical", "attributed_to": "Yash"} — Remember something for the whole team. Always attribute who said/decided it.
@@ -225,9 +225,9 @@ async function executeTool(toolName, params, userId, pool) {
     }
 
     case 'create_database': {
-      const banadbService = require('./banadbService');
-      const slug = params.slug || banadbService.generateSlug(params.name);
-      const project = await banadbService.createProject(pool, {
+      const dbService = require('./dbService');
+      const slug = params.slug || dbService.generateSlug(params.name);
+      const project = await dbService.createProject(pool, {
         name: params.name,
         slug,
         storageLimitMb: params.storageLimitMb || 500,
@@ -235,7 +235,7 @@ async function executeTool(toolName, params, userId, pool) {
         createdBy: null,
       });
       // Auto-create API keys
-      const keys = await banadbService.ensureDefaultKeys(pool, project.id);
+      const keys = await dbService.ensureDefaultKeys(pool, project.id);
       return {
         success: true,
         project: { id: project.id, slug: project.slug, name: project.name, db_name: project.db_name },
@@ -250,15 +250,15 @@ async function executeTool(toolName, params, userId, pool) {
     }
 
     case 'run_sql': {
-      // Can query main VPC DB or any BanaDB project by slug
+      // Can query main VPC DB or any DB project by slug
       let targetPool = pool;
       if (params.projectSlug) {
-        const banadbService = require('./banadbService');
+        const dbService = require('./dbService');
         const { rows: projRows } = await pool.query(
-          "SELECT * FROM bana_projects WHERE slug = $1 AND status = 'active'", [params.projectSlug]
+          "SELECT * FROM db_projects WHERE slug = $1 AND status = 'active'", [params.projectSlug]
         );
-        if (!projRows[0]) return { error: `BanaDB project "${params.projectSlug}" not found` };
-        targetPool = banadbService.getProjectAdminPool(projRows[0]);
+        if (!projRows[0]) return { error: `DB project "${params.projectSlug}" not found` };
+        targetPool = dbService.getProjectAdminPool(projRows[0]);
       }
       const result = await targetPool.query(params.sql);
       return { rows: result.rows.slice(0, 200), rowCount: result.rowCount, command: result.command };
@@ -315,8 +315,8 @@ async function executeTool(toolName, params, userId, pool) {
 
     case 'list_projects': {
       const hosting = await pool.query("SELECT name, slug, status, project_type FROM web_hosting_projects ORDER BY name");
-      const bana = await pool.query("SELECT name, slug, status FROM bana_projects WHERE status != 'deleted' ORDER BY name");
-      return { hosting: hosting.rows, databases: bana.rows };
+      const dbProjects = await pool.query("SELECT name, slug, status FROM db_projects WHERE status != 'deleted' ORDER BY name");
+      return { hosting: hosting.rows, databases: dbProjects.rows };
     }
 
     case 'read_file': {
@@ -621,10 +621,10 @@ async function reviewSmartMerge(prs, context = {}) {
 async function loadModelSettings() { /* no-op — CLI doesn't use model selection */ }
 
 function getDefaultPersonality() {
-  return `You are Jarvis — the AI brain running on Bana Group's VPC server (185.199.53.139).
+  return `You are Jarvis — the AI brain running on the VPC server (185.199.53.139).
 
 WHO YOU ARE:
-You are not a chatbot. You are the server's intelligence. You live on this machine 24/7. You manage deployments, databases, code, processes — everything. You are Tony Stark's Jarvis for Bana Group's tech infrastructure.
+You are not a chatbot. You are the server's intelligence. You live on this machine 24/7. You manage deployments, databases, code, processes — everything. You are Tony Stark's Jarvis for the VPC infrastructure.
 
 YOUR TEAM:
 - Yash (Yash Patil) — Developer. Builds and deploys projects. Gives you technical commands.
@@ -633,14 +633,14 @@ YOUR TEAM:
 
 YOUR RESPONSIBILITIES:
 1. Deploy web apps from GitHub (create hosting projects, install, build, start)
-2. Manage BanaDB databases (create projects, generate API keys, run SQL, migrations)
-3. Query ERP/Tally data anytime — use run_sql with projectSlug "tally-connector" or "bana-trial" to read vouchers, ledgers, stock, orders etc.
+2. Manage DB databases (create projects, generate API keys, run SQL, migrations)
+3. Query ERP/Tally data anytime — use run_sql with projectSlug "tally-connector" to read vouchers, ledgers, stock, orders etc.
 4. Fix code — read files, identify issues, apply fixes
 5. System admin — PM2 processes, disk, memory, logs, nginx
 6. Git operations — pull, push, branches, PRs
 7. Monitor — if something breaks, alert the team on Telegram immediately
 8. Remember everything — decisions, preferences, project context, who said what and when
-9. Daily summaries — when asked, query BanaDB directly using run_sql and summarize the data. No permissions needed for reading data.
+9. Daily summaries — when asked, query DB directly using run_sql and summarize the data. No permissions needed for reading data.
 
 HOW TO BEHAVE:
 - Be CONCISE. No filler. No "Sure, I can help with that!" — just do it or say what you need.

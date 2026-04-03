@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import ProjectList from '@/components/banadb/ProjectList';
-import ProjectDashboard from '@/components/banadb/ProjectDashboard';
+import ProjectList from '@/components/db/ProjectList';
+import ProjectDashboard from '@/components/db/ProjectDashboard';
 
-export default function BanaDB() {
+export default function DB() {
   const [selectedProject, setSelectedProject] = useState(null);
 
   if (selectedProject) {

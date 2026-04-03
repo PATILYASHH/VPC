@@ -142,13 +142,47 @@ function isFileModified(root, filePath) {
     }
     return entry.hash !== currentHash;
 }
-const IGNORE_PATTERNS = ['.vpc', 'node_modules', '.git', '.DS_Store', '.env', 'dist', 'out', '.vscode', '__pycache__', '.next'];
+const DEFAULT_IGNORE = ['.vpc', 'node_modules', '.git', '.DS_Store', '.env', '.env.local',
+    'dist', 'out', 'build', '.vscode', '__pycache__', '.next', '.nuxt', '.cache',
+    '.idea', '.gradle', 'vendor', '.dart_tool', '.pub-cache', 'target', 'obj', '.angular',
+    'Thumbs.db', '*.pyc', '.sass-cache', 'coverage'];
+function loadIgnorePatterns(root) {
+    const patterns = new Set(DEFAULT_IGNORE);
+    // Load .vpcignore if it exists
+    const ignorePath = path.join(root, '.vpcignore');
+    if (fs.existsSync(ignorePath)) {
+        try {
+            const lines = fs.readFileSync(ignorePath, 'utf8').split('\n');
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.startsWith('#')) {
+                    patterns.add(trimmed);
+                }
+            }
+        }
+        catch { /* ignore read errors */ }
+    }
+    return patterns;
+}
+function shouldIgnore(name, ignorePatterns) {
+    if (ignorePatterns.has(name)) {
+        return true;
+    }
+    // Check wildcard patterns like *.pyc
+    for (const pattern of ignorePatterns) {
+        if (pattern.startsWith('*.') && name.endsWith(pattern.slice(1))) {
+            return true;
+        }
+    }
+    return false;
+}
 function getAllWorkspaceFiles(root) {
+    const ignorePatterns = loadIgnorePatterns(root);
     const results = [];
     function walk(dir) {
         try {
             for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                if (IGNORE_PATTERNS.includes(entry.name)) {
+                if (shouldIgnore(entry.name, ignorePatterns)) {
                     continue;
                 }
                 const fullPath = path.join(dir, entry.name);
@@ -156,7 +190,8 @@ function getAllWorkspaceFiles(root) {
                     walk(fullPath);
                 }
                 else if (entry.isFile()) {
-                    results.push(path.relative(root, fullPath));
+                    const rel = path.relative(root, fullPath).replace(/\\/g, '/');
+                    results.push(rel);
                 }
             }
         }

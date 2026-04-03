@@ -24,7 +24,11 @@ function ensureReposDir() {
 }
 
 function getRepoPath(ownerUsername, repoSlug) {
-  return path.join(REPOS_DIR, ownerUsername, `${repoSlug}.vpc`);
+  // Check for both .vpc and .git extensions (legacy repos use .git)
+  const vpcPath = path.join(REPOS_DIR, ownerUsername, `${repoSlug}.vpc`);
+  const gitPath = path.join(REPOS_DIR, ownerUsername, `${repoSlug}.git`);
+  if (fs.existsSync(gitPath)) return gitPath;
+  return vpcPath;
 }
 
 // ─── Repository CRUD ─────────────────────────────────────────
@@ -452,6 +456,150 @@ async function getChangedFiles(ownerUsername, repoSlug, fromSha, toSha) {
   }
 }
 
+// ─── Upload Files & Commit ──────────────────────────────────
+
+/**
+ * Upload multiple files to a repo branch and create a commit.
+ * Files are provided as an array of { path, content (Buffer) }.
+ * If the branch already has commits, new files are merged into the existing tree.
+ *
+ * @param {object} pool - DB pool
+ * @param {number} repoId - repo DB id
+ * @param {string} ownerUsername
+ * @param {string} repoSlug
+ * @param {string} branch - target branch (e.g. 'main')
+ * @param {Array<{path: string, content: Buffer}>} files - files to add
+ * @param {string} commitMessage
+ * @param {string} authorName
+ * @returns {{ commitHash: string, filesCount: number }}
+ */
+async function uploadFiles(pool, repoId, ownerUsername, repoSlug, branch, files, commitMessage, authorName) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+
+  // Create blobs for each file
+  const fileEntries = files.map(f => {
+    const blobHash = vcsCore.createBlob(repoPath, f.content);
+    return { path: f.path, hash: blobHash, mode: '100644' };
+  });
+
+  // Get existing tree entries if branch has commits
+  let existingFiles = [];
+  const parentHash = vcsCore.resolveRef(repoPath, `refs/heads/${branch}`) ||
+                     vcsCore.resolveRef(repoPath, 'HEAD');
+
+  if (parentHash) {
+    try {
+      const parentCommit = vcsCore.readCommit(repoPath, parentHash);
+      existingFiles = vcsCore.walkTree(repoPath, parentCommit.tree);
+    } catch { /* empty repo */ }
+  }
+
+  // Merge: new files override existing ones at same path
+  const newPaths = new Set(fileEntries.map(f => f.path));
+  const mergedFiles = [
+    ...existingFiles.filter(f => !newPaths.has(f.path)),
+    ...fileEntries,
+  ];
+
+  // Build tree and commit
+  const treeHash = vcsCore.buildTreeFromFiles(repoPath, mergedFiles);
+  const parents = parentHash ? [parentHash] : [];
+
+  const commitHash = vcsCore.createCommit(repoPath, {
+    tree: treeHash,
+    parents,
+    authorName,
+    authorEmail: `${authorName}@vpshub`,
+    message: commitMessage || `Upload ${files.length} file(s)`,
+  });
+
+  // Update branch ref
+  vcsCore.updateRef(repoPath, `refs/heads/${branch}`, commitHash);
+
+  // Sync to DB (skip if tables don't exist)
+  try { await vcsCore.syncRefsToDb(pool, repoId, repoPath); } catch { /* table may not exist */ }
+  try { await vcsCore.syncCommitsToDb(pool, repoId, repoPath, commitHash); } catch { /* table may not exist */ }
+  await updateRepoSize(pool, repoId, ownerUsername, repoSlug);
+
+  return { commitHash, filesCount: files.length };
+}
+
+/**
+ * Smart upload: compare uploaded files against current branch,
+ * detect what changed, and show a diff summary.
+ * Returns { newFiles, modifiedFiles, unchangedFiles, deletedFiles }
+ */
+function previewUpload(ownerUsername, repoSlug, branch, uploadedFiles) {
+  const repoPath = getRepoPath(ownerUsername, repoSlug);
+  const refHash = vcsCore.resolveRef(repoPath, `refs/heads/${branch}`) ||
+                  vcsCore.resolveRef(repoPath, 'HEAD');
+
+  const existingMap = new Map();
+  if (refHash) {
+    try {
+      const commit = vcsCore.readCommit(repoPath, refHash);
+      const files = vcsCore.walkTree(repoPath, commit.tree);
+      for (const f of files) existingMap.set(f.path, f.hash);
+    } catch { /* empty repo */ }
+  }
+
+  const newFiles = [];
+  const modifiedFiles = [];
+  const unchangedFiles = [];
+
+  for (const file of uploadedFiles) {
+    const uploadHash = vcsCore.hashObject('blob', file.content);
+    const existingHash = existingMap.get(file.path);
+
+    if (!existingHash) {
+      newFiles.push(file.path);
+    } else if (existingHash !== uploadHash) {
+      modifiedFiles.push(file.path);
+    } else {
+      unchangedFiles.push(file.path);
+    }
+  }
+
+  return {
+    newFiles,
+    modifiedFiles,
+    unchangedFiles,
+    totalExisting: existingMap.size,
+    currentCommit: refHash,
+  };
+}
+
+/**
+ * Track when a user downloads a repo snapshot.
+ * Used later to detect what changed on server since their download.
+ */
+async function trackDownload(pool, repoId, userId, branch, commitHash) {
+  try {
+    await pool.query(`
+      INSERT INTO vpshub_user_downloads (repo_id, user_id, branch, commit_hash, downloaded_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (repo_id, user_id, branch)
+      DO UPDATE SET commit_hash = $4, downloaded_at = NOW()
+    `, [repoId, userId, branch, commitHash]);
+  } catch { /* table may not exist yet */ }
+}
+
+/**
+ * Get the last download info for a user on a repo/branch.
+ */
+async function getLastDownload(pool, repoId, userId, branch) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT commit_hash, downloaded_at FROM vpshub_user_downloads
+       WHERE repo_id = $1 AND user_id = $2 AND branch = $3`,
+      [repoId, userId, branch]
+    );
+    return rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   REPOS_DIR,
   getRepoPath,
@@ -478,4 +626,8 @@ module.exports = {
   getFileManifest,
   getHeadSha,
   getChangedFiles,
+  uploadFiles,
+  previewUpload,
+  trackDownload,
+  getLastDownload,
 };

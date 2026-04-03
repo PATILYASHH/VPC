@@ -6,7 +6,7 @@ import IntegrationMonitor from '@/components/apps/IntegrationMonitor';
 import BackupManager from '@/components/apps/BackupManager';
 import LogsViewer from '@/components/apps/LogsViewer';
 import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
-import BanaDB from '@/components/apps/BanaDB';
+import DB from '@/components/apps/DB';
 import VpcAuth from '@/components/apps/VpcAuth';
 import Gallery from '@/components/apps/Gallery';
 import WebHosting from '@/components/apps/WebHosting';
@@ -30,16 +30,16 @@ const APP_REGISTRY = {
     minWidth: 800,
     minHeight: 500,
   },
-  'bana-db': {
-    id: 'bana-db',
-    title: 'BanaDB',
+  'db': {
+    id: 'db',
+    title: 'DB',
     description: 'Database Projects',
     icon: Layers,
     iconColor: 'text-emerald-400',
     iconBg: 'bg-emerald-500/15',
     category: 'development',
-    component: BanaDB,
-    permission: 'banadb',
+    component: DB,
+    permission: 'db',
     defaultWidth: 1200,
     defaultHeight: 700,
     minWidth: 900,

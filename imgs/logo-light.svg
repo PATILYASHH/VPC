@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" width="220" height="60" fill="none">
+  <!-- Terminal/monitor icon -->
+  <rect x="4" y="8" width="36" height="28" rx="4" stroke="#ffffff" stroke-width="2.5" fill="none"/>
+  <!-- Screen inner highlight -->
+  <rect x="8" y="12" width="28" height="18" rx="2" fill="#ffffff" opacity="0.1"/>
+  <!-- Terminal prompt lines -->
+  <line x1="11" y1="17" x2="19" y2="17" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <line x1="11" y1="22" x2="24" y2="22" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <line x1="11" y1="27" x2="16" y2="27" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <!-- Blinking cursor -->
+  <rect x="17" y="24.5" width="4" height="5" rx="0.5" fill="#ffffff" opacity="0.8"/>
+  <!-- Monitor stand neck -->
+  <line x1="22" y1="36" x2="22" y2="43" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Monitor stand base -->
+  <line x1="15" y1="43" x2="29" y2="43" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Divider -->
+  <line x1="52" y1="14" x2="52" y2="46" stroke="#ffffff" stroke-width="1.5" opacity="0.2"/>
+
+  <!-- VPC wordmark -->
+  <text
+    x="62"
+    y="40"
+    font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+    font-size="26"
+    font-weight="700"
+    letter-spacing="-0.5"
+    fill="#ffffff"
+  >VPC</text>
+
+  <!-- Tagline -->
+  <text
+    x="63"
+    y="51"
+    font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+    font-size="8"
+    font-weight="400"
+    letter-spacing="2.2"
+    fill="#ffffff"
+    opacity="0.5"
+  >VIRTUAL PC CONTROL</text>
+</svg>

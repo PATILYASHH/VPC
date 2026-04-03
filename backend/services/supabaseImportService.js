@@ -4,11 +4,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-const banadbService = require('./banadbService');
+const dbService = require('./dbService');
 
 // ── Encryption helpers (for storing connection strings) ────────────
 const ALGO = 'aes-256-gcm';
-const ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'bana-default-key', 'bana-salt', 32);
+const ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'db-default-key', 'db-salt', 32);
 
 function encrypt(text) {
   const iv = crypto.randomBytes(16);
@@ -173,14 +173,14 @@ async function testConnection(connectionString) {
 async function saveConnection(mainPool, projectId, connectionString) {
   const encrypted = encrypt(connectionString);
   await mainPool.query(
-    `UPDATE bana_projects SET supabase_connection = $1, updated_at = NOW() WHERE id = $2`,
+    `UPDATE db_projects SET supabase_connection = $1, updated_at = NOW() WHERE id = $2`,
     [encrypted, projectId]
   );
 }
 
 async function getConnection(mainPool, projectId) {
   const { rows } = await mainPool.query(
-    `SELECT supabase_connection FROM bana_projects WHERE id = $1`,
+    `SELECT supabase_connection FROM db_projects WHERE id = $1`,
     [projectId]
   );
   if (!rows[0]?.supabase_connection) return null;
@@ -189,7 +189,7 @@ async function getConnection(mainPool, projectId) {
 
 async function removeConnection(mainPool, projectId) {
   await mainPool.query(
-    `UPDATE bana_projects SET supabase_connection = NULL, last_sync_at = NULL, sync_status = NULL, updated_at = NOW() WHERE id = $1`,
+    `UPDATE db_projects SET supabase_connection = NULL, last_sync_at = NULL, sync_status = NULL, updated_at = NOW() WHERE id = $1`,
     [projectId]
   );
 }
@@ -399,7 +399,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
   const conn = parseConnectionString(connectionString);
   const dumpPath = path.join(
     process.env.TEMP || '/tmp',
-    `bana_import_${project.id}.dump`
+    `db_import_${project.id}.dump`
   );
 
   // Run import in background (not awaited)
@@ -410,7 +410,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
     try {
       // ── Step 1: pg_dump remote Supabase DB ─────────────────
       remote = createRemotePool(connectionString);
-      const local = banadbService.getProjectPool(project);
+      const local = dbService.getProjectPool(project);
 
       addJobStep(job.id, 'dump', 'running', 'Dumping remote Supabase database...');
       updateJob(job.id, { progress: 5, message: 'Dumping remote database...' });
@@ -438,9 +438,9 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       updateJob(job.id, { progress: 35, message: 'Preparing database extensions...' });
       await prepareLocalExtensions(remote, local, job.id);
 
-      // ── Step 4: pg_restore into BanaDB project DB ──────────
-      addJobStep(job.id, 'restore', 'running', 'Restoring into BanaDB project...');
-      updateJob(job.id, { progress: 45, message: 'Restoring to BanaDB...' });
+      // ── Step 4: pg_restore into DB project DB ──────────
+      addJobStep(job.id, 'restore', 'running', 'Restoring into DB project...');
+      updateJob(job.id, { progress: 45, message: 'Restoring to DB...' });
 
       const restoreResult = await runPgRestore(project, dumpPath);
 
@@ -513,7 +513,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
 
       await saveConnection(mainPool, project.id, connectionString);
       await mainPool.query(
-        `UPDATE bana_projects SET last_sync_at = NOW(), sync_status = 'synced', updated_at = NOW() WHERE id = $1`,
+        `UPDATE db_projects SET last_sync_at = NOW(), sync_status = 'synced', updated_at = NOW() WHERE id = $1`,
         [project.id]
       );
 
@@ -542,7 +542,7 @@ function startImport(mainPool, project, { connectionString, importAuth = true })
       // Mark project sync as error
       try {
         await mainPool.query(
-          `UPDATE bana_projects SET sync_status = 'error', updated_at = NOW() WHERE id = $1`,
+          `UPDATE db_projects SET sync_status = 'error', updated_at = NOW() WHERE id = $1`,
           [project.id]
         );
       } catch {}
@@ -570,7 +570,7 @@ async function startSync(mainPool, project) {
 
   // Mark as syncing
   await mainPool.query(
-    `UPDATE bana_projects SET sync_status = 'syncing', updated_at = NOW() WHERE id = $1`,
+    `UPDATE db_projects SET sync_status = 'syncing', updated_at = NOW() WHERE id = $1`,
     [project.id]
   );
 

@@ -4,7 +4,7 @@ import { useApiQuery } from '@/hooks/useApi';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 
 export default function ProjectsGrid({ onSelectProject }) {
-  const { data: projectsData, isLoading } = useApiQuery('bana-projects', '/admin/bana/projects');
+  const { data: projectsData, isLoading } = useApiQuery('db-projects', '/admin/db/projects');
   const { data: summaryData } = useApiQuery('sync-summary', '/admin/sync/summary');
 
   const projects = projectsData?.projects || [];

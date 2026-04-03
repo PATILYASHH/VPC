@@ -3,15 +3,15 @@ const path = require('path');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const { banaApiAuth, banaStorageCheck } = require('../middleware/banaApiAuth');
-const banadbService = require('../services/banadbService');
-const banaStorage = require('../services/banaStorageService');
+const { dbApiAuth, dbStorageCheck } = require('../middleware/dbApiAuth');
+const dbService = require('../services/dbService');
+const dbStorage = require('../services/dbStorageService');
 const dbBrowser = require('../services/dbBrowserService');
 const { signToken, verifyToken } = require('../utils/jwt');
 const { validateIdentifier, quoteIdentifier } = require('../utils/sanitize');
 
 // All routes require API key
-router.use(banaApiAuth);
+router.use(dbApiAuth);
 
 // ─── Auth ──────────────────────────────────────────────────
 
@@ -21,13 +21,13 @@ router.post('/:slug/auth/signup', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-    const user = await banadbService.createAuthUser(req.banaPool, { email, password });
+    const user = await dbService.createAuthUser(req.dbPool, { email, password });
 
     const token = signToken({
       sub: user.id,
       email: user.email,
-      project: req.banaProject.id,
-      type: 'bana_user',
+      project: req.dbProject.id,
+      type: 'db_user',
     });
 
     res.status(201).json({ user, access_token: token });
@@ -42,14 +42,14 @@ router.post('/:slug/auth/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-    const user = await banadbService.authenticateAuthUser(req.banaPool, email, password);
+    const user = await dbService.authenticateAuthUser(req.dbPool, email, password);
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
     const token = signToken({
       sub: user.id,
       email: user.email,
-      project: req.banaProject.id,
-      type: 'bana_user',
+      project: req.dbProject.id,
+      type: 'db_user',
     });
 
     res.json({ user, access_token: token });
@@ -88,7 +88,7 @@ router.get('/:slug/rest/:table', async (req, res) => {
     const pageSize = Math.min(parseInt(limit) || 100, 1000);
     const pageOffset = parseInt(offset) || 0;
 
-    const data = await dbBrowser.getTableData(req.banaPool, {
+    const data = await dbBrowser.getTableData(req.dbPool, {
       schema: 'public',
       table,
       page: Math.floor(pageOffset / pageSize) + 1,
@@ -105,20 +105,20 @@ router.get('/:slug/rest/:table', async (req, res) => {
   }
 });
 
-router.post('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
+router.post('/:slug/rest/:table', dbStorageCheck, async (req, res) => {
   try {
     const table = req.params.table;
     validateIdentifier(table);
 
     // Service key can write, anon key needs auth token
-    if (req.banaKeyRole === 'anon') {
+    if (req.dbKeyRole === 'anon') {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Write operations require user authentication' });
       }
       try {
         const decoded = verifyToken(authHeader.slice(7));
-        if (decoded.project !== req.banaProject.id) {
+        if (decoded.project !== req.dbProject.id) {
           return res.status(403).json({ error: 'Token does not match project' });
         }
       } catch {
@@ -126,27 +126,27 @@ router.post('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
       }
     }
 
-    const row = await dbBrowser.insertRow(req.banaPool, 'public', table, req.body);
+    const row = await dbBrowser.insertRow(req.dbPool, 'public', table, req.body);
     res.status(201).json(row);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-router.patch('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
+router.patch('/:slug/rest/:table', dbStorageCheck, async (req, res) => {
   try {
     const table = req.params.table;
     validateIdentifier(table);
 
     // Require auth for writes with anon key
-    if (req.banaKeyRole === 'anon') {
+    if (req.dbKeyRole === 'anon') {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Write operations require user authentication' });
       }
       try {
         const decoded = verifyToken(authHeader.slice(7));
-        if (decoded.project !== req.banaProject.id) {
+        if (decoded.project !== req.dbProject.id) {
           return res.status(403).json({ error: 'Token does not match project' });
         }
       } catch {
@@ -162,7 +162,7 @@ router.patch('/:slug/rest/:table', banaStorageCheck, async (req, res) => {
     // Find the primary key filter
     const pkFilter = filters[0];
     const row = await dbBrowser.updateRow(
-      req.banaPool, 'public', table, pkFilter.column, pkFilter.value, req.body
+      req.dbPool, 'public', table, pkFilter.column, pkFilter.value, req.body
     );
     res.json(row);
   } catch (err) {
@@ -175,14 +175,14 @@ router.delete('/:slug/rest/:table', async (req, res) => {
     const table = req.params.table;
     validateIdentifier(table);
 
-    if (req.banaKeyRole === 'anon') {
+    if (req.dbKeyRole === 'anon') {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Delete operations require user authentication' });
       }
       try {
         const decoded = verifyToken(authHeader.slice(7));
-        if (decoded.project !== req.banaProject.id) {
+        if (decoded.project !== req.dbProject.id) {
           return res.status(403).json({ error: 'Token does not match project' });
         }
       } catch {
@@ -197,7 +197,7 @@ router.delete('/:slug/rest/:table', async (req, res) => {
 
     const pkFilter = filters[0];
     const result = await dbBrowser.deleteRow(
-      req.banaPool, 'public', table, pkFilter.column, pkFilter.value
+      req.dbPool, 'public', table, pkFilter.column, pkFilter.value
     );
     res.json(result);
   } catch (err) {
@@ -207,16 +207,16 @@ router.delete('/:slug/rest/:table', async (req, res) => {
 
 // ─── SQL (service key only) ────────────────────────────────
 
-router.post('/:slug/sql', banaStorageCheck, async (req, res) => {
+router.post('/:slug/sql', dbStorageCheck, async (req, res) => {
   try {
-    if (req.banaKeyRole !== 'service') {
+    if (req.dbKeyRole !== 'service') {
       return res.status(403).json({ error: 'SQL execution requires a service key' });
     }
 
     const { sql } = req.body;
     if (!sql) return res.status(400).json({ error: 'SQL is required' });
 
-    const result = await dbBrowser.executeQuery(req.banaPool, sql, [], true);
+    const result = await dbBrowser.executeQuery(req.dbPool, sql, [], true);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -229,7 +229,7 @@ router.post('/:slug/sql', banaStorageCheck, async (req, res) => {
 function createApiUpload() {
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-      const dir = banaStorage.ensureUploadDir(req.banaProject.slug, req._bucketName);
+      const dir = dbStorage.ensureUploadDir(req.dbProject.slug, req._bucketName);
       cb(null, dir);
     },
     filename: (req, file, cb) => {
@@ -245,7 +245,7 @@ const apiUpload = createApiUpload();
 // List buckets
 router.get('/:slug/storage/buckets', async (req, res) => {
   try {
-    const buckets = await banaStorage.listBuckets(req.banaPool);
+    const buckets = await dbStorage.listBuckets(req.dbPool);
     res.json(buckets);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -255,12 +255,12 @@ router.get('/:slug/storage/buckets', async (req, res) => {
 // Create bucket (service key only)
 router.post('/:slug/storage/buckets', async (req, res) => {
   try {
-    if (req.banaKeyRole !== 'service') {
+    if (req.dbKeyRole !== 'service') {
       return res.status(403).json({ error: 'Bucket management requires a service key' });
     }
     const { name, isPublic, fileSizeLimit, allowedMimeTypes } = req.body;
     if (!name) return res.status(400).json({ error: 'Bucket name is required' });
-    const bucket = await banaStorage.createBucket(req.banaPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
+    const bucket = await dbStorage.createBucket(req.dbPool, { name, isPublic, fileSizeLimit, allowedMimeTypes });
     res.status(201).json(bucket);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Bucket already exists' });
@@ -271,10 +271,10 @@ router.post('/:slug/storage/buckets', async (req, res) => {
 // Delete bucket (service key only)
 router.delete('/:slug/storage/buckets/:bucketId', async (req, res) => {
   try {
-    if (req.banaKeyRole !== 'service') {
+    if (req.dbKeyRole !== 'service') {
       return res.status(403).json({ error: 'Bucket management requires a service key' });
     }
-    const result = await banaStorage.deleteBucket(req.banaPool, req.params.bucketId, req.banaProject.slug);
+    const result = await dbStorage.deleteBucket(req.dbPool, req.params.bucketId, req.dbProject.slug);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -284,10 +284,10 @@ router.delete('/:slug/storage/buckets/:bucketId', async (req, res) => {
 // List objects in bucket
 router.get('/:slug/storage/:bucketName/objects', async (req, res) => {
   try {
-    const bucket = await banaStorage.getBucketByName(req.banaPool, req.params.bucketName);
+    const bucket = await dbStorage.getBucketByName(req.dbPool, req.params.bucketName);
     if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
     const { prefix, search, limit, offset } = req.query;
-    const data = await banaStorage.listObjects(req.banaPool, bucket.id, { prefix, search, limit, offset });
+    const data = await dbStorage.listObjects(req.dbPool, bucket.id, { prefix, search, limit, offset });
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -295,20 +295,20 @@ router.get('/:slug/storage/:bucketName/objects', async (req, res) => {
 });
 
 // Upload file to bucket
-router.post('/:slug/storage/:bucketName/upload', banaStorageCheck, async (req, res) => {
+router.post('/:slug/storage/:bucketName/upload', dbStorageCheck, async (req, res) => {
   try {
-    const bucket = await banaStorage.getBucketByName(req.banaPool, req.params.bucketName);
+    const bucket = await dbStorage.getBucketByName(req.dbPool, req.params.bucketName);
     if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
 
     // Auth check: service key = full access, anon key = needs Bearer token
-    if (req.banaKeyRole === 'anon') {
+    if (req.dbKeyRole === 'anon') {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Upload requires user authentication' });
       }
       try {
         const decoded = verifyToken(authHeader.slice(7));
-        if (decoded.project !== req.banaProject.id) {
+        if (decoded.project !== req.dbProject.id) {
           return res.status(403).json({ error: 'Token does not match project' });
         }
       } catch {
@@ -347,11 +347,11 @@ router.post('/:slug/storage/:bucketName/upload', banaStorageCheck, async (req, r
       ? `${req.body.path.replace(/^\/|\/$/g, '')}/${req.file.originalname}`
       : req.file.originalname;
 
-    const obj = await banaStorage.uploadObject(req.banaPool, {
+    const obj = await dbStorage.uploadObject(req.dbPool, {
       bucketId: bucket.id,
       name: objectName,
       file: req.file,
-      projectSlug: req.banaProject.slug,
+      projectSlug: req.dbProject.slug,
       bucketName: bucket.name,
     });
 
@@ -364,21 +364,21 @@ router.post('/:slug/storage/:bucketName/upload', banaStorageCheck, async (req, r
 // Delete object
 router.delete('/:slug/storage/objects/:objectId', async (req, res) => {
   try {
-    if (req.banaKeyRole === 'anon') {
+    if (req.dbKeyRole === 'anon') {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Delete requires user authentication' });
       }
       try {
         const decoded = verifyToken(authHeader.slice(7));
-        if (decoded.project !== req.banaProject.id) {
+        if (decoded.project !== req.dbProject.id) {
           return res.status(403).json({ error: 'Token does not match project' });
         }
       } catch {
         return res.status(401).json({ error: 'Invalid or expired token' });
       }
     }
-    const result = await banaStorage.deleteObject(req.banaPool, req.params.objectId);
+    const result = await dbStorage.deleteObject(req.dbPool, req.params.objectId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

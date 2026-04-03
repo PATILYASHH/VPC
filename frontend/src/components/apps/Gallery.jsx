@@ -173,7 +173,7 @@ export default function Gallery() {
     if (!confirm(`Delete "${file.original_name}"?`)) return;
     try {
       if (source === 'buckets' && file.project_id) {
-        await api.delete(`/admin/bana/projects/${file.project_id}/storage/objects/${file.id}`);
+        await api.delete(`/admin/db/projects/${file.project_id}/storage/objects/${file.id}`);
         queryClient.invalidateQueries({ queryKey: ['gallery-bucket-files'] });
         queryClient.invalidateQueries({ queryKey: ['gallery-bucket-data'] });
       } else {

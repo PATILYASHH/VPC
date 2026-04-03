@@ -1,16 +1,16 @@
 const os = require('os');
 const { execFile } = require('child_process');
 const pm2Service = require('./pm2Service');
-const banadbService = require('./banadbService');
+const dbService = require('./dbService');
 const syncService = require('./syncService');
 
 // Map vpc commands to actual system operations
 async function execute(command, pool) {
   const start = Date.now();
 
-  // ── Dynamic BanaDB commands ──────────────────────────────
-  if (command.startsWith('vpc bana ')) {
-    return handleBanaCommand(command, pool, start);
+  // ── Dynamic DB project commands (vpc db list / vpc db <slug> <subcmd>) ──
+  if (command === 'vpc db list' || /^vpc db [a-z0-9-]+ (info|tables|size|sql|fix-ownership)/.test(command)) {
+    return handleDbCommand(command, pool, start);
   }
 
   // ── Dynamic DB query command ─────────────────────────────
@@ -107,15 +107,15 @@ async function execute(command, pool) {
   }
 }
 
-// ── BanaDB commands ──────────────────────────────────────────
-async function handleBanaCommand(command, pool, start) {
-  const args = command.replace('vpc bana ', '').trim();
+// ── DB project commands ──────────────────────────────────────────
+async function handleDbCommand(command, pool, start) {
+  const args = command.replace('vpc db ', '').trim();
 
-  // vpc bana list
+  // vpc db list
   if (args === 'list') {
     try {
-      const projects = await banadbService.getProjects(pool);
-      if (projects.length === 0) return { output: 'No BanaDB projects found', exitCode: 0, duration_ms: Date.now() - start };
+      const projects = await dbService.getProjects(pool);
+      if (projects.length === 0) return { output: 'No DB projects found', exitCode: 0, duration_ms: Date.now() - start };
 
       const header = 'SLUG'.padEnd(25) + 'STATUS'.padEnd(12) + 'DB_NAME'.padEnd(30) + 'DB_USER';
       const lines = projects.map((p) =>
@@ -127,14 +127,14 @@ async function handleBanaCommand(command, pool, start) {
     }
   }
 
-  // Parse: vpc bana <slug> <subcommand> [args...]
+  // Parse: vpc db <slug> <subcommand> [args...]
   const parts = args.split(/\s+/);
   const slug = parts[0];
   const subcommand = parts[1];
 
   if (!slug || !subcommand) {
     return {
-      output: 'Usage:\n  vpc bana list\n  vpc bana <slug> tables\n  vpc bana <slug> size\n  vpc bana <slug> sql <query>\n  vpc bana <slug> fix-ownership\n  vpc bana <slug> info',
+      output: 'Usage:\n  vpc db list\n  vpc db <slug> tables\n  vpc db <slug> size\n  vpc db <slug> sql <query>\n  vpc db <slug> fix-ownership\n  vpc db <slug> info',
       exitCode: 1,
       duration_ms: Date.now() - start,
     };
@@ -143,7 +143,7 @@ async function handleBanaCommand(command, pool, start) {
   // Resolve project
   let project;
   try {
-    const projects = await banadbService.getProjects(pool);
+    const projects = await dbService.getProjects(pool);
     project = projects.find((p) => p.slug === slug);
     if (!project) {
       return { output: `Project not found: ${slug}`, exitCode: 1, duration_ms: Date.now() - start };
@@ -152,7 +152,7 @@ async function handleBanaCommand(command, pool, start) {
     return { output: `Error resolving project: ${err.message}`, exitCode: 1, duration_ms: Date.now() - start };
   }
 
-  const projectPool = banadbService.getProjectPool(project);
+  const projectPool = dbService.getProjectPool(project);
 
   switch (subcommand) {
     case 'info': {
@@ -210,7 +210,7 @@ async function handleBanaCommand(command, pool, start) {
     case 'sql': {
       const sql = parts.slice(2).join(' ').trim();
       if (!sql) {
-        return { output: 'Usage: vpc bana <slug> sql <query>', exitCode: 1, duration_ms: Date.now() - start };
+        return { output: 'Usage: vpc db <slug> sql <query>', exitCode: 1, duration_ms: Date.now() - start };
       }
       try {
         const queryStart = Date.now();

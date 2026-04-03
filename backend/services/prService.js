@@ -1,5 +1,5 @@
 const syncService = require('./syncService');
-const banadbService = require('./banadbService');
+const dbService = require('./dbService');
 
 /**
  * Get next PR number for a project.
@@ -143,7 +143,7 @@ async function testPullRequest(pool, project, prId) {
  * Check for conflicts between PR SQL and current schema.
  */
 async function checkConflicts(pool, project, pr) {
-  const projectPool = banadbService.getProjectPool(project);
+  const projectPool = dbService.getProjectPool(project);
   const snapshot = await syncService.getSchemaSnapshot(projectPool);
   const operations = parseDDLOperations(pr.sql_content);
 

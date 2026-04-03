@@ -323,7 +323,7 @@ export default function RepoSettings({ owner, repo }) {
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-muted-foreground">
-                Link a BanaDB project to auto-deploy migrations on push.
+                Link a DB project to auto-deploy migrations on push.
               </p>
               {projects.length > 0 ? (
                 <div className="flex gap-2">
@@ -343,7 +343,7 @@ export default function RepoSettings({ owner, repo }) {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  No BanaDB projects found. Create one in the BanaDB section first.
+                  No DB projects found. Create one in the DB section first.
                 </p>
               )}
             </div>

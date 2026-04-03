@@ -126,7 +126,7 @@ function getSuccessMessage(command, rowCount) {
   }
 }
 
-export default function BanaSqlEditor({ project }) {
+export default function SqlEditor({ project }) {
   const [sql, setSql] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -137,7 +137,7 @@ export default function BanaSqlEditor({ project }) {
   const templatesRef = useRef(null);
   const historyRef = useRef(null);
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
 
   // Close dropdowns on outside click
   useEffect(() => {

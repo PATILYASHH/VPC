@@ -6,7 +6,7 @@
 ## Project Overview
 
 VPC (Virtual PC Control) is a web-based OS-style VPS management dashboard with:
-- PostgreSQL management (BanaDB)
+- PostgreSQL management (DB)
 - Server monitoring
 - File gallery
 - API key management
@@ -43,7 +43,7 @@ case 'sql': {
   const result = await projectPool.query(sql);
 }
 ```
-**Problem:** The `vpc bana <slug> sql <query>` command allows executing arbitrary SQL on project databases. While this is behind auth, there's no query sanitization or restrictions.
+**Problem:** The `vpc db <slug> sql <query>` command allows executing arbitrary SQL on project databases. While this is behind auth, there's no query sanitization or restrictions.
 
 **Risk:** Data deletion, data exfiltration, privilege escalation
 
@@ -93,11 +93,11 @@ const SECRET = process.env.JWT_SECRET;
 
 ---
 
-#### 7. CORS Fully Open for BanaDB API (server.js:31)
+#### 7. CORS Fully Open for DB API (server.js:31)
 ```js
-app.use('/api/bana', cors());
+app.use('/api/db', cors());
 ```
-**Problem:** The BanaDB external API accepts requests from any origin. While it uses API key auth, this is still a wider attack surface.
+**Problem:** The DB external API accepts requests from any origin. While it uses API key auth, this is still a wider attack surface.
 
 ---
 
@@ -122,7 +122,7 @@ Both `app.js:41` and `server.js:99` call `app.listen()`. In production, only `ap
 - Various log paths hardcoded with fallbacks
 
 #### 12. Missing Connection Pool Cleanup
-BanaDB creates connection pools per project but there's no visible cleanup when projects are deleted.
+DB creates connection pools per project but there's no visible cleanup when projects are deleted.
 
 ---
 
@@ -168,7 +168,7 @@ Should add `health_check_interval` or `listen_timeout` for production.
 
 ### Medium Priority
 6. Add JWT_SECRET validation on startup
-7. Implement proper CORS for BanaDB API
+7. Implement proper CORS for DB API
 8. Add input validation across all routes
 9. Fix double listen() issue in server.js
 10. Implement connection pool cleanup

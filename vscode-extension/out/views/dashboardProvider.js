@@ -500,7 +500,7 @@ class DashboardProvider {
               <button class="btn-xs btn-accent" onclick="linkDb()">Connect</button>
             </div>
           ` : `
-            <div class="section-empty">No BanaDB projects available</div>
+            <div class="section-empty">No DB projects available</div>
           `}
         `}
       </div>

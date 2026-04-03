@@ -16,7 +16,7 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts. Try again in 15 minutes.' },
 });
 
-const banaApiLimiter = rateLimit({
+const dbApiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   standardHeaders: true,
@@ -25,4 +25,4 @@ const banaApiLimiter = rateLimit({
   message: { error: 'Rate limit exceeded. Max 100 requests per minute.' },
 });
 
-module.exports = { globalLimiter, loginLimiter, banaApiLimiter };
+module.exports = { globalLimiter, loginLimiter, dbApiLimiter };

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe, Sparkles } from 'lucide-react';
+import { ArrowLeft, GitBranch, Code, GitCommit, GitPullRequest, CircleDot, Settings, ChevronDown, Copy, Check, Database, Globe, Sparkles, Upload, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useApiQuery } from '@/hooks/useApi';
+import { useQueryClient } from '@tanstack/react-query';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import CodeBrowser from './CodeBrowser';
 import CommitHistory from './CommitHistory';
@@ -12,9 +13,11 @@ import IssueList from './IssueList';
 import IssueDetail from './IssueDetail';
 import RepoSettings from './RepoSettings';
 import AgentTab from './AgentTab';
+import DropZone from './DropZone';
 
 const TABS = [
   { id: 'code', label: 'Code', icon: Code },
+  { id: 'upload', label: 'Upload', icon: Upload },
   { id: 'commits', label: 'Commits', icon: GitCommit },
   { id: 'pulls', label: 'Pull Requests', icon: GitPullRequest },
   { id: 'issues', label: 'Issues', icon: CircleDot },
@@ -29,6 +32,8 @@ export default function RepoView({ repo, onBack }) {
   const [copied, setCopied] = useState(false);
   const [selectedPR, setSelectedPR] = useState(null);
   const [selectedIssue, setSelectedIssue] = useState(null);
+
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useApiQuery(
     ['vpshub-repo', repo.owner_username, repo.slug],
@@ -56,6 +61,10 @@ export default function RepoView({ repo, onBack }) {
     setActiveTab(tabId);
     setSelectedPR(null);
     setSelectedIssue(null);
+  }
+
+  function handleUploadComplete() {
+    queryClient.invalidateQueries({ queryKey: ['vpshub-repo', repo.owner_username, repo.slug] });
   }
 
   if (isLoading) {
@@ -110,7 +119,7 @@ export default function RepoView({ repo, onBack }) {
           </div>
         )}
 
-        {/* Clone URL */}
+        {/* Clone URL + Download */}
         <div className="px-4 pb-3 flex items-center gap-2">
           <code className="flex-1 text-[11px] bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-1.5 font-mono truncate text-muted-foreground">
             {cloneUrl}
@@ -119,6 +128,14 @@ export default function RepoView({ repo, onBack }) {
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             {copied ? 'Copied' : 'Clone'}
           </Button>
+          {repoDetail?.has_commits && (
+            <a
+              href={`/vcs/${repo.owner_username}/${repo.slug}/download?ref=${currentRef || 'main'}`}
+              className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded-md border border-white/[0.08] bg-transparent text-xs font-medium hover:bg-white/[0.06] transition-colors shrink-0"
+            >
+              <Download className="w-3 h-3" /> ZIP
+            </a>
+          )}
         </div>
 
         {/* Tabs + Branch Selector */}
@@ -181,9 +198,18 @@ export default function RepoView({ repo, onBack }) {
       {/* Tab Content */}
       <div className="flex-1 overflow-auto p-4">
         {!repoDetail?.has_commits && activeTab === 'code' ? (
-          <EmptyRepoView cloneUrl={cloneUrl} repoName={repo.name} />
+          <EmptyRepoView cloneUrl={cloneUrl} repoName={repo.name} owner={repo.owner_username} repoSlug={repo.slug} onUploadComplete={handleUploadComplete} />
         ) : activeTab === 'code' && currentRef ? (
           <CodeBrowser owner={repo.owner_username} repo={repo.slug} branch={currentRef} />
+        ) : activeTab === 'upload' ? (
+          <div className="max-w-2xl mx-auto">
+            <DropZone
+              owner={repo.owner_username}
+              repo={repo.slug}
+              branch={currentRef || 'main'}
+              onUploadComplete={handleUploadComplete}
+            />
+          </div>
         ) : activeTab === 'commits' && currentRef ? (
           <CommitHistory owner={repo.owner_username} repo={repo.slug} branch={currentRef} />
         ) : activeTab === 'pulls' ? (
@@ -227,12 +253,26 @@ export default function RepoView({ repo, onBack }) {
   );
 }
 
-function EmptyRepoView({ cloneUrl, repoName }) {
+function EmptyRepoView({ cloneUrl, repoName, owner, repoSlug, onUploadComplete }) {
   return (
     <div className="max-w-2xl mx-auto animate-fade-in">
       <h3 className="text-lg font-semibold mb-4">Quick setup</h3>
 
       <div className="space-y-4">
+        {/* Drop Zone - Primary action for empty repos */}
+        <div className="border border-violet-500/20 rounded-xl p-4 bg-violet-500/[0.03]">
+          <h4 className="font-medium text-sm mb-3 text-foreground/80 flex items-center gap-2">
+            <Upload className="w-4 h-4 text-violet-400" /> Drop your code here to get started
+          </h4>
+          <DropZone owner={owner} repo={repoSlug} branch="main" onUploadComplete={onUploadComplete} />
+        </div>
+
+        <div className="flex items-center gap-3 my-2">
+          <div className="flex-1 h-px bg-white/[0.06]" />
+          <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wider">or use command line</span>
+          <div className="flex-1 h-px bg-white/[0.06]" />
+        </div>
+
         <div className="border border-white/[0.06] rounded-xl p-4 bg-white/[0.02]">
           <h4 className="font-medium text-sm mb-3 text-foreground/80">Create a new repository on the command line</h4>
           <pre className="text-xs bg-white/[0.03] rounded-lg p-3 overflow-x-auto font-mono text-muted-foreground">

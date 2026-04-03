@@ -14,7 +14,7 @@ import { Progress } from '@/components/ui/progress';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 
-export default function BanaSupabaseImport({ project }) {
+export default function SupabaseImport({ project }) {
   const [connectionString, setConnectionString] = useState('');
   const [importAuth, setImportAuth] = useState(true);
   const [testing, setTesting] = useState(false);
@@ -24,11 +24,11 @@ export default function BanaSupabaseImport({ project }) {
   const pollRef = useRef(null);
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
 
   // Fetch link status on mount
   const { data: linkStatus, isLoading: loadingStatus, refetch: refetchStatus } = useApiQuery(
-    ['bana-import-status', project.id],
+    ['db-import-status', project.id],
     `${baseUrl}/import/status`
   );
 
@@ -51,7 +51,7 @@ export default function BanaSupabaseImport({ project }) {
           if (data.status === 'completed') {
             toast.success(data.message);
             refetchStatus();
-            queryClient.invalidateQueries({ queryKey: ['bana-'] });
+            queryClient.invalidateQueries({ queryKey: ['db-'] });
           } else {
             toast.error(data.message || 'Operation failed');
           }
@@ -93,7 +93,7 @@ export default function BanaSupabaseImport({ project }) {
 
   const handleImport = async () => {
     if (!connectionString.trim()) return;
-    if (!confirm('This will import ALL data from Supabase into this BanaDB project. Existing tables will be replaced. Continue?')) return;
+    if (!confirm('This will import ALL data from Supabase into this DB project. Existing tables will be replaced. Continue?')) return;
 
     setJobStatus(null);
     try {
@@ -145,7 +145,7 @@ export default function BanaSupabaseImport({ project }) {
           Supabase Import & Sync
         </h2>
         <p className="text-xs text-muted-foreground mt-1">
-          Import your entire Supabase database into BanaDB and keep it synced with ongoing changes.
+          Import your entire Supabase database into DB and keep it synced with ongoing changes.
         </p>
       </div>
 

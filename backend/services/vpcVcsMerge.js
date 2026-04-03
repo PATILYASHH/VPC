@@ -322,11 +322,7 @@ function mergeCommits(repoPath, { ours, theirs, authorName, authorEmail, message
     mergedFiles.push({ path: filePath, hash: mergedHash, mode: '100644' });
   }
 
-  if (conflicts.length > 0) {
-    return { success: false, conflicts };
-  }
-
-  // Build the merged tree
+  // Build the merged tree (always — even if conflicts exist, we store the merge with markers)
   const mergedTreeHash = vcsCore.buildTreeFromFiles(repoPath, mergedFiles);
 
   // Create merge commit with two parents
@@ -335,8 +331,14 @@ function mergeCommits(repoPath, { ours, theirs, authorName, authorEmail, message
     parents: [ours, theirs],
     authorName,
     authorEmail,
-    message: message || `Merge branch into ${ours.slice(0, 12)}`,
+    message: conflicts.length > 0
+      ? `${message || 'Merge branch'} [conflicts: ${conflicts.map(c => c.path).join(', ')}]`
+      : (message || `Merge branch into ${ours.slice(0, 12)}`),
   });
+
+  if (conflicts.length > 0) {
+    return { success: false, commitHash, conflicts, mergedFiles };
+  }
 
   return { success: true, commitHash, fastForward: false };
 }

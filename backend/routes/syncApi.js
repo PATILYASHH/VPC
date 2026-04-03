@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { banaApiAuth } = require('../middleware/banaApiAuth');
+const { dbApiAuth } = require('../middleware/dbApiAuth');
 const pullService = require('../services/pullService');
 const syncService = require('../services/syncService');
 const prService = require('../services/prService');
 
 // All routes require API key auth (pull key)
-router.use(banaApiAuth);
+router.use(dbApiAuth);
 
 function requirePullKey(req, res, next) {
-  if (req.banaKeyRole !== 'pull') {
+  if (req.dbKeyRole !== 'pull') {
     return res.status(403).json({ error: 'This endpoint requires a pull key' });
   }
   next();
@@ -18,14 +18,14 @@ function requirePullKey(req, res, next) {
 // GET /:slug/sync/status — project sync status + pending change count
 router.get('/:slug/sync/status', requirePullKey, async (req, res) => {
   try {
-    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
-    const totalChanges = await pullService.getTotalChangeCount(req.banaPool);
+    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
+    const totalChanges = await pullService.getTotalChangeCount(req.dbPool);
     const { migrations, total } = await syncService.getMigrations(
-      req.app.locals.pool, req.banaProject.id, { limit: 1 }
+      req.app.locals.pool, req.dbProject.id, { limit: 1 }
     );
 
     res.json({
-      tracking_enabled: req.banaProject.pull_tracking_enabled || false,
+      tracking_enabled: req.dbProject.pull_tracking_enabled || false,
       total_changes: totalChanges,
       cursor: cursor?.last_change_id || 0,
       pending_changes: totalChanges - (cursor?.last_change_id || 0),
@@ -33,8 +33,8 @@ router.get('/:slug/sync/status', requirePullKey, async (req, res) => {
       total_migrations: total,
       latest_migration: migrations[0] || null,
       project: {
-        name: req.banaProject.name,
-        slug: req.banaProject.slug,
+        name: req.dbProject.name,
+        slug: req.dbProject.slug,
       },
     });
   } catch (err) {
@@ -48,11 +48,11 @@ router.get('/:slug/sync/changes', requirePullKey, async (req, res) => {
     const sinceId = parseInt(req.query.since_id) || 0;
     let effectiveSinceId = sinceId;
     if (!req.query.since_id) {
-      const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
+      const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
       effectiveSinceId = cursor?.last_change_id || 0;
     }
 
-    const result = await pullService.getSchemaChanges(req.banaPool, effectiveSinceId);
+    const result = await pullService.getSchemaChanges(req.dbPool, effectiveSinceId);
     res.json({ ...result, since_id: effectiveSinceId });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -62,11 +62,11 @@ router.get('/:slug/sync/changes', requirePullKey, async (req, res) => {
 // POST /:slug/sync/pull — pull: create migration from pending changes, return SQL
 router.post('/:slug/sync/pull', requirePullKey, async (req, res) => {
   try {
-    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
+    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
     const sinceId = cursor?.last_change_id || 0;
 
     const result = await syncService.createMigrationFromChanges(
-      req.app.locals.pool, req.banaProject, {
+      req.app.locals.pool, req.dbProject, {
         sinceId,
         appliedBy: 'vpcsync',
       }
@@ -79,8 +79,8 @@ router.post('/:slug/sync/pull', requirePullKey, async (req, res) => {
     // Advance cursor
     await pullService.updatePullCursor(
       req.app.locals.pool,
-      req.banaApiKeyId,
-      req.banaProject.id,
+      req.dbApiKeyId,
+      req.dbProject.id,
       result.latest_id
     );
 
@@ -103,7 +103,7 @@ router.post('/:slug/sync/push', requirePullKey, async (req, res) => {
     const prTitle = title || name || `Migration from VS Code: ${new Date().toISOString().slice(0, 16)}`;
 
     const pr = await prService.createPullRequest(req.app.locals.pool, {
-      projectId: req.banaProject.id,
+      projectId: req.dbProject.id,
       title: prTitle,
       description: description || 'Submitted via VPC Sync extension',
       sqlContent: sql,
@@ -123,7 +123,7 @@ router.post('/:slug/sync/push', requirePullKey, async (req, res) => {
 router.get('/:slug/sync/pull-requests', requirePullKey, async (req, res) => {
   try {
     const { status, page, limit } = req.query;
-    const result = await prService.getPullRequests(req.app.locals.pool, req.banaProject.id, {
+    const result = await prService.getPullRequests(req.app.locals.pool, req.dbProject.id, {
       status,
       page: parseInt(page) || 1,
       limit: Math.min(parseInt(limit) || 20, 100),
@@ -144,8 +144,8 @@ router.post('/:slug/sync/ack', requirePullKey, async (req, res) => {
 
     await pullService.updatePullCursor(
       req.app.locals.pool,
-      req.banaApiKeyId,
-      req.banaProject.id,
+      req.dbApiKeyId,
+      req.dbProject.id,
       change_id
     );
 
@@ -158,7 +158,7 @@ router.post('/:slug/sync/ack', requirePullKey, async (req, res) => {
 // GET /:slug/sync/schema — current database schema (tables, columns, indexes)
 router.get('/:slug/sync/schema', requirePullKey, async (req, res) => {
   try {
-    const snapshot = await syncService.getSchemaSnapshot(req.banaPool);
+    const snapshot = await syncService.getSchemaSnapshot(req.dbPool);
     res.json(snapshot);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -169,7 +169,7 @@ router.get('/:slug/sync/schema', requirePullKey, async (req, res) => {
 router.get('/:slug/sync/migrations', requirePullKey, async (req, res) => {
   try {
     const { page, limit } = req.query;
-    const result = await syncService.getMigrations(req.app.locals.pool, req.banaProject.id, {
+    const result = await syncService.getMigrations(req.app.locals.pool, req.dbProject.id, {
       page: parseInt(page) || 1,
       limit: Math.min(parseInt(limit) || 50, 200),
     });

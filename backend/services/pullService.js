@@ -127,7 +127,7 @@ async function installPullTracking(mainPool, project) {
 
     if (mainPool) {
       await mainPool.query(
-        `UPDATE bana_projects SET pull_tracking_enabled = true, pull_tracking_installed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        `UPDATE db_projects SET pull_tracking_enabled = true, pull_tracking_installed_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [project.id]
       );
     }
@@ -164,7 +164,7 @@ async function uninstallPullTracking(mainPool, project) {
   try {
     await adminPool.query(TRACKING_TEARDOWN_SQL);
     await mainPool.query(
-      `UPDATE bana_projects SET pull_tracking_enabled = false, updated_at = NOW() WHERE id = $1`,
+      `UPDATE db_projects SET pull_tracking_enabled = false, updated_at = NOW() WHERE id = $1`,
       [project.id]
     );
     return { disabled: true };
@@ -185,8 +185,8 @@ async function getPullTrackingStatus(mainPool, project) {
 
   if (status.enabled) {
     try {
-      const banadbService = require('./banadbService');
-      const projectPool = banadbService.getProjectPool(project);
+      const dbService = require('./dbService');
+      const projectPool = dbService.getProjectPool(project);
       const { rows } = await projectPool.query(
         `SELECT COUNT(*)::int AS count FROM _vpc_schema_changes`
       );
@@ -235,7 +235,7 @@ async function getTotalChangeCount(projectPool) {
  */
 async function getPullCursor(mainPool, apiKeyId) {
   const { rows } = await mainPool.query(
-    `SELECT last_change_id, last_pulled_at FROM bana_pull_cursors WHERE api_key_id = $1`,
+    `SELECT last_change_id, last_pulled_at FROM db_pull_cursors WHERE api_key_id = $1`,
     [apiKeyId]
   );
   return rows[0] || null;
@@ -246,7 +246,7 @@ async function getPullCursor(mainPool, apiKeyId) {
  */
 async function updatePullCursor(mainPool, apiKeyId, projectId, changeId) {
   await mainPool.query(
-    `INSERT INTO bana_pull_cursors (api_key_id, project_id, last_change_id, last_pulled_at, updated_at)
+    `INSERT INTO db_pull_cursors (api_key_id, project_id, last_change_id, last_pulled_at, updated_at)
      VALUES ($1, $2, $3, NOW(), NOW())
      ON CONFLICT (api_key_id) DO UPDATE SET last_change_id = $3, last_pulled_at = NOW(), updated_at = NOW()`,
     [apiKeyId, projectId, changeId]

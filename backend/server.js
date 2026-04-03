@@ -29,19 +29,19 @@ const allowedOrigins = [
 
 // CORS for admin panel (restricted origins)
 app.use('/api/admin', cors({ origin: allowedOrigins, credentials: true }));
-// CORS for BanaDB external API (open to any origin)
-app.use('/api/bana', cors());
+// CORS for DB external API (open to any origin)
+app.use('/api/db', cors());
 // Fallback CORS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
 // Body parsing — skip /vcs routes (binary VPC VCS protocol data has its own parser)
 app.use((req, res, next) => {
   if (req.path.startsWith('/vcs/')) return next();
-  express.json({ limit: '50mb' })(req, res, next);
+  express.json({ limit: '500mb' })(req, res, next);
 });
 app.use((req, res, next) => {
   if (req.path.startsWith('/vcs/')) return next();
-  express.urlencoded({ extended: true, limit: '50mb' })(req, res, next);
+  express.urlencoded({ extended: true, limit: '500mb' })(req, res, next);
 });
 
 // Attach database pool
@@ -57,11 +57,11 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// BanaDB External REST API (API key auth, no JWT)
-app.use('/api/bana/v1', require('./routes/banaApi'));
-// BanaDB Pull API (pull key auth, no JWT)
-app.use('/api/bana/v1', require('./routes/pull'));
-app.use('/api/bana/v1', require('./routes/syncApi'));
+// DB External REST API (API key auth, no JWT)
+app.use('/api/db/v1', require('./routes/dbApi'));
+// DB Pull API (pull key auth, no JWT)
+app.use('/api/db/v1', require('./routes/pull'));
+app.use('/api/db/v1', require('./routes/syncApi'));
 
 // Admin API routes
 const adminRouter = express.Router();
@@ -78,12 +78,12 @@ adminRouter.use(actionLogger);
 // Mount route files
 adminRouter.use('/servers', require('./routes/servers'));
 adminRouter.use('/db', require('./routes/database'));
+adminRouter.use('/db', require('./routes/db'));
 adminRouter.use('/api-keys', require('./routes/apiKeys'));
 adminRouter.use('/integrations', require('./routes/integrations'));
 adminRouter.use('/backup', require('./routes/backups'));
 adminRouter.use('/logs', require('./routes/logs'));
 adminRouter.use('/terminal', require('./routes/terminal'));
-adminRouter.use('/bana', require('./routes/banadb'));
 adminRouter.use('/users', require('./routes/users'));
 adminRouter.use('/gallery', require('./routes/gallery'));
 adminRouter.use('/sync', require('./routes/sync'));

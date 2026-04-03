@@ -21,8 +21,8 @@ function getMimeType(filename) {
   const ext = path.extname(filename).toLowerCase();
   return MIME_MAP[ext] || 'application/octet-stream';
 }
-const banadbService = require('../services/banadbService');
-const banaStorage = require('../services/banaStorageService');
+const dbService = require('../services/dbService');
+const dbStorage = require('../services/dbStorageService');
 
 // GET /storage/v1/:slug/:bucketName/*
 // Serves files from public buckets without authentication
@@ -34,12 +34,12 @@ router.get('/:slug/:bucketName/*', async (req, res) => {
     if (!filePath) return res.status(400).json({ error: 'File path is required' });
 
     // Look up project
-    const project = await banadbService.getProjectBySlug(req.app.locals.pool, slug);
+    const project = await dbService.getProjectBySlug(req.app.locals.pool, slug);
     if (!project) return res.status(404).json({ error: 'Not found' });
 
     // Get project pool and look up bucket
-    const pool = banadbService.getProjectPool(project);
-    const bucket = await banaStorage.getBucketByName(pool, bucketName);
+    const pool = dbService.getProjectPool(project);
+    const bucket = await dbStorage.getBucketByName(pool, bucketName);
     if (!bucket) return res.status(404).json({ error: 'Not found' });
 
     // Must be a public bucket
@@ -48,7 +48,7 @@ router.get('/:slug/:bucketName/*', async (req, res) => {
     }
 
     // Find the object
-    const obj = await banaStorage.getObjectByPath(pool, bucket.id, filePath);
+    const obj = await dbStorage.getObjectByPath(pool, bucket.id, filePath);
     if (!obj) return res.status(404).json({ error: 'File not found' });
 
     // Check file exists on disk

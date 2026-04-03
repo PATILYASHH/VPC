@@ -4,13 +4,13 @@ import { writeConfig } from '../config.js';
 export async function initCommand(options) {
   const { url, key, out } = options;
 
-  if (!url.includes('/api/bana/v1/')) {
-    console.error(chalk.red('URL must include /api/bana/v1/<project-slug>'));
+  if (!url.includes('/api/db/v1/')) {
+    console.error(chalk.red('URL must include /api/db/v1/<project-slug>'));
     process.exit(1);
   }
 
-  if (!key.startsWith('bana_pull_')) {
-    console.warn(chalk.yellow('Warning: Key does not start with bana_pull_ — are you sure this is a pull key?'));
+  if (!key.startsWith('db_pull_')) {
+    console.warn(chalk.yellow('Warning: Key does not start with db_pull_ — are you sure this is a pull key?'));
   }
 
   const config = { url, key, out, lastPullSequence: 0 };

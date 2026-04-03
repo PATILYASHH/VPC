@@ -13,16 +13,16 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
 import { copyToClipboard } from '@/lib/clipboard';
 
-export default function BanaApiKeys({ project }) {
+export default function ApiKeys({ project }) {
   const [showAnon, setShowAnon] = useState(false);
   const [showService, setShowService] = useState(false);
   const [regenerating, setRegenerating] = useState(null);
   const [activeTab, setActiveTab] = useState('javascript');
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
   const { data, isLoading } = useApiQuery(
-    ['bana-api-keys', project.id],
+    ['db-api-keys', project.id],
     `${baseUrl}/api-keys`
   );
 
@@ -30,7 +30,7 @@ export default function BanaApiKeys({ project }) {
   const anonKey = keys.find((k) => k.role === 'anon' && k.is_active);
   const serviceKey = keys.find((k) => k.role === 'service' && k.is_active);
 
-  const apiUrl = `${window.location.origin}/api/bana/v1/${project.slug}`;
+  const apiUrl = `${window.location.origin}/api/db/v1/${project.slug}`;
 
   const copyText = copyToClipboard;
 
@@ -40,7 +40,7 @@ export default function BanaApiKeys({ project }) {
     setRegenerating(role);
     try {
       await api.post(`${baseUrl}/api-keys/regenerate`, { role });
-      queryClient.invalidateQueries({ queryKey: ['bana-api-keys'] });
+      queryClient.invalidateQueries({ queryKey: ['db-api-keys'] });
       toast.success(`${label} key regenerated`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to regenerate');
@@ -147,54 +147,55 @@ export default function BanaApiKeys({ project }) {
         <div className="p-3 space-y-4">
           {activeTab === 'javascript' && (
             <>
-              <CodeBlock title="Initialize" copyFn={copyText} code={`const BANA_URL = "${apiUrl}"
-const BANA_KEY = "${anonKeyStr.slice(0, 20)}..."
+              <CodeBlock title="Initialize" copyFn={copyText} code={`const DB_URL = "${apiUrl}"
+const DB_KEY = "${anonKeyStr.slice(0, 20)}..."
 
-async function bana(path, opts = {}) {
-  const res = await fetch(BANA_URL + path, {
+async function db(path, opts = {}) {
+  const res = await fetch(DB_URL + path, {
     ...opts,
-    headers: { "apikey": BANA_KEY, "Content-Type": "application/json", ...opts.headers }
+    headers: { "apikey": DB_KEY, "Content-Type": "application/json", ...opts.headers }
   })
   return res.json()
 }`} />
+
               <CodeBlock title="Read rows" copyFn={copyText} code={`// All rows
-const data = await bana("/rest/customers")
+const data = await db("/rest/customers")
 
 // With filters
-const data = await bana("/rest/customers?is_active=eq.true&limit=10")
+const data = await db("/rest/customers?is_active=eq.true&limit=10")
 
 // Filter operators: eq, neq, gt, gte, lt, lte, like, ilike
-const data = await bana("/rest/customers?name=ilike.*john*")
+const data = await db("/rest/customers?name=ilike.*john*")
 
 // Sort & paginate
-const data = await bana("/rest/orders?order=-created_at&limit=20&offset=0")`} />
+const data = await db("/rest/orders?order=-created_at&limit=20&offset=0")`} />
               <CodeBlock title="Auth — signup & login" copyFn={copyText} code={`// Signup
-const { user, access_token } = await bana("/auth/signup", {
+const { user, access_token } = await db("/auth/signup", {
   method: "POST",
   body: JSON.stringify({ email: "user@email.com", password: "password123" })
 })
 
 // Login
-const { user, access_token } = await bana("/auth/login", {
+const { user, access_token } = await db("/auth/login", {
   method: "POST",
   body: JSON.stringify({ email: "user@email.com", password: "password123" })
 })`} />
               <CodeBlock title="Write rows (anon key + user token)" copyFn={copyText} code={`// Insert
-await bana("/rest/orders", {
+await db("/rest/orders", {
   method: "POST",
   headers: { Authorization: "Bearer " + access_token },
   body: JSON.stringify({ customer_id: 1, total: 250.00 })
 })
 
 // Update
-await bana("/rest/orders?id=eq.42", {
+await db("/rest/orders?id=eq.42", {
   method: "PATCH",
   headers: { Authorization: "Bearer " + access_token },
   body: JSON.stringify({ status: "shipped" })
 })
 
 // Delete
-await bana("/rest/orders?id=eq.42", {
+await db("/rest/orders?id=eq.42", {
   method: "DELETE",
   headers: { Authorization: "Bearer " + access_token }
 })`} />
@@ -242,28 +243,28 @@ curl "${apiUrl}/rest/customers?is_active=eq.true&limit=5" \\
             <>
               <CodeBlock title="Initialize" copyFn={copyText} code={`import requests
 
-BANA_URL = "${apiUrl}"
-BANA_KEY = "${anonKeyStr.slice(0, 20)}..."
-headers = {"apikey": BANA_KEY, "Content-Type": "application/json"}`} />
+DB_URL = "${apiUrl}"
+DB_KEY = "${anonKeyStr.slice(0, 20)}..."
+headers = {"apikey": DB_KEY, "Content-Type": "application/json"}`} />
               <CodeBlock title="Read rows" copyFn={copyText} code={`# All rows
-data = requests.get(f"{BANA_URL}/rest/customers", headers=headers).json()
+data = requests.get(f"{DB_URL}/rest/customers", headers=headers).json()
 
 # With filters
 data = requests.get(
-    f"{BANA_URL}/rest/customers?is_active=eq.true&limit=10",
+    f"{DB_URL}/rest/customers?is_active=eq.true&limit=10",
     headers=headers
 ).json()`} />
               <CodeBlock title="Auth & write" copyFn={copyText} code={`# Login
-res = requests.post(f"{BANA_URL}/auth/login", headers=headers,
+res = requests.post(f"{DB_URL}/auth/login", headers=headers,
     json={"email": "user@email.com", "password": "password123"})
 token = res.json()["access_token"]
 
 # Insert (with user token)
 auth_headers = {**headers, "Authorization": f"Bearer {token}"}
-requests.post(f"{BANA_URL}/rest/orders", headers=auth_headers,
+requests.post(f"{DB_URL}/rest/orders", headers=auth_headers,
     json={"customer_id": 1, "total": 250.00})`} />
               <CodeBlock title="Service key — SQL (server only)" copyFn={copyText} code={`svc_headers = {"apikey": "YOUR_SERVICE_KEY", "Content-Type": "application/json"}
-res = requests.post(f"{BANA_URL}/sql", headers=svc_headers,
+res = requests.post(f"{DB_URL}/sql", headers=svc_headers,
     json={"sql": "SELECT count(*) FROM orders"})
 print(res.json())`} />
             </>

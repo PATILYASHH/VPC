@@ -3,7 +3,7 @@
   "displayName": "VPC Sync",
   "description": "Version control for VPC — push, pull, commit, branch. Like Git but using VPC VCS.",
   "publisher": "vpc-admin",
-  "version": "7.1.0",
+  "version": "8.0.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["SCM Providers"],
   "activationEvents": ["onStartupFinished"],
@@ -38,7 +38,10 @@
       { "command": "vpcSync.stageAll", "title": "Stage All", "icon": "$(add)" },
       { "command": "vpcSync.unstageAll", "title": "Unstage All", "icon": "$(remove)" },
       { "command": "vpcSync.openFile", "title": "Open File", "icon": "$(go-to-file)" },
-      { "command": "vpcSync.discardFile", "title": "Discard Changes", "icon": "$(discard)" }
+      { "command": "vpcSync.discardFile", "title": "Discard Changes", "icon": "$(discard)" },
+      { "command": "vpcSync.createBranch", "title": "VPC Sync: Create Branch", "icon": "$(git-branch)" },
+      { "command": "vpcSync.switchBranch", "title": "VPC Sync: Switch Branch", "icon": "$(git-branch)" },
+      { "command": "vpcSync.deleteBranch", "title": "VPC Sync: Delete Branch", "icon": "$(trash)" }
     ],
     "menus": {
       "scm/title": [

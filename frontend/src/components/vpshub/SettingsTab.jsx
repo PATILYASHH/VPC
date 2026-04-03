@@ -144,13 +144,13 @@ export default function SettingsTab({ project }) {
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground w-24">Server URL:</span>
             <code className="bg-muted px-2 py-1 rounded text-xs flex-1 truncate">
-              {window.location.origin}/api/bana/v1/{project.slug}
+              {window.location.origin}/api/db/v1/{project.slug}
             </code>
             <Button
               size="sm"
               variant="ghost"
               className="h-7"
-              onClick={() => copyToClipboard(`${window.location.origin}/api/bana/v1/${project.slug}`)}
+              onClick={() => copyToClipboard(`${window.location.origin}/api/db/v1/${project.slug}`)}
             >
               <Copy className="w-3 h-3" />
             </Button>

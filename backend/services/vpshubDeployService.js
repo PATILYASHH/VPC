@@ -1,8 +1,8 @@
 const gitService = require('./vpshubGitService');
-const banadbService = require('./banadbService');
+const dbService = require('./dbService');
 const webHostingService = require('./webHostingService');
 
-// ─── Link/Unlink Repo to BanaDB Project ──────────────────────
+// ─── Link/Unlink Repo to DB Project ──────────────────────
 
 async function linkRepoToProject(pool, repoId, projectId) {
   const { rows } = await pool.query(
@@ -78,7 +78,7 @@ async function runMigration(pool, { repoId, projectId, ownerUsername, repoSlug, 
 
   let projectPool;
   try {
-    projectPool = await banadbService.getProjectAdminPool(project);
+    projectPool = await dbService.getProjectAdminPool(project);
   } catch (err) {
     return { status: 'failed', message: `Cannot connect to project DB: ${err.message}` };
   }
@@ -303,7 +303,7 @@ async function getLinkedHosting(pool, repoId) {
 
 async function getProject(pool, projectId) {
   const { rows } = await pool.query(
-    'SELECT * FROM bana_projects WHERE id = $1 AND status = $2',
+    'SELECT * FROM db_projects WHERE id = $1 AND status = $2',
     [projectId, 'active']
   );
   return rows[0] || null;
@@ -312,7 +312,7 @@ async function getProject(pool, projectId) {
 async function listProjects(pool) {
   const { rows } = await pool.query(
     `SELECT id, name, slug, db_name, status, created_at
-     FROM bana_projects WHERE status = 'active'
+     FROM db_projects WHERE status = 'active'
      ORDER BY name`
   );
   return rows;
@@ -321,7 +321,7 @@ async function listProjects(pool) {
 async function getLinkedProject(pool, repoId) {
   const { rows } = await pool.query(
     `SELECT p.id, p.name, p.slug, p.db_name, p.status, p.created_at
-     FROM bana_projects p
+     FROM db_projects p
      JOIN vpshub_repositories r ON r.linked_project_id = p.id
      WHERE r.id = $1 AND p.status = 'active'`,
     [repoId]

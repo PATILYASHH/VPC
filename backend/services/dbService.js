@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const banaStorage = require('./banaStorageService');
+const dbStorage = require('./dbStorageService');
 
 // In-memory pool cache for project databases
 const projectPools = new Map();
@@ -24,7 +24,7 @@ function getProjectPool(project) {
   });
 
   pool.on('error', (err) => {
-    console.error(`[BanaDB] Pool error for project ${project.slug}:`, err.message);
+    console.error(`[DB] Pool error for project ${project.slug}:`, err.message);
   });
 
   projectPools.set(project.id, pool);
@@ -50,7 +50,7 @@ function getProjectAdminPool(project) {
   });
 
   pool.on('error', (err) => {
-    console.error(`[BanaDB] Admin pool error for project ${project.slug}:`, err.message);
+    console.error(`[DB] Admin pool error for project ${project.slug}:`, err.message);
   });
 
   projectAdminPools.set(project.id, pool);
@@ -72,7 +72,7 @@ function removeProjectPool(projectId) {
 
 async function getProjects(pool) {
   const { rows } = await pool.query(
-    `SELECT * FROM bana_projects WHERE status != 'deleted' ORDER BY created_at DESC`
+    `SELECT * FROM db_projects WHERE status != 'deleted' ORDER BY created_at DESC`
   );
 
   // Get storage usage for each project
@@ -95,7 +95,7 @@ async function getProjects(pool) {
 
 async function getProject(pool, projectId) {
   const { rows } = await pool.query(
-    `SELECT * FROM bana_projects WHERE id = $1 AND status != 'deleted'`,
+    `SELECT * FROM db_projects WHERE id = $1 AND status != 'deleted'`,
     [projectId]
   );
   return rows[0] || null;
@@ -103,7 +103,7 @@ async function getProject(pool, projectId) {
 
 async function getProjectBySlug(pool, slug) {
   const { rows } = await pool.query(
-    `SELECT * FROM bana_projects WHERE slug = $1 AND status = 'active'`,
+    `SELECT * FROM db_projects WHERE slug = $1 AND status = 'active'`,
     [slug]
   );
   return rows[0] || null;
@@ -151,12 +151,12 @@ function generateSlug(name) {
 
 function generateDbName(slug) {
   const suffix = crypto.randomBytes(3).toString('hex');
-  return `bana_${slug.replace(/-/g, '_').slice(0, 40)}_${suffix}`;
+  return `db_${slug.replace(/-/g, '_').slice(0, 40)}_${suffix}`;
 }
 
 function generateDbUser(slug) {
   const suffix = crypto.randomBytes(3).toString('hex');
-  return `bana_${slug.replace(/-/g, '_').slice(0, 40)}_${suffix}`;
+  return `db_${slug.replace(/-/g, '_').slice(0, 40)}_${suffix}`;
 }
 
 function generateDbPassword() {
@@ -184,9 +184,9 @@ async function createProject(pool, { name, slug, storageLimitMb, maxConnections,
     // Create database owned by that user
     await client.query(`CREATE DATABASE "${escapedDb}" OWNER "${escapedUser}"`);
 
-    // Record in bana_projects
+    // Record in db_projects
     const { rows } = await client.query(
-      `INSERT INTO bana_projects (name, slug, db_name, db_user, db_password, storage_limit_mb, max_connections, created_by)
+      `INSERT INTO db_projects (name, slug, db_name, db_user, db_password, storage_limit_mb, max_connections, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [name, slug, dbName, dbUser, dbPassword, storageLimitMb || 500, maxConnections || 10, createdBy]
     );
@@ -210,7 +210,7 @@ async function createProject(pool, { name, slug, storageLimitMb, maxConnections,
     `);
 
     // Set up storage tables
-    await banaStorage.ensureStorageTables(projectPool);
+    await dbStorage.ensureStorageTables(projectPool);
 
     return project;
   } catch (err) {
@@ -231,7 +231,7 @@ async function deleteProject(pool, projectId) {
   removeProjectPool(projectId);
 
   // Clean up storage files from disk
-  banaStorage.deleteProjectDir(project.slug);
+  dbStorage.deleteProjectDir(project.slug);
 
   const escapedDb = project.db_name.replace(/"/g, '""');
   const escapedUser = project.db_user.replace(/"/g, '""');
@@ -248,7 +248,7 @@ async function deleteProject(pool, projectId) {
 
   // Mark as deleted
   await pool.query(
-    `UPDATE bana_projects SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
+    `UPDATE db_projects SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
     [projectId]
   );
 
@@ -399,7 +399,7 @@ async function updateProjectSettings(pool, projectId, { storageLimitMb, maxConne
   values.push(projectId);
 
   const { rows } = await pool.query(
-    `UPDATE bana_projects SET ${updates.join(', ')} WHERE id = $${i} RETURNING *`,
+    `UPDATE db_projects SET ${updates.join(', ')} WHERE id = $${i} RETURNING *`,
     values
   );
   return rows[0];
@@ -470,7 +470,7 @@ async function authenticateAuthUser(projectPool, email, password) {
 
 // ── API Key encryption (for dashboard display like Supabase) ──────
 const KEY_ENC_ALGO = 'aes-256-gcm';
-const KEY_ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'bana-default-key', 'bana-key-salt', 32);
+const KEY_ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'db-default-key', 'db-key-salt', 32);
 
 function encryptApiKey(text) {
   const iv = crypto.randomBytes(16);
@@ -499,17 +499,17 @@ let _columnEnsured = false;
 async function ensureEncryptedKeyColumn(pool) {
   if (_columnEnsured) return;
   try {
-    await pool.query('ALTER TABLE bana_api_keys ADD COLUMN IF NOT EXISTS encrypted_key TEXT');
+    await pool.query('ALTER TABLE db_api_keys ADD COLUMN IF NOT EXISTS encrypted_key TEXT');
     _columnEnsured = true;
   } catch (err) {
-    console.error('[BanaDB] Failed to ensure encrypted_key column:', err.message);
+    console.error('[DB] Failed to ensure encrypted_key column:', err.message);
   }
 }
 
 // API key management
 function generateApiKey(role) {
-  const prefixMap = { service: 'bana_svc_', pull: 'bana_pull_', anon: 'bana_' };
-  const prefix = prefixMap[role] || 'bana_';
+  const prefixMap = { service: 'db_svc_', pull: 'db_pull_', anon: 'db_' };
+  const prefix = prefixMap[role] || 'db_';
   const rawKey = prefix + crypto.randomBytes(32).toString('hex');
   const keyPrefix = rawKey.slice(prefix.length, prefix.length + 12);
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -519,7 +519,7 @@ function generateApiKey(role) {
 async function getApiKeys(pool, projectId) {
   const { rows } = await pool.query(
     `SELECT id, project_id, name, key_prefix, role, is_active, encrypted_key, created_at
-     FROM bana_api_keys WHERE project_id = $1 ORDER BY created_at DESC`,
+     FROM db_api_keys WHERE project_id = $1 ORDER BY created_at DESC`,
     [projectId]
   );
   return rows.map((row) => ({
@@ -533,7 +533,7 @@ async function createApiKey(pool, projectId, { name, role }) {
   const { rawKey, keyPrefix, keyHash } = generateApiKey(role || 'anon');
   const encrypted = encryptApiKey(rawKey);
   const { rows } = await pool.query(
-    `INSERT INTO bana_api_keys (project_id, name, key_prefix, key_hash, role, encrypted_key)
+    `INSERT INTO db_api_keys (project_id, name, key_prefix, key_hash, role, encrypted_key)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, key_prefix, role, created_at`,
     [projectId, name, keyPrefix, keyHash, role || 'anon', encrypted]
   );
@@ -576,7 +576,7 @@ async function ensureDefaultKeys(pool, projectId) {
 async function regenerateApiKey(pool, projectId, role) {
   // Revoke all active keys of this role
   await pool.query(
-    `UPDATE bana_api_keys SET is_active = false WHERE project_id = $1 AND role = $2 AND is_active = true`,
+    `UPDATE db_api_keys SET is_active = false WHERE project_id = $1 AND role = $2 AND is_active = true`,
     [projectId, role]
   );
   const nameMap = { service: 'service_role key', pull: 'pull key', anon: 'anon key' };
@@ -586,7 +586,7 @@ async function regenerateApiKey(pool, projectId, role) {
 
 async function revokeApiKey(pool, keyId) {
   const { rowCount } = await pool.query(
-    `UPDATE bana_api_keys SET is_active = false WHERE id = $1`,
+    `UPDATE db_api_keys SET is_active = false WHERE id = $1`,
     [keyId]
   );
   return { revoked: rowCount > 0 };
@@ -595,8 +595,8 @@ async function revokeApiKey(pool, keyId) {
 async function findProjectByApiKeyHash(pool, keyHash) {
   const { rows } = await pool.query(
     `SELECT bak.id AS api_key_id, bak.role, bp.*
-     FROM bana_api_keys bak
-     JOIN bana_projects bp ON bp.id = bak.project_id
+     FROM db_api_keys bak
+     JOIN db_projects bp ON bp.id = bak.project_id
      WHERE bak.key_hash = $1 AND bak.is_active = true AND bp.status = 'active'`,
     [keyHash]
   );
@@ -607,7 +607,7 @@ async function findProjectByApiKeyHash(pool, keyHash) {
 async function getStorageSummary(pool) {
   // Get total allocated and used across all projects
   const { rows: projects } = await pool.query(
-    `SELECT id, db_name, storage_limit_mb FROM bana_projects WHERE status != 'deleted'`
+    `SELECT id, db_name, storage_limit_mb FROM db_projects WHERE status != 'deleted'`
   );
 
   let totalAllocatedMb = 0;
@@ -655,7 +655,7 @@ async function checkStorageLimit(pool, project) {
     let fileUsedBytes = 0;
     try {
       const projectPool = getProjectPool(project);
-      fileUsedBytes = await banaStorage.getFileSizeTotal(projectPool);
+      fileUsedBytes = await dbStorage.getFileSizeTotal(projectPool);
     } catch {}
 
     const totalUsedMb = Math.round((dbUsedBytes + fileUsedBytes) / (1024 * 1024));

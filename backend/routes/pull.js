@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { banaApiAuth } = require('../middleware/banaApiAuth');
+const { dbApiAuth } = require('../middleware/dbApiAuth');
 const pullService = require('../services/pullService');
 
 // All routes require API key auth
-router.use(banaApiAuth);
+router.use(dbApiAuth);
 
 // Middleware: ensure key is a pull key
 function requirePullKey(req, res, next) {
-  if (req.banaKeyRole !== 'pull') {
+  if (req.dbKeyRole !== 'pull') {
     return res.status(403).json({ error: 'This endpoint requires a pull key' });
   }
   next();
@@ -17,18 +17,18 @@ function requirePullKey(req, res, next) {
 // GET /:slug/pull/status — tracking status + pending count
 router.get('/:slug/pull/status', requirePullKey, async (req, res) => {
   try {
-    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
-    const totalChanges = await pullService.getTotalChangeCount(req.banaPool);
+    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
+    const totalChanges = await pullService.getTotalChangeCount(req.dbPool);
 
     res.json({
-      tracking_enabled: req.banaProject.pull_tracking_enabled || false,
+      tracking_enabled: req.dbProject.pull_tracking_enabled || false,
       total_changes: totalChanges,
       cursor: cursor?.last_change_id || 0,
       pending_changes: totalChanges - (cursor?.last_change_id || 0),
       last_pulled_at: cursor?.last_pulled_at || null,
       project: {
-        name: req.banaProject.name,
-        slug: req.banaProject.slug,
+        name: req.dbProject.name,
+        slug: req.dbProject.slug,
       },
     });
   } catch (err) {
@@ -44,11 +44,11 @@ router.get('/:slug/pull/changes', requirePullKey, async (req, res) => {
 
     let effectiveSinceId = sinceId;
     if (!req.query.since_id) {
-      const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
+      const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
       effectiveSinceId = cursor?.last_change_id || 0;
     }
 
-    const result = await pullService.getSchemaChanges(req.banaPool, effectiveSinceId, limit);
+    const result = await pullService.getSchemaChanges(req.dbPool, effectiveSinceId, limit);
 
     res.json({
       changes: result.changes,
@@ -56,8 +56,8 @@ router.get('/:slug/pull/changes', requirePullKey, async (req, res) => {
       has_more: result.has_more,
       since_id: effectiveSinceId,
       project: {
-        name: req.banaProject.name,
-        slug: req.banaProject.slug,
+        name: req.dbProject.name,
+        slug: req.dbProject.slug,
       },
     });
   } catch (err) {
@@ -73,10 +73,10 @@ router.get('/:slug/pull/changes', requirePullKey, async (req, res) => {
 // GET /:slug/pull/migration — formatted migration file for pending changes
 router.get('/:slug/pull/migration', requirePullKey, async (req, res) => {
   try {
-    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.banaApiKeyId);
+    const cursor = await pullService.getPullCursor(req.app.locals.pool, req.dbApiKeyId);
     const sinceId = cursor?.last_change_id || 0;
 
-    const result = await pullService.getSchemaChanges(req.banaPool, sinceId, 5000);
+    const result = await pullService.getSchemaChanges(req.dbPool, sinceId, 5000);
 
     if (result.changes.length === 0) {
       return res.json({ migration: null, message: 'No new changes since last pull' });
@@ -111,8 +111,8 @@ router.post('/:slug/pull/ack', requirePullKey, async (req, res) => {
 
     await pullService.updatePullCursor(
       req.app.locals.pool,
-      req.banaApiKeyId,
-      req.banaProject.id,
+      req.dbApiKeyId,
+      req.dbProject.id,
       change_id
     );
 

@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const syncService = require('../services/syncService');
 const pullService = require('../services/pullService');
-const banadbService = require('../services/banadbService');
+const dbService = require('../services/dbService');
 const prService = require('../services/prService');
 const aiReviewService = require('../services/aiAgentService');
 const telegramService = require('../services/telegramService');
@@ -31,7 +31,7 @@ function notify(pool, eventType, payload) {
  */
 async function resolveProject(req, res, next) {
   try {
-    const project = await banadbService.getProject(req.app.locals.pool, req.params.id);
+    const project = await dbService.getProject(req.app.locals.pool, req.params.id);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     req.project = project;
     next();
@@ -227,7 +227,7 @@ router.post('/projects/:id/pull-requests/:num/analyze', resolveProject, async (r
     // Get current schema for context
     let existingTables = [];
     try {
-      const projectPool = banadbService.getProjectPool(req.project);
+      const projectPool = dbService.getProjectPool(req.project);
       const snapshot = await syncService.getSchemaSnapshot(projectPool);
       existingTables = snapshot.tables.map(t => t.name);
     } catch {}
@@ -268,7 +268,7 @@ router.post('/projects/:id/pull-requests/:num/review', resolveProject, async (re
     // Get existing tables for context
     let existingTables = [];
     try {
-      const projectPool = banadbService.getProjectPool(req.project);
+      const projectPool = dbService.getProjectPool(req.project);
       const snapshot = await syncService.getSchemaSnapshot(projectPool);
       existingTables = snapshot.tables.map(t => t.name);
     } catch {}
@@ -468,7 +468,7 @@ router.get('/projects/:id/changes', resolveProject, async (req, res) => {
     if (!req.project.pull_tracking_enabled) {
       return res.json({ changes: [], total: 0, tracking_enabled: false });
     }
-    const projectPool = banadbService.getProjectPool(req.project);
+    const projectPool = dbService.getProjectPool(req.project);
     const sinceId = parseInt(req.query.since) || 0;
     const result = await pullService.getSchemaChanges(projectPool, sinceId);
     res.json({ ...result, tracking_enabled: true });
@@ -479,7 +479,7 @@ router.get('/projects/:id/changes', resolveProject, async (req, res) => {
 
 router.get('/projects/:id/schema', resolveProject, async (req, res) => {
   try {
-    const projectPool = banadbService.getProjectPool(req.project);
+    const projectPool = dbService.getProjectPool(req.project);
     const snapshot = await syncService.getSchemaSnapshot(projectPool);
     res.json(snapshot);
   } catch (err) {

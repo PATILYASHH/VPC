@@ -1,11 +1,13 @@
 /**
  * VPC Sync — Git-like SCM extension for VPC VCS
  *
- * Compact design: only native SCM panel + status bar.
- * No webviews. Fast activation. Like Git.
+ * v8.0 — Direct push (like git), merge on pull, branch management,
+ * security fixes, proper error handling
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { SyncApiClient } from './api/client';
 import { VpcScmProvider } from './scm/vpcScmProvider';
 import { PanelProvider } from './views/panelProvider';
@@ -27,12 +29,12 @@ export function activate(ctx: vscode.ExtensionContext) {
 
   // Status bar
   branchItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  branchItem.command = 'vpcSync.connect';
+  branchItem.command = 'vpcSync.switchBranch';
   ctx.subscriptions.push(branchItem);
   syncItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
   ctx.subscriptions.push(syncItem);
 
-  // Sidebar panel (single webview — connection form + push/pull)
+  // Sidebar panel
   panel = new PanelProvider(client, ctx, () => initScm(ctx));
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider('vpcSync.panel', panel),
@@ -45,32 +47,26 @@ export function activate(ctx: vscode.ExtensionContext) {
       vscode.commands.executeCommand('vpcSync.panel.focus');
     }),
 
-    // Refresh
     vscode.commands.registerCommand('vpcSync.refresh', () => {
       scmProvider?.refresh();
       panel.refresh();
       updateStatusBar();
     }),
 
-    // Commit
     vscode.commands.registerCommand('vpcSync.commit', () => doCommit()),
-
-    // Push
     vscode.commands.registerCommand('vpcSync.push', () => doPush()),
-
-    // Pull
     vscode.commands.registerCommand('vpcSync.pull', () => doPull()),
 
     // Stage file
     vscode.commands.registerCommand('vpcSync.stageFile', (res: vscode.SourceControlResourceState) => {
-      if (!root || !res) return;
+      if (!root || !res) { return; }
       index.stageFile(root, vscode.workspace.asRelativePath(res.resourceUri));
       scmProvider?.refresh();
     }),
 
     // Unstage file
     vscode.commands.registerCommand('vpcSync.unstageFile', (res: vscode.SourceControlResourceState) => {
-      if (!root || !res) return;
+      if (!root || !res) { return; }
       const fp = vscode.workspace.asRelativePath(res.resourceUri);
       const head = refs.resolveRef(root, 'HEAD');
       if (head) {
@@ -79,8 +75,8 @@ export function activate(ctx: vscode.ExtensionContext) {
         if (entry) {
           const idx = index.readIndex(root);
           const i = idx.entries.findIndex(e => e.path === fp);
-          if (i >= 0) idx.entries[i].hash = entry.hash;
-          else idx.entries.push({ path: fp, hash: entry.hash, mode: entry.mode, size: 0, mtime: Date.now() });
+          if (i >= 0) { idx.entries[i].hash = entry.hash; }
+          else { idx.entries.push({ path: fp, hash: entry.hash, mode: entry.mode, size: 0, mtime: Date.now() }); }
           index.writeIndex(root, idx);
         } else {
           index.unstageFile(root, fp);
@@ -91,38 +87,110 @@ export function activate(ctx: vscode.ExtensionContext) {
 
     // Stage all
     vscode.commands.registerCommand('vpcSync.stageAll', () => {
-      if (!root) return;
+      if (!root) { return; }
       index.stageAllFiles(root);
       scmProvider?.refresh();
     }),
 
     // Unstage all
     vscode.commands.registerCommand('vpcSync.unstageAll', () => {
-      if (!root) return;
+      if (!root) { return; }
       const head = refs.resolveRef(root, 'HEAD');
-      if (head) index.buildIndexFromTree(root, objects.readCommit(root, head).tree);
+      if (head) { index.buildIndexFromTree(root, objects.readCommit(root, head).tree); }
       scmProvider?.refresh();
     }),
 
     // Open file
     vscode.commands.registerCommand('vpcSync.openFile', async (res: vscode.SourceControlResourceState) => {
-      if (res) vscode.window.showTextDocument(await vscode.workspace.openTextDocument(res.resourceUri));
+      if (res) { vscode.window.showTextDocument(await vscode.workspace.openTextDocument(res.resourceUri)); }
     }),
 
-    // Discard
+    // Discard changes (with path traversal protection)
     vscode.commands.registerCommand('vpcSync.discardFile', async (res: vscode.SourceControlResourceState) => {
-      if (!root || !res) return;
+      if (!root || !res) { return; }
       const fp = vscode.workspace.asRelativePath(res.resourceUri);
       const ok = await vscode.window.showWarningMessage(`Discard changes to ${fp}?`, { modal: true }, 'Discard');
-      if (ok !== 'Discard') return;
+      if (ok !== 'Discard') { return; }
       const idx = index.readIndex(root);
       const entry = idx.entries.find(e => e.path === fp);
       if (entry) {
+        const absPath = path.resolve(root, fp);
+        // Path traversal check
+        if (!absPath.startsWith(root)) {
+          vscode.window.showErrorMessage('Invalid file path.');
+          return;
+        }
         try {
-          require('fs').writeFileSync(require('path').resolve(root, fp), objects.readBlob(root, entry.hash));
-        } catch {}
+          fs.writeFileSync(absPath, objects.readBlob(root, entry.hash));
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Failed to discard: ${err.message}`);
+        }
       }
       scmProvider?.refresh();
+    }),
+
+    // ─── Branch Management ───────────────────────────────
+
+    vscode.commands.registerCommand('vpcSync.createBranch', async () => {
+      if (!root) { return; }
+      const name = await vscode.window.showInputBox({ prompt: 'New branch name', placeHolder: 'feature/my-feature' });
+      if (!name) { return; }
+      const result = sync.createBranch(root, name);
+      if (result.success) {
+        vscode.window.showInformationMessage(result.message);
+        // Ask if user wants to switch
+        const action = await vscode.window.showInformationMessage(`Switch to '${name}'?`, 'Yes', 'No');
+        if (action === 'Yes') {
+          const sw = sync.switchBranch(root, name);
+          vscode.window.showInformationMessage(sw.message);
+          scmProvider?.refresh();
+          updateStatusBar();
+        }
+      } else {
+        vscode.window.showErrorMessage(result.message);
+      }
+    }),
+
+    vscode.commands.registerCommand('vpcSync.switchBranch', async () => {
+      if (!root) { return; }
+      const branches = sync.listBranches(root);
+      if (branches.length === 0) {
+        vscode.window.showInformationMessage('No branches yet. Make a commit first.');
+        return;
+      }
+      const items = branches.map(b => ({
+        label: `${b.current ? '* ' : ''}${b.name}`,
+        description: b.hash.slice(0, 12),
+        branch: b.name,
+      }));
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Switch branch' });
+      if (!picked) { return; }
+      const result = sync.switchBranch(root, picked.branch);
+      if (result.success) {
+        vscode.window.showInformationMessage(result.message);
+      } else {
+        vscode.window.showErrorMessage(result.message);
+      }
+      scmProvider?.refresh();
+      updateStatusBar();
+    }),
+
+    vscode.commands.registerCommand('vpcSync.deleteBranch', async () => {
+      if (!root) { return; }
+      const branches = sync.listBranches(root).filter(b => !b.current);
+      if (branches.length === 0) {
+        vscode.window.showInformationMessage('No other branches to delete.');
+        return;
+      }
+      const items = branches.map(b => ({ label: b.name, description: b.hash.slice(0, 12) }));
+      const picked = await vscode.window.showQuickPick(items, { placeHolder: 'Delete branch' });
+      if (!picked) { return; }
+      const ok = await vscode.window.showWarningMessage(`Delete branch '${picked.label}'?`, { modal: true }, 'Delete');
+      if (ok !== 'Delete') { return; }
+      const result = sync.deleteBranch(root, picked.label);
+      if (result.success) { vscode.window.showInformationMessage(result.message); }
+      else { vscode.window.showErrorMessage(result.message); }
+      updateStatusBar();
     }),
   );
 
@@ -133,6 +201,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   } else {
     branchItem.text = '$(plug) VPC Sync';
     branchItem.tooltip = 'Connect to VPSHub';
+    branchItem.command = 'vpcSync.connect';
     branchItem.show();
   }
 
@@ -155,7 +224,7 @@ export function activate(ctx: vscode.ExtensionContext) {
 
 function initScm(ctx: vscode.ExtensionContext) {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root) return;
+  if (!root) { return; }
   if (!scmProvider) {
     scmProvider = new VpcScmProvider(root);
     ctx.subscriptions.push(scmProvider);
@@ -168,12 +237,13 @@ function initScm(ctx: vscode.ExtensionContext) {
 
 async function doCommit() {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root || !scmProvider) return;
+  if (!root) { return; }
+  if (!scmProvider) { vscode.window.showWarningMessage('VPC Sync not initialized. Connect to a repository first.'); return; }
 
   let message = scmProvider.inputBox.value?.trim();
   if (!message) {
     message = await vscode.window.showInputBox({ prompt: 'Commit message' }) || '';
-    if (!message.trim()) return;
+    if (!message.trim()) { return; }
   }
 
   const idx = index.readIndex(root);
@@ -184,12 +254,12 @@ async function doCommit() {
     const headMap = new Map(objects.walkTree(root, objects.readCommit(root, headHash).tree).map(f => [f.path, f.hash]));
     const idxMap = new Map(idx.entries.map(e => [e.path, e.hash]));
     for (const [p, h] of idxMap) { if (headMap.get(p) !== h) { hasChanges = true; break; } }
-    if (!hasChanges) for (const [p] of headMap) { if (!idxMap.has(p)) { hasChanges = true; break; } }
+    if (!hasChanges) { for (const [p] of headMap) { if (!idxMap.has(p)) { hasChanges = true; break; } } }
   } else {
     hasChanges = idx.entries.length > 0;
   }
 
-  if (!hasChanges) { vscode.window.showInformationMessage('Nothing to commit.'); return; }
+  if (!hasChanges) { vscode.window.showInformationMessage('Nothing to commit — stage some changes first.'); return; }
 
   const treeHash = objects.buildTreeFromFiles(root, idx.entries);
   const username = vscode.workspace.getConfiguration('vpcSync').get<string>('username') || 'user';
@@ -202,99 +272,95 @@ async function doCommit() {
   });
 
   const head = refs.readHead(root);
-  if (head.symbolic && head.ref) refs.updateRef(root, head.ref, hash);
-  else refs.writeHead(root, hash);
+  if (head.symbolic && head.ref) { refs.updateRef(root, head.ref, hash); }
+  else { refs.writeHead(root, hash); }
 
   scmProvider.inputBox.value = '';
-  vscode.window.showInformationMessage(`${hash.slice(0, 8)}: ${message}`);
+  vscode.window.showInformationMessage(`Committed: ${hash.slice(0, 8)} — ${message}`);
   scmProvider.refresh();
   updateStatusBar();
 }
 
-// ─── Push (creates PR) ──────────────────────────────────
+// ─── Push (direct push, like git) ───────────────────────
 
 async function doPush() {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root) return;
+  if (!root) { return; }
 
-  // Get PR title from user
-  const title = await vscode.window.showInputBox({
-    prompt: 'PR title (what does this change do?)',
-    placeHolder: 'e.g. Fix login button styling',
-  });
-  if (!title) return; // user cancelled
-
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Creating PR...' }, async () => {
-    try {
-      const r = await sync.push(root, client, undefined, title);
-      if (r.prNumber) {
-        if (r.hasConflicts && r.conflictFiles && r.conflictFiles.length > 0) {
-          // Show conflict-aware notification with option to open PR for VPAI resolution
-          vscode.window.showWarningMessage(
-            `PR #${r.prNumber} created with ${r.conflictFiles.length} conflict(s). Open in VPSHub to let VPAI resolve them.`,
-            'Open PR', 'Dismiss'
-          ).then(action => {
-            if (action === 'Open PR') {
-              const config = vscode.workspace.getConfiguration('vpcSync');
-              const serverUrl = config.get<string>('serverUrl') || '';
-              const repository = config.get<string>('repository') || '';
-              if (serverUrl && repository) {
-                vscode.env.openExternal(vscode.Uri.parse(`${serverUrl}/#/vpshub/${repository}/pulls/${r.prNumber}`));
-              }
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Pushing...' },
+    async () => {
+      try {
+        const r = await sync.push(root, client);
+        if (r.success) {
+          // Show notifications from server (e.g. AI conflict resolution)
+          if (r.notifications && r.notifications.length > 0) {
+            for (const n of r.notifications) {
+              vscode.window.showInformationMessage(n.message);
             }
-          });
+          } else {
+            vscode.window.showInformationMessage(r.message);
+          }
         } else {
-          vscode.window.showInformationMessage(r.message, 'View PR').then(action => {
-            if (action === 'View PR') {
-              const config = vscode.workspace.getConfiguration('vpcSync');
-              const serverUrl = config.get<string>('serverUrl') || '';
-              const repository = config.get<string>('repository') || '';
-              if (serverUrl && repository) {
-                vscode.env.openExternal(vscode.Uri.parse(`${serverUrl}/#/vpshub/${repository}/pulls/${r.prNumber}`));
-              }
-            }
-          });
+          vscode.window.showErrorMessage(r.message);
         }
-      } else {
-        vscode.window.showInformationMessage(r.message);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Push failed: ${e.message}`);
       }
-    } catch (e: any) { vscode.window.showErrorMessage(`Push: ${e.message}`); }
-    scmProvider?.refresh();
-    updateStatusBar();
-  });
+      scmProvider?.refresh();
+      updateStatusBar();
+    },
+  );
 }
 
 // ─── Pull ────────────────────────────────────────────────
 
 async function doPull() {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root) return;
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Pulling...' }, async () => {
-    try {
-      const r = await sync.pull(root, client);
-      vscode.window.showInformationMessage(r.message);
-    } catch (e: any) { vscode.window.showErrorMessage(`Pull: ${e.message}`); }
-    scmProvider?.refresh();
-    updateStatusBar();
-  });
+  if (!root) { return; }
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Pulling...' },
+    async () => {
+      try {
+        const r = await sync.pull(root, client);
+        if (r.success) {
+          vscode.window.showInformationMessage(r.message);
+        } else {
+          vscode.window.showErrorMessage(r.message);
+        }
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`Pull failed: ${e.message}`);
+      }
+      scmProvider?.refresh();
+      updateStatusBar();
+    },
+  );
 }
 
 // ─── Status Bar ──────────────────────────────────────────
 
 function updateStatusBar() {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!root || !objects.hasVpcRepo(root)) { branchItem.text = '$(plug) VPC Sync'; branchItem.show(); syncItem.hide(); return; }
+  if (!root || !objects.hasVpcRepo(root)) {
+    branchItem.text = '$(plug) VPC Sync';
+    branchItem.command = 'vpcSync.connect';
+    branchItem.show();
+    syncItem.hide();
+    return;
+  }
 
   const branch = refs.getCurrentBranch(root);
   branchItem.text = `$(git-branch) ${branch || 'detached'}`;
-  branchItem.tooltip = 'VPC Sync';
+  branchItem.tooltip = 'Switch branch';
+  branchItem.command = 'vpcSync.switchBranch';
   branchItem.show();
 
   try {
     const s = sync.getSyncStatus(root);
     const parts: string[] = [];
-    if (s.ahead > 0) parts.push(`${s.ahead}$(arrow-up)`);
-    if (s.behind > 0) parts.push(`${s.behind}$(arrow-down)`);
+    if (s.ahead > 0) { parts.push(`${s.ahead}$(arrow-up)`); }
+    if (s.behind > 0) { parts.push(`${s.behind}$(arrow-down)`); }
     syncItem.text = parts.length > 0 ? parts.join(' ') : '$(check)';
     syncItem.tooltip = parts.length > 0 ? `${s.ahead} to push, ${s.behind} to pull` : 'Up to date';
     syncItem.command = s.behind > 0 ? 'vpcSync.pull' : 'vpcSync.push';
@@ -302,4 +368,4 @@ function updateStatusBar() {
   } catch { syncItem.hide(); }
 }
 
-export function deactivate() { if (timer) clearInterval(timer); }
+export function deactivate() { if (timer) { clearInterval(timer); } }

@@ -4,8 +4,8 @@ const path = require('path');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const gallery = require('../services/galleryService');
-const banadbService = require('../services/banadbService');
-const banaStorage = require('../services/banaStorageService');
+const dbService = require('../services/dbService');
+const dbStorage = require('../services/dbStorageService');
 
 // Multer storage: keep original extension, use UUID filename
 const storage = multer.diskStorage({
@@ -153,18 +153,18 @@ router.post('/folders', async (req, res) => {
   }
 });
 
-// ─── BanaDB Bucket Files in Gallery ──────────────────────
+// ─── DB Bucket Files in Gallery ──────────────────────
 
 // GET /bucket-data — all projects with their buckets + file counts
 router.get('/bucket-data', async (req, res) => {
   try {
-    const projects = await banadbService.getProjects(req.app.locals.pool);
+    const projects = await dbService.getProjects(req.app.locals.pool);
     const result = [];
 
     for (const project of projects) {
       try {
-        const pool = banadbService.getProjectAdminPool(project);
-        const buckets = await banaStorage.listBuckets(pool);
+        const pool = dbService.getProjectAdminPool(project);
+        const buckets = await dbStorage.listBuckets(pool);
         if (buckets.length > 0) {
           result.push({
             id: project.id,
@@ -198,11 +198,11 @@ router.get('/bucket-files', async (req, res) => {
       return res.status(400).json({ error: 'projectId and bucketId are required' });
     }
 
-    const project = await banadbService.getProject(req.app.locals.pool, projectId);
+    const project = await dbService.getProject(req.app.locals.pool, projectId);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const pool = banadbService.getProjectAdminPool(project);
-    const bucket = await banaStorage.getBucket(pool, bucketId);
+    const pool = dbService.getProjectAdminPool(project);
+    const bucket = await dbStorage.getBucket(pool, bucketId);
     if (!bucket) return res.status(404).json({ error: 'Bucket not found' });
 
     // Get all objects with sorting
@@ -257,11 +257,11 @@ router.get('/bucket-files/:objectId/preview', async (req, res) => {
     const { projectId } = req.query;
     if (!projectId) return res.status(400).json({ error: 'projectId required' });
 
-    const project = await banadbService.getProject(req.app.locals.pool, projectId);
+    const project = await dbService.getProject(req.app.locals.pool, projectId);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const pool = banadbService.getProjectAdminPool(project);
-    const obj = await banaStorage.getObject(pool, req.params.objectId);
+    const pool = dbService.getProjectAdminPool(project);
+    const obj = await dbStorage.getObject(pool, req.params.objectId);
     if (!obj) return res.status(404).json({ error: 'File not found' });
 
     const fs = require('fs');

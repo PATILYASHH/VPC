@@ -12,7 +12,7 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
 import { format } from 'date-fns';
 
-export default function BanaAuth({ project }) {
+export default function Auth({ project }) {
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,9 +23,9 @@ export default function BanaAuth({ project }) {
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
   const { data, isLoading } = useApiQuery(
-    ['bana-auth-users', project.id],
+    ['db-auth-users', project.id],
     `${baseUrl}/auth/users`
   );
 
@@ -34,7 +34,7 @@ export default function BanaAuth({ project }) {
     setCreating(true);
     try {
       await api.post(`${baseUrl}/auth/users`, { email, password });
-      queryClient.invalidateQueries({ queryKey: ['bana-auth-users'] });
+      queryClient.invalidateQueries({ queryKey: ['db-auth-users'] });
       toast.success('User created');
       setShowCreate(false);
       setEmail('');
@@ -49,7 +49,7 @@ export default function BanaAuth({ project }) {
   const handleToggle = async (userId) => {
     try {
       await api.patch(`${baseUrl}/auth/users/${userId}`);
-      queryClient.invalidateQueries({ queryKey: ['bana-auth-users'] });
+      queryClient.invalidateQueries({ queryKey: ['db-auth-users'] });
       toast.success('User updated');
     } catch (err) {
       toast.error('Failed to update user');
@@ -60,7 +60,7 @@ export default function BanaAuth({ project }) {
     if (!confirm(`Delete user "${userEmail}"?`)) return;
     try {
       await api.delete(`${baseUrl}/auth/users/${userId}`);
-      queryClient.invalidateQueries({ queryKey: ['bana-auth-users'] });
+      queryClient.invalidateQueries({ queryKey: ['db-auth-users'] });
       toast.success('User deleted');
     } catch (err) {
       toast.error('Failed to delete user');

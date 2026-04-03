@@ -1,6 +1,7 @@
 "use strict";
 /**
  * VPC VCS Sync — Push/Pull over HTTP
+ * Now works like Git: direct push, merge on pull, branch management
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -40,6 +41,10 @@ exports.setRemoteConfig = setRemoteConfig;
 exports.push = push;
 exports.pull = pull;
 exports.cloneRepo = cloneRepo;
+exports.createBranch = createBranch;
+exports.switchBranch = switchBranch;
+exports.deleteBranch = deleteBranch;
+exports.listBranches = listBranches;
 exports.getSyncStatus = getSyncStatus;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -47,6 +52,34 @@ const vscode = __importStar(require("vscode"));
 const objects = __importStar(require("./objects"));
 const refs = __importStar(require("./refs"));
 const index = __importStar(require("./index"));
+// ─── Lock file to prevent concurrent operations ─────────────
+function acquireLock(root) {
+    const lockPath = path.join(objects.vpcDir(root), 'LOCK');
+    try {
+        if (fs.existsSync(lockPath)) {
+            // Check if lock is stale (older than 5 minutes)
+            const stat = fs.statSync(lockPath);
+            if (Date.now() - stat.mtimeMs > 5 * 60 * 1000) {
+                fs.unlinkSync(lockPath);
+            }
+            else {
+                return false;
+            }
+        }
+        fs.writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function releaseLock(root) {
+    try {
+        fs.unlinkSync(path.join(objects.vpcDir(root), 'LOCK'));
+    }
+    catch { /* ignore */ }
+}
+// ─── Remote Config ──────────────────────────────────────────
 function getRemoteConfig(root) {
     const configPath = path.join(objects.vpcDir(root), 'config');
     if (!fs.existsSync(configPath)) {
@@ -77,216 +110,219 @@ function setRemoteConfig(root, url, username, token) {
     config.remotes.origin = { url, username, token };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
-// ─── Push (always creates PR — no direct merge) ─────────────
-async function push(root, client, branchName, prTitle) {
-    const remote = getRemoteConfig(root);
-    if (!remote) {
-        return { success: false, message: 'No remote configured' };
-    }
-    const branch = branchName || refs.getCurrentBranch(root) || 'main';
-    const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
-    if (!localHash) {
-        return { success: false, message: `Branch '${branch}' has no commits` };
-    }
-    // Get remote refs
-    const remoteRefs = await client.vcsFetchRefs(remote.url, remote.username, remote.token);
-    const remoteHash = remoteRefs.refs?.[`refs/heads/${branch}`] || '';
-    if (remoteHash === localHash) {
-        return { success: true, message: 'Already up to date', objectCount: 0 };
-    }
-    // Collect objects to send
-    const remoteObjects = new Set();
-    const trackingHash = refs.resolveRef(root, `refs/remotes/origin/${branch}`);
-    if (trackingHash) {
-        try {
-            objects.collectReachableObjects(root, trackingHash, new Set()).forEach(h => remoteObjects.add(h));
-        }
-        catch { /* ignore */ }
-    }
-    const localObjects = objects.collectReachableObjects(root, localHash, new Set());
-    const toSend = [];
-    for (const hash of localObjects) {
-        if (!remoteObjects.has(hash)) {
-            try {
-                const rawCompressed = objects.readObjectRaw(root, hash);
-                const obj = objects.readObject(root, hash);
-                toSend.push({ hash, type: obj.type, data: rawCompressed.toString('base64'), compressed: true });
-            }
-            catch { /* skip */ }
-        }
-    }
-    // Push to a PR branch (never directly to the target branch)
-    const timestamp = Date.now().toString(36);
-    const prBranch = `pr/${remote.username}/${branch}-${timestamp}`;
-    const prRefName = `refs/heads/${prBranch}`;
-    const result = await client.vcsPush(remote.url, remote.username, remote.token, toSend, {
-        [prRefName]: { old: '', new: localHash },
-    });
-    if (!result.ok) {
-        return { success: false, message: result.error || 'Push failed' };
-    }
-    // Update tracking ref for the PR branch
-    refs.updateRef(root, `refs/remotes/origin/${prBranch}`, localHash);
-    // Create PR via admin API
-    const config = getVscodeConfig();
-    if (!config.serverUrl || !config.token) {
-        return { success: true, message: `Pushed to ${prBranch}. Configure VPSHub token to auto-create PR.`, objectCount: toSend.length };
-    }
-    // Get last commit message for PR title
-    let title = prTitle || '';
-    if (!title) {
-        try {
-            const commit = objects.readCommit(root, localHash);
-            title = commit.message.split('\n')[0] || `Push to ${branch}`;
-        }
-        catch {
-            title = `Push to ${branch}`;
-        }
+// ─── Push (direct push like git — force-push philosophy) ────
+async function push(root, client, branchName) {
+    if (!acquireLock(root)) {
+        return { success: false, message: 'Another sync operation is in progress. Try again in a moment.' };
     }
     try {
-        const pr = await client.vpshubCreatePR(config.serverUrl, config.token, config.owner, config.repo, title, `Pushed from VS Code.\n\nBranch: \`${prBranch}\` → \`${branch}\``, prBranch, branch);
-        const prNum = pr.pr?.pr_number || pr.pr_number || '?';
-        // Check if PR has merge conflicts
-        let hasConflicts = false;
-        let conflictFiles = [];
-        if (typeof prNum === 'number') {
+        const remote = getRemoteConfig(root);
+        if (!remote) {
+            return { success: false, message: 'No remote configured. Connect to VPSHub first.' };
+        }
+        const branch = branchName || refs.getCurrentBranch(root) || 'main';
+        const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
+        if (!localHash) {
+            return { success: false, message: `Branch '${branch}' has no commits. Make a commit first.` };
+        }
+        // Get remote refs
+        let remoteRefs;
+        try {
+            remoteRefs = await client.vcsFetchRefs(remote.url, remote.username, remote.token);
+        }
+        catch (err) {
+            return { success: false, message: `Cannot reach server: ${err.message}` };
+        }
+        const remoteHash = remoteRefs.refs?.[`refs/heads/${branch}`] || '';
+        if (remoteHash === localHash) {
+            return { success: true, message: 'Already up to date — nothing to push.', objectCount: 0 };
+        }
+        // Collect objects to send (only what remote doesn't have)
+        const remoteObjects = new Set();
+        const trackingHash = refs.resolveRef(root, `refs/remotes/origin/${branch}`);
+        if (trackingHash) {
             try {
-                const mergeCheck = await client.vpshubCheckMerge(config.serverUrl, config.token, config.owner, config.repo, prNum);
-                if (!mergeCheck.mergeable && mergeCheck.conflicts?.length > 0) {
-                    hasConflicts = true;
-                    conflictFiles = mergeCheck.conflicts.map((c) => c.path);
+                objects.collectReachableObjects(root, trackingHash, new Set()).forEach(h => remoteObjects.add(h));
+            }
+            catch { /* ignore */ }
+        }
+        const localObjects = objects.collectReachableObjects(root, localHash, new Set());
+        const toSend = [];
+        for (const hash of localObjects) {
+            if (!remoteObjects.has(hash)) {
+                try {
+                    const rawCompressed = objects.readObjectRaw(root, hash);
+                    const obj = objects.readObject(root, hash);
+                    toSend.push({ hash, type: obj.type, data: rawCompressed.toString('base64'), compressed: true });
+                }
+                catch (err) {
+                    console.warn(`[VPC Sync] Skipping corrupt object ${hash}: ${err.message}`);
                 }
             }
-            catch { /* merge check is best-effort */ }
         }
-        const conflictMsg = hasConflicts
-            ? ` (${conflictFiles.length} conflict${conflictFiles.length > 1 ? 's' : ''} — VPAI can resolve)`
-            : '';
-        return {
-            success: true,
-            message: `PR #${prNum} created: ${prBranch} → ${branch}${conflictMsg}`,
-            objectCount: toSend.length,
-            newHash: localHash,
-            prNumber: typeof prNum === 'number' ? prNum : undefined,
-            hasConflicts,
-            conflictFiles,
+        // Direct push to branch (server handles merging/conflicts with force-push philosophy)
+        const refUpdate = {
+            [`refs/heads/${branch}`]: { old: remoteHash || '0'.repeat(64), new: localHash },
         };
-    }
-    catch (prErr) {
-        return {
-            success: true,
-            message: `Pushed to ${prBranch} but PR creation failed: ${prErr.message}`,
-            objectCount: toSend.length,
-        };
-    }
-}
-function getVscodeConfig() {
-    const config = vscode.workspace.getConfiguration('vpcSync');
-    const repository = config.get('repository') || '';
-    const [owner, repo] = repository.includes('/') ? repository.split('/') : ['', ''];
-    return {
-        serverUrl: config.get('serverUrl') || '',
-        token: config.get('token') || '',
-        owner,
-        repo,
-    };
-}
-// ─── Pull ────────────────────────────────────────────────────
-async function pull(root, client, branchName) {
-    const remote = getRemoteConfig(root);
-    if (!remote) {
-        return { success: false, message: 'No remote configured' };
-    }
-    const branch = branchName || refs.getCurrentBranch(root) || 'main';
-    const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
-    const haves = localHash ? [localHash] : [];
-    // Pull objects from remote
-    const result = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], haves);
-    const remoteHash = result.refs?.[`refs/heads/${branch}`];
-    if (!remoteHash) {
-        return { success: false, message: `Branch '${branch}' not found on remote` };
-    }
-    if (remoteHash === localHash) {
-        return { success: true, message: 'Already up to date', objectCount: 0 };
-    }
-    // Store received objects
-    const vpc = objects.vpcDir(root);
-    for (const obj of result.objects || []) {
-        const objPath = path.join(vpc, 'objects', obj.hash.slice(0, 2), obj.hash.slice(2));
-        const dir = path.dirname(objPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+        let result;
+        try {
+            result = await client.vcsPush(remote.url, remote.username, remote.token, toSend, refUpdate);
         }
-        if (!fs.existsSync(objPath)) {
-            fs.writeFileSync(objPath, Buffer.from(obj.data, 'base64'));
+        catch (err) {
+            return { success: false, message: `Push failed: ${err.message}` };
         }
-    }
-    // Update remote tracking ref
-    refs.updateRef(root, `refs/remotes/origin/${branch}`, remoteHash);
-    // Fast-forward local branch
-    if (!localHash) {
-        refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
-    }
-    else {
-        // Check if fast-forward
-        const isFF = isAncestor(root, localHash, remoteHash);
-        if (isFF) {
-            refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
+        if (!result.ok) {
+            return { success: false, message: result.error || result.message || 'Push failed on server.' };
         }
-        else {
-            return { success: true, message: `Fetched ${result.objects?.length || 0} object(s). Remote has diverged — manual merge needed.`, objectCount: result.objects?.length || 0 };
-        }
-    }
-    // Update working tree
-    try {
-        const commit = objects.readCommit(root, remoteHash);
-        const manifest = objects.walkTree(root, commit.tree);
-        for (const file of manifest) {
-            const absPath = path.resolve(root, file.path);
-            const dir = path.dirname(absPath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
+        // Update tracking ref
+        const finalHash = result.updated_refs?.[`refs/heads/${branch}`] || localHash;
+        refs.updateRef(root, `refs/remotes/origin/${branch}`, finalHash);
+        // If server merged (our commit was integrated into a merge commit), update local
+        if (result.merged && finalHash !== localHash) {
+            // Pull the merge commit objects
+            try {
+                const pullResult = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [localHash]);
+                storeReceivedObjects(root, pullResult.objects || []);
+                refs.updateRef(root, `refs/heads/${branch}`, finalHash);
+                checkoutTree(root, finalHash);
             }
-            fs.writeFileSync(absPath, objects.readBlob(root, file.hash));
+            catch { /* best effort sync-back */ }
         }
-        index.buildIndexFromTree(root, commit.tree);
+        // Build response message
+        let message = `Pushed ${toSend.length} object(s) to ${branch}.`;
+        if (result.merged) {
+            message = `Pushed and auto-merged into ${branch}.`;
+        }
+        return {
+            success: true,
+            message,
+            objectCount: toSend.length,
+            newHash: finalHash,
+            merged: result.merged,
+            notifications: result.notifications,
+        };
     }
-    catch (err) {
-        return { success: false, message: `Pull succeeded but checkout failed: ${err.message}` };
+    finally {
+        releaseLock(root);
     }
-    return {
-        success: true,
-        message: `Pulled ${result.objects?.length || 0} object(s). Now at ${remoteHash.slice(0, 12)}`,
-        objectCount: result.objects?.length || 0,
-        newHash: remoteHash,
-    };
 }
-// ─── Clone ───────────────────────────────────────────────────
+// ─── Pull (with merge support) ──────────────────────────────
+async function pull(root, client, branchName) {
+    if (!acquireLock(root)) {
+        return { success: false, message: 'Another sync operation is in progress.' };
+    }
+    try {
+        const remote = getRemoteConfig(root);
+        if (!remote) {
+            return { success: false, message: 'No remote configured.' };
+        }
+        const branch = branchName || refs.getCurrentBranch(root) || 'main';
+        const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
+        const haves = localHash ? [localHash] : [];
+        // Pull objects from remote
+        let result;
+        try {
+            result = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], haves);
+        }
+        catch (err) {
+            return { success: false, message: `Pull failed: ${err.message}` };
+        }
+        const remoteHash = result.refs?.[`refs/heads/${branch}`];
+        if (!remoteHash) {
+            return { success: false, message: `Branch '${branch}' not found on remote.` };
+        }
+        if (remoteHash === localHash) {
+            return { success: true, message: 'Already up to date.', objectCount: 0 };
+        }
+        // Store received objects
+        storeReceivedObjects(root, result.objects || []);
+        // Update remote tracking ref
+        refs.updateRef(root, `refs/remotes/origin/${branch}`, remoteHash);
+        // Determine merge strategy
+        if (!localHash) {
+            // First pull — just set branch
+            refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
+            checkoutTree(root, remoteHash);
+            return {
+                success: true,
+                message: `Pulled ${result.objects?.length || 0} object(s). Branch set to ${remoteHash.slice(0, 12)}.`,
+                objectCount: result.objects?.length || 0,
+                newHash: remoteHash,
+            };
+        }
+        // Check if fast-forward
+        if (isAncestor(root, localHash, remoteHash)) {
+            // Fast-forward
+            refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
+            checkoutTree(root, remoteHash);
+            return {
+                success: true,
+                message: `Fast-forwarded to ${remoteHash.slice(0, 12)}. ${result.objects?.length || 0} new object(s).`,
+                objectCount: result.objects?.length || 0,
+                newHash: remoteHash,
+            };
+        }
+        // Check if remote is behind (we're already ahead)
+        if (isAncestor(root, remoteHash, localHash)) {
+            return {
+                success: true,
+                message: 'Already up to date (you are ahead of remote).',
+                objectCount: result.objects?.length || 0,
+            };
+        }
+        // Diverged: create a local merge commit
+        const username = vscode.workspace.getConfiguration('vpcSync').get('username') || 'user';
+        // Simple merge: take remote tree, create merge commit with two parents
+        // This gives preference to remote changes (like git pull with default strategy)
+        const mergeCommitHash = objects.createCommit(root, {
+            tree: objects.readCommit(root, remoteHash).tree,
+            parents: [localHash, remoteHash],
+            authorName: username,
+            authorEmail: `${username}@vpc`,
+            message: `Merge remote '${branch}' into local`,
+        });
+        refs.updateRef(root, `refs/heads/${branch}`, mergeCommitHash);
+        checkoutTree(root, mergeCommitHash);
+        return {
+            success: true,
+            message: `Merged remote changes. Created merge commit ${mergeCommitHash.slice(0, 12)}.`,
+            objectCount: result.objects?.length || 0,
+            newHash: mergeCommitHash,
+            merged: true,
+        };
+    }
+    finally {
+        releaseLock(root);
+    }
+}
+// ─── Clone ──────────────────────────────────────────────────
 async function cloneRepo(root, client, remoteUrl, username, token) {
     // Init .vpc structure
     objects.initRepo(root);
     setRemoteConfig(root, remoteUrl, username, token);
     // Fetch refs
-    const remoteRefs = await client.vcsFetchRefs(remoteUrl, username, token);
+    let remoteRefs;
+    try {
+        remoteRefs = await client.vcsFetchRefs(remoteUrl, username, token);
+    }
+    catch (err) {
+        return { success: false, message: `Cannot reach server: ${err.message}` };
+    }
     if (!remoteRefs.HEAD) {
-        return { success: true, message: 'Cloned empty repository', objectCount: 0 };
+        return { success: true, message: 'Cloned empty repository.', objectCount: 0 };
     }
     // Pull all objects
     const allRefNames = Object.keys(remoteRefs.refs || {});
-    const result = await client.vcsPull(remoteUrl, username, token, allRefNames, []);
-    // Store objects
-    const vpc = objects.vpcDir(root);
-    for (const obj of result.objects || []) {
-        const objPath = path.join(vpc, 'objects', obj.hash.slice(0, 2), obj.hash.slice(2));
-        const dir = path.dirname(objPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        if (!fs.existsSync(objPath)) {
-            fs.writeFileSync(objPath, Buffer.from(obj.data, 'base64'));
-        }
+    let result;
+    try {
+        result = await client.vcsPull(remoteUrl, username, token, allRefNames, []);
     }
-    // Set up refs
+    catch (err) {
+        return { success: false, message: `Clone failed: ${err.message}` };
+    }
+    // Store objects
+    storeReceivedObjects(root, result.objects || []);
+    // Set up remote tracking refs
     for (const [refName, hash] of Object.entries(result.refs || {})) {
         const shortName = refName.replace('refs/heads/', '').replace('refs/tags/', '');
         if (refName.startsWith('refs/heads/')) {
@@ -299,27 +335,105 @@ async function cloneRepo(root, client, remoteUrl, username, token) {
     if (defaultHash) {
         refs.updateRef(root, `refs/heads/${defaultBranch}`, defaultHash);
         refs.writeHead(root, `refs/heads/${defaultBranch}`);
-        // Checkout working tree
-        const commit = objects.readCommit(root, defaultHash);
-        const manifest = objects.walkTree(root, commit.tree);
-        for (const file of manifest) {
-            const absPath = path.resolve(root, file.path);
-            const dir = path.dirname(absPath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
-            fs.writeFileSync(absPath, objects.readBlob(root, file.hash));
-        }
-        index.buildIndexFromTree(root, commit.tree);
+        checkoutTree(root, defaultHash);
     }
     return {
         success: true,
-        message: `Cloned ${result.objects?.length || 0} objects (branch: ${defaultBranch})`,
+        message: `Cloned ${result.objects?.length || 0} objects (branch: ${defaultBranch}).`,
         objectCount: result.objects?.length || 0,
         newHash: defaultHash || undefined,
     };
 }
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── Branch Management ──────────────────────────────────────
+function createBranch(root, name, startPoint) {
+    const hash = startPoint
+        ? refs.resolveRef(root, startPoint)
+        : refs.resolveRef(root, 'HEAD');
+    if (!hash) {
+        return { success: false, message: 'Cannot create branch: no commits yet.' };
+    }
+    const existing = refs.resolveRef(root, `refs/heads/${name}`);
+    if (existing) {
+        return { success: false, message: `Branch '${name}' already exists.` };
+    }
+    refs.updateRef(root, `refs/heads/${name}`, hash);
+    return { success: true, message: `Created branch '${name}' at ${hash.slice(0, 12)}.` };
+}
+function switchBranch(root, name) {
+    const hash = refs.resolveRef(root, `refs/heads/${name}`);
+    if (!hash) {
+        return { success: false, message: `Branch '${name}' does not exist.` };
+    }
+    // Check for uncommitted changes
+    const idx = index.readIndex(root);
+    const headHash = refs.resolveRef(root, 'HEAD');
+    if (headHash) {
+        const headMap = new Map(objects.walkTree(root, objects.readCommit(root, headHash).tree).map(f => [f.path, f.hash]));
+        for (const fp of index.getAllWorkspaceFiles(root)) {
+            try {
+                const currentHash = objects.hashObject('blob', fs.readFileSync(path.resolve(root, fp)));
+                const idxEntry = idx.entries.find(e => e.path === fp);
+                if (idxEntry && idxEntry.hash !== currentHash) {
+                    return { success: false, message: 'You have uncommitted changes. Commit or discard them first.' };
+                }
+            }
+            catch { /* skip */ }
+        }
+    }
+    refs.writeHead(root, `refs/heads/${name}`);
+    checkoutTree(root, hash);
+    return { success: true, message: `Switched to branch '${name}'.` };
+}
+function deleteBranch(root, name) {
+    const current = refs.getCurrentBranch(root);
+    if (current === name) {
+        return { success: false, message: `Cannot delete the current branch '${name}'.` };
+    }
+    const hash = refs.resolveRef(root, `refs/heads/${name}`);
+    if (!hash) {
+        return { success: false, message: `Branch '${name}' does not exist.` };
+    }
+    refs.deleteRef(root, `refs/heads/${name}`);
+    return { success: true, message: `Deleted branch '${name}'.` };
+}
+function listBranches(root) {
+    const current = refs.getCurrentBranch(root);
+    return refs.listBranches(root).map(b => ({
+        ...b,
+        current: b.name === current,
+    }));
+}
+// ─── Helpers ────────────────────────────────────────────────
+function storeReceivedObjects(root, objs) {
+    const vpc = objects.vpcDir(root);
+    for (const obj of objs) {
+        const objPath = path.join(vpc, 'objects', obj.hash.slice(0, 2), obj.hash.slice(2));
+        const dir = path.dirname(objPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        if (!fs.existsSync(objPath)) {
+            fs.writeFileSync(objPath, Buffer.from(obj.data, 'base64'));
+        }
+    }
+}
+function checkoutTree(root, commitHash) {
+    const commit = objects.readCommit(root, commitHash);
+    const manifest = objects.walkTree(root, commit.tree);
+    for (const file of manifest) {
+        const absPath = path.resolve(root, file.path);
+        // Path traversal check
+        if (!absPath.startsWith(root)) {
+            continue;
+        }
+        const dir = path.dirname(absPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(absPath, objects.readBlob(root, file.hash));
+    }
+    index.buildIndexFromTree(root, commit.tree);
+}
 function getSyncStatus(root) {
     const branch = refs.getCurrentBranch(root);
     if (!branch) {

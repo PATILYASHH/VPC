@@ -6,12 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import api from '@/lib/api';
 
-export default function BanaRowEditor({ open, onClose, projectId, table, row, columns, onSaved }) {
+export default function RowEditor({ open, onClose, projectId, table, row, columns, onSaved }) {
   const [formData, setFormData] = useState({});
   const [saving, setSaving] = useState(false);
 
   const isEdit = !!row;
-  const baseUrl = `/admin/bana/projects/${projectId}`;
+  const baseUrl = `/admin/db/projects/${projectId}`;
 
   useEffect(() => {
     if (!open) return;

@@ -21,7 +21,7 @@ export default function ProjectList({ onSelectProject }) {
   const [creating, setCreating] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useApiQuery('bana-projects', '/admin/bana/projects');
+  const { data, isLoading } = useApiQuery('db-projects', '/admin/db/projects');
 
   const autoSlug = (val) => {
     setName(val);
@@ -38,13 +38,13 @@ export default function ProjectList({ onSelectProject }) {
     if (!name) return;
     setCreating(true);
     try {
-      const { data: result } = await api.post('/admin/bana/projects', {
+      const { data: result } = await api.post('/admin/db/projects', {
         name,
         slug: slug || generateSlug(name),
         storageLimitMb,
         maxConnections,
       });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       toast.success(`Project "${name}" created`);
       setShowCreate(false);
       setName('');
@@ -63,8 +63,8 @@ export default function ProjectList({ onSelectProject }) {
     e.stopPropagation();
     if (!confirm(`Delete ALL rows from ALL tables in "${project.name}"?\n\nTables and schema will remain intact.`)) return;
     try {
-      const { data: result } = await api.delete(`/admin/bana/projects/${project.id}/rows`, { data: { confirm: true } });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      const { data: result } = await api.delete(`/admin/db/projects/${project.id}/rows`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       const totalRows = result.details?.reduce((sum, t) => sum + t.rows_deleted, 0) || 0;
       toast.success(`Cleared ${totalRows} rows from ${result.tables_cleared} tables in "${project.name}"`);
     } catch (err) {
@@ -76,8 +76,8 @@ export default function ProjectList({ onSelectProject }) {
     e.stopPropagation();
     if (!confirm(`Delete project "${project.name}"? This will permanently drop the database.`)) return;
     try {
-      await api.delete(`/admin/bana/projects/${project.id}`, { data: { confirm: true } });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      await api.delete(`/admin/db/projects/${project.id}`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       toast.success(`Project "${project.name}" deleted`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to delete project');
@@ -238,7 +238,7 @@ export default function ProjectList({ onSelectProject }) {
             <div className="space-y-1">
               <Label className="text-xs">Slug</Label>
               <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-app" className="text-sm font-mono" />
-              <p className="text-[10px] text-muted-foreground">Used in API URLs: /api/bana/v1/{slug || 'my-app'}/...</p>
+              <p className="text-[10px] text-muted-foreground">Used in API URLs: /api/db/v1/{slug || 'my-app'}/...</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

@@ -29,14 +29,14 @@ function renderCell(value, dataType) {
   return str;
 }
 
-export default function BanaDataGrid({ projectId, table, onEditRow }) {
+export default function DataGrid({ projectId, table, onEditRow }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState([]);
 
-  const baseUrl = `/admin/bana/projects/${projectId}`;
+  const baseUrl = `/admin/db/projects/${projectId}`;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['bana-table-data', projectId, table, pagination, sorting],
+    queryKey: ['db-table-data', projectId, table, pagination, sorting],
     queryFn: () =>
       api
         .get(`${baseUrl}/table/${table}`, {

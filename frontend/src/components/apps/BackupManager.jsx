@@ -53,7 +53,7 @@ export default function BackupManager() {
   const [selectedProject, setSelectedProject] = useState(null); // null = system, or project obj
   const queryClient = useQueryClient();
 
-  const { data: projectsData } = useApiQuery('bana-projects', '/admin/bana/projects');
+  const { data: projectsData } = useApiQuery('db-projects', '/admin/db/projects');
   const projects = projectsData?.projects || [];
 
   // System backups
@@ -130,7 +130,7 @@ export default function BackupManager() {
           {projects.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Database className="w-8 h-8 mx-auto mb-2 opacity-20" />
-              <p className="text-xs">No BanaDB projects yet</p>
+              <p className="text-xs">No DB projects yet</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -159,14 +159,14 @@ function ProjectBackupCard({ project, onClick }) {
 
   useEffect(() => {
     // Load backup info
-    api.get(`/admin/bana/projects/${project.id}/backups`).then(({ data }) => {
+    api.get(`/admin/db/projects/${project.id}/backups`).then(({ data }) => {
       const backups = data.backups || [];
       setBackupCount(backups.length);
       setTotalSize(backups.reduce((s, b) => s + (b.file_size_bytes || 0), 0));
       setLastBackup(backups.find(b => b.status === 'completed') || null);
     }).catch(() => {});
 
-    api.get(`/admin/bana/projects/${project.id}/backup-schedule`).then(({ data }) => {
+    api.get(`/admin/db/projects/${project.id}/backup-schedule`).then(({ data }) => {
       setSchedule(data);
     }).catch(() => {});
   }, [project.id]);
@@ -244,13 +244,13 @@ function BackupDetail({ project, onBack }) {
   const label = isSystem ? 'VPC System Database' : project.name;
   const dbName = isSystem ? 'vpc' : project.db_name;
 
-  const backupsUrl = isSystem ? '/admin/backup/list' : `/admin/bana/projects/${project.id}/backups`;
+  const backupsUrl = isSystem ? '/admin/backup/list' : `/admin/db/projects/${project.id}/backups`;
   const { data: backupData, isLoading } = useApiQuery(['detail-backups', project?.id || 'vpc'], backupsUrl, { refetchInterval: 5000 });
   const backups = backupData?.backups || [];
 
   useEffect(() => {
     if (isSystem) return;
-    api.get(`/admin/bana/projects/${project.id}/backup-schedule`)
+    api.get(`/admin/db/projects/${project.id}/backup-schedule`)
       .then(({ data }) => setSchedule(data)).catch(() => {});
   }, [project?.id]);
 
@@ -260,7 +260,7 @@ function BackupDetail({ project, onBack }) {
     setSchedule(s);
     setSavingSchedule(true);
     try {
-      await api.post(`/admin/bana/projects/${project.id}/backup-schedule`, s);
+      await api.post(`/admin/db/projects/${project.id}/backup-schedule`, s);
       toast.success(s.enabled ? `Auto-backup: ${s.interval}` : 'Auto-backup disabled');
     } catch { toast.error('Failed'); }
     finally { setSavingSchedule(false); }
@@ -270,7 +270,7 @@ function BackupDetail({ project, onBack }) {
     setRunning(true);
     try {
       if (isSystem) await api.post('/admin/backup/run', { backup_type: backupType });
-      else await api.post(`/admin/bana/projects/${project.id}/backups`, { backupType });
+      else await api.post(`/admin/db/projects/${project.id}/backups`, { backupType });
       toast.success('Backup started');
       queryClient.invalidateQueries({ queryKey: ['detail-backups'] });
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
@@ -283,7 +283,7 @@ function BackupDetail({ project, onBack }) {
     setRestoringId(id);
     try {
       if (isSystem) await api.post(`/admin/backup/restore/${id}`, { confirm: true });
-      else await api.post(`/admin/bana/projects/${project.id}/backups/${id}/restore`);
+      else await api.post(`/admin/db/projects/${project.id}/backups/${id}/restore`);
       toast.success('Restored!');
       queryClient.invalidateQueries({ queryKey: ['detail-backups'] });
     } catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
@@ -292,7 +292,7 @@ function BackupDetail({ project, onBack }) {
 
   async function download(b) {
     try {
-      const url = isSystem ? `/admin/backup/download/${b.id}` : `/admin/bana/projects/${project.id}/backups/${b.id}/download`;
+      const url = isSystem ? `/admin/backup/download/${b.id}` : `/admin/db/projects/${project.id}/backups/${b.id}/download`;
       const res = await api.get(url, { responseType: 'blob' });
       const u = window.URL.createObjectURL(res.data);
       const a = document.createElement('a'); a.href = u; a.download = b.filename || 'backup.sql.gz'; a.click();
@@ -303,7 +303,7 @@ function BackupDetail({ project, onBack }) {
   async function remove(id) {
     if (!confirm('Delete this backup?')) return;
     try {
-      await api.delete(`/admin/bana/projects/${project.id}/backups/${id}`);
+      await api.delete(`/admin/db/projects/${project.id}/backups/${id}`);
       toast.success('Deleted');
       queryClient.invalidateQueries({ queryKey: ['detail-backups'] });
     } catch { toast.error('Failed'); }

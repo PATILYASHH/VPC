@@ -13,22 +13,22 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
 import { copyToClipboard } from '@/lib/clipboard';
 
-export default function BanaPullKeys({ project }) {
+export default function PullKeys({ project }) {
   const [showPullKey, setShowPullKey] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [enablingTracking, setEnablingTracking] = useState(false);
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
-  const apiUrl = `${window.location.origin}/api/bana/v1/${project.slug}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
+  const apiUrl = `${window.location.origin}/api/db/v1/${project.slug}`;
 
   const { data: keysData, isLoading: keysLoading } = useApiQuery(
-    ['bana-api-keys', project.id],
+    ['db-api-keys', project.id],
     `${baseUrl}/api-keys`
   );
 
   const { data: pullStatus, isLoading: statusLoading } = useApiQuery(
-    ['bana-pull-status', project.id],
+    ['db-pull-status', project.id],
     `${baseUrl}/pull/status`
   );
 
@@ -51,7 +51,7 @@ export default function BanaPullKeys({ project }) {
     setEnablingTracking(true);
     try {
       await api.post(`${baseUrl}/pull/${action}`);
-      queryClient.invalidateQueries({ queryKey: ['bana-pull-status'] });
+      queryClient.invalidateQueries({ queryKey: ['db-pull-status'] });
       toast.success(`Pull tracking ${action}d`);
     } catch (err) {
       toast.error(err.response?.data?.error || `Failed to ${action} tracking`);
@@ -65,7 +65,7 @@ export default function BanaPullKeys({ project }) {
     setRegenerating(true);
     try {
       await api.post(`${baseUrl}/api-keys/regenerate`, { role: 'pull' });
-      queryClient.invalidateQueries({ queryKey: ['bana-api-keys'] });
+      queryClient.invalidateQueries({ queryKey: ['db-api-keys'] });
       toast.success('Pull key regenerated');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to regenerate');

@@ -23,12 +23,12 @@ INSERT INTO allowed_commands (command, description, category, risk_level) VALUES
     ('vpc db query <sql>', 'Run SQL on the main VPC database', 'database', 'high'),
     ('vpc backup now',     'Run an immediate database backup', 'database', 'medium'),
     ('vpc network ports',  'List open ports',                 'network',  'low'),
-    ('vpc bana list',                    'List all BanaDB projects',              'banadb', 'low'),
-    ('vpc bana <slug> info',             'Show project info and DB size',         'banadb', 'low'),
-    ('vpc bana <slug> tables',           'List tables with sizes and owners',     'banadb', 'low'),
-    ('vpc bana <slug> size',             'Show table sizes in project',           'banadb', 'low'),
-    ('vpc bana <slug> sql <query>',      'Run SQL on a BanaDB project database', 'banadb', 'high'),
-    ('vpc bana <slug> fix-ownership',    'Fix table ownership for project',       'banadb', 'medium')
+    ('vpc db list',                    'List all DB projects',              'db', 'low'),
+    ('vpc db <slug> info',             'Show project info and DB size',     'db', 'low'),
+    ('vpc db <slug> tables',           'List tables with sizes and owners', 'db', 'low'),
+    ('vpc db <slug> size',             'Show table sizes in project',       'db', 'low'),
+    ('vpc db <slug> sql <query>',      'Run SQL on a DB project database',  'db', 'high'),
+    ('vpc db <slug> fix-ownership',    'Fix table ownership for project',   'db', 'medium')
 ON CONFLICT (command) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_commands_active ON allowed_commands(is_active) WHERE is_active = true;

@@ -36,6 +36,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         case 'stageAll': return vscode.commands.executeCommand('vpcSync.stageAll');
         case 'push': return vscode.commands.executeCommand('vpcSync.push');
         case 'pull': return vscode.commands.executeCommand('vpcSync.pull');
+        case 'switchBranch': return vscode.commands.executeCommand('vpcSync.switchBranch');
+        case 'createBranch': return vscode.commands.executeCommand('vpcSync.createBranch');
         case 'openScm': return vscode.commands.executeCommand('workbench.view.scm');
         case 'refresh': this.render(); return;
       }
@@ -218,8 +220,17 @@ ${ahead===0&&behind===0
 <div class="card">
   <div class="step"><span class="step-num">2</span> Sync with Remote</div>
   <div class="btns">
-    <button class="btn btn-primary" onclick="post('push')">Create PR${ahead>0?' ('+ahead+')':''}</button>
+    <button class="btn btn-primary" onclick="post('push')">Push${ahead>0?' ('+ahead+')':''}</button>
     <button class="btn btn-secondary" onclick="post('pull')">Pull${behind>0?' ('+behind+')':''}</button>
+  </div>
+</div>
+
+<!-- Branch -->
+<div class="card">
+  <div class="step"><span class="step-num">3</span> Branch</div>
+  <div class="btns">
+    <button class="btn btn-secondary btn-sm" onclick="post('switchBranch')">Switch</button>
+    <button class="btn btn-secondary btn-sm" onclick="post('createBranch')">New</button>
   </div>
 </div>
 

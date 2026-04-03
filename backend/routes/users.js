@@ -9,7 +9,7 @@ const router = express.Router();
 const PERMISSION_KEYS = [
   { key: 'servers', label: 'Server Manager' },
   { key: 'databases', label: 'Databases' },
-  { key: 'banadb', label: 'BanaDB' },
+  { key: 'db', label: 'DB' },
   { key: 'api_keys', label: 'API Keys' },
   { key: 'integrations', label: 'Integrations' },
   { key: 'backups', label: 'Backups' },

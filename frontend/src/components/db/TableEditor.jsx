@@ -5,25 +5,25 @@ import { toast } from 'sonner';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { useApiQuery } from '@/hooks/useApi';
-import BanaDataGrid from './BanaDataGrid';
-import BanaRowEditor from './BanaRowEditor';
+import DataGrid from './DataGrid';
+import RowEditor from './RowEditor';
 import api from '@/lib/api';
 
-export default function BanaTableEditor({ project }) {
+export default function TableEditor({ project }) {
   const [activeTable, setActiveTable] = useState('');
   const [editRow, setEditRow] = useState(null);
   const [showEditor, setShowEditor] = useState(false);
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
 
   const { data: tablesData, isLoading: tablesLoading } = useApiQuery(
-    ['bana-tables', project.id],
+    ['db-tables', project.id],
     `${baseUrl}/tables?schema=public`
   );
 
   const { data: columnsData } = useApiQuery(
-    ['bana-columns', project.id, activeTable],
+    ['db-columns', project.id, activeTable],
     `${baseUrl}/table/${activeTable}/columns?schema=public`,
     { enabled: !!activeTable }
   );
@@ -47,15 +47,15 @@ export default function BanaTableEditor({ project }) {
     try {
       await api.delete(`${baseUrl}/table/${activeTable}/row/${pkValue}?schema=public&primaryKey=${pkCol.column_name}`);
       toast.success('Row deleted');
-      queryClient.invalidateQueries({ queryKey: ['bana-table-data'] });
+      queryClient.invalidateQueries({ queryKey: ['db-table-data'] });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Delete failed');
     }
   };
 
   const handleSaved = () => {
-    queryClient.invalidateQueries({ queryKey: ['bana-table-data'] });
-    queryClient.invalidateQueries({ queryKey: ['bana-tables'] });
+    queryClient.invalidateQueries({ queryKey: ['db-table-data'] });
+    queryClient.invalidateQueries({ queryKey: ['db-tables'] });
   };
 
   return (
@@ -101,7 +101,7 @@ export default function BanaTableEditor({ project }) {
           )}
         </div>
         <div className="flex-1 min-h-0">
-          <BanaDataGrid
+          <DataGrid
             projectId={project.id}
             table={activeTable}
             onEditRow={handleEditRow}
@@ -110,7 +110,7 @@ export default function BanaTableEditor({ project }) {
       </div>
 
       {/* Row editor */}
-      <BanaRowEditor
+      <RowEditor
         open={showEditor}
         onClose={() => setShowEditor(false)}
         projectId={project.id}

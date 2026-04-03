@@ -11,7 +11,7 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
 import { copyToClipboard } from '@/lib/clipboard';
 
-export default function BanaSettings({ project }) {
+export default function Settings({ project }) {
   const [storageLimitMb, setStorageLimitMb] = useState(project.storage_limit_mb);
   const [maxConnections, setMaxConnections] = useState(project.max_connections);
   const [saving, setSaving] = useState(false);
@@ -19,9 +19,9 @@ export default function BanaSettings({ project }) {
   const [showPassword, setShowPassword] = useState(false);
   const queryClient = useQueryClient();
 
-  const baseUrl = `/admin/bana/projects/${project.id}`;
+  const baseUrl = `/admin/db/projects/${project.id}`;
   const { data: details, isLoading } = useApiQuery(
-    ['bana-project-detail', project.id],
+    ['db-project-detail', project.id],
     baseUrl
   );
 
@@ -36,8 +36,8 @@ export default function BanaSettings({ project }) {
     setSaving(true);
     try {
       await api.patch(`${baseUrl}/settings`, { storageLimitMb, maxConnections });
-      queryClient.invalidateQueries({ queryKey: ['bana-project-detail'] });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      queryClient.invalidateQueries({ queryKey: ['db-project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       toast.success('Settings updated');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update settings');
@@ -52,9 +52,9 @@ export default function BanaSettings({ project }) {
 
     setClearing(true);
     try {
-      const { data: result } = await api.delete(`/admin/bana/projects/${project.id}/rows`, { data: { confirm: true } });
-      queryClient.invalidateQueries({ queryKey: ['bana-project-detail'] });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      const { data: result } = await api.delete(`/admin/db/projects/${project.id}/rows`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['db-project-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       const totalRows = result.details?.reduce((sum, t) => sum + t.rows_deleted, 0) || 0;
       toast.success(`Cleared ${totalRows} rows from ${result.tables_cleared} tables`);
     } catch (err) {
@@ -69,8 +69,8 @@ export default function BanaSettings({ project }) {
     if (!confirm('Are you absolutely sure? Type the project name to confirm:')) return;
 
     try {
-      await api.delete(`/admin/bana/projects/${project.id}`, { data: { confirm: true } });
-      queryClient.invalidateQueries({ queryKey: ['bana-projects'] });
+      await api.delete(`/admin/db/projects/${project.id}`, { data: { confirm: true } });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
       toast.success('Project deleted');
       // Parent will handle navigation back
     } catch (err) {
@@ -232,7 +232,7 @@ function BackupSection({ projectId }) {
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [restoringId, setRestoringId] = useState(null);
   const queryClient = useQueryClient();
-  const base = `/admin/bana/projects/${projectId}`;
+  const base = `/admin/db/projects/${projectId}`;
 
   const { data: backupData, isLoading: backupsLoading } = useApiQuery(
     ['project-backups', projectId],

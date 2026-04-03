@@ -42,13 +42,13 @@ function getFileIcon(name) {
   return null;
 }
 
-export default function BanaBuckets({ project }) {
+export default function Buckets({ project }) {
   const [selectedBucket, setSelectedBucket] = useState(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [prefix, setPrefix] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const baseUrl = `/admin/bana/projects/${project.id}/storage`;
+  const baseUrl = `/admin/db/projects/${project.id}/storage`;
   const queryClient = useQueryClient();
 
   return selectedBucket ? (
@@ -83,7 +83,7 @@ export default function BanaBuckets({ project }) {
 
 function BucketList({ project, baseUrl, onSelect, showCreateDialog, setShowCreateDialog, queryClient }) {
   const { data, isLoading, refetch } = useApiQuery(
-    ['bana-buckets', project.id],
+    ['db-buckets', project.id],
     `${baseUrl}/buckets`
   );
   const [newName, setNewName] = useState('');
@@ -264,7 +264,7 @@ function BucketDetail({ project, bucket, baseUrl, prefix, setPrefix, searchTerm,
   const [dragOver, setDragOver] = useState(false);
 
   const { data, isLoading, refetch } = useApiQuery(
-    ['bana-objects', bucket.id, prefix, searchTerm],
+    ['db-objects', bucket.id, prefix, searchTerm],
     `${baseUrl}/buckets/${bucket.id}/objects?prefix=${encodeURIComponent(prefix)}&search=${encodeURIComponent(searchTerm)}&limit=200`
   );
 

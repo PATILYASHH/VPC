@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const pullService = require('./pullService');
-const banadbService = require('./banadbService');
+const dbService = require('./dbService');
 const { quoteIdentifier } = require('../utils/sanitize');
 
 /**
@@ -69,7 +69,7 @@ async function createMigration(pool, { projectId, sqlUp, name, source = 'pull', 
  * Create migration from pending schema changes in a project.
  */
 async function createMigrationFromChanges(pool, project, { sinceId = 0, appliedBy = 'vpshub' } = {}) {
-  const projectPool = banadbService.getProjectPool(project);
+  const projectPool = dbService.getProjectPool(project);
   const { changes, latest_id } = await pullService.getSchemaChanges(projectPool, sinceId);
 
   if (changes.length === 0) return null;

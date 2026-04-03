@@ -15,7 +15,7 @@ import { format } from 'date-fns';
 const PERMISSION_OPTIONS = [
   { key: 'servers', label: 'Server Manager' },
   { key: 'databases', label: 'Databases' },
-  { key: 'banadb', label: 'DB' },
+  { key: 'db', label: 'DB' },
   { key: 'api_keys', label: 'API Keys' },
   { key: 'integrations', label: 'Integrations' },
   { key: 'backups', label: 'Backups' },

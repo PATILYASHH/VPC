@@ -1,7 +1,7 @@
 {
   "name": "vpc-pull",
   "version": "1.0.0",
-  "description": "CLI tool to pull BanaDB schema migrations",
+  "description": "CLI tool to pull DB schema migrations",
   "type": "module",
   "bin": {
     "vpc-pull": "./bin/vpc-pull.js"

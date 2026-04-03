@@ -8,8 +8,8 @@ const PORT = process.env.PORT || 8001;
 // Serve gallery uploads for preview (before auth, images need direct access)
 app.use('/uploads/gallery', express.static(path.join(__dirname, 'uploads', 'gallery')));
 
-// Serve public BanaDB storage files (no auth required)
-app.use('/storage/v1', require('./backend/routes/banaStoragePublic'));
+// Serve public DB storage files (no auth required)
+app.use('/storage/v1', require('./backend/routes/dbStoragePublic'));
 
 // Serve downloadable files (VS Code extension, etc.)
 app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
@@ -140,7 +140,7 @@ app.listen(PORT, async () => {
           if (!schedule.enabled) continue;
 
           const projectId = row.key.replace('backup_schedule_', '');
-          const { rows: project } = await pool.query('SELECT db_name, name FROM bana_projects WHERE id = $1 AND status = $2', [projectId, 'active']);
+          const { rows: project } = await pool.query('SELECT db_name, name FROM db_projects WHERE id = $1 AND status = $2', [projectId, 'active']);
           if (!project[0]) continue;
 
           // Check when last backup was taken
