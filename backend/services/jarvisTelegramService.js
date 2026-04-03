@@ -1,5 +1,5 @@
 /**
- * Jarvis Telegram Bot — allows chatting with Jarvis from Telegram.
+ * VPC Bot Telegram — allows chatting with Bot from Telegram.
  * Polls for new messages, identifies user by chat ID, runs full AI chat,
  * and sends responses back. Also supports proactive messages.
  */
@@ -94,6 +94,7 @@ async function findUserByChatId(chatId) {
 
 async function getOffset() {
   try {
+    // NOTE: 'jarvis_telegram_offset' is a legacy DB key — do not rename (already in production databases)
     const { rows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'jarvis_telegram_offset'");
     return rows[0]?.value ? parseInt(rows[0].value) : 0;
   } catch { return 0; }
@@ -102,7 +103,7 @@ async function getOffset() {
 async function setOffset(offset) {
   try {
     await pool.query(`
-      INSERT INTO vpc_settings (key, value, is_secret, updated_at) VALUES ('jarvis_telegram_offset', $1, FALSE, NOW())
+      INSERT INTO vpc_settings (key, value, is_secret, updated_at) VALUES ('jarvis_telegram_offset', $1, FALSE, NOW()) /* legacy key name */
       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
     `, [String(offset)]);
   } catch {}
@@ -132,7 +133,7 @@ async function pollOnce() {
 
       // Skip commands we don't handle
       if (text === '/start') {
-        await sendTgMessage(chatId, '🤖 Jarvis AI Agent\n\nI\'m your VPC server assistant. Send me any command or question.\n\nYour Chat ID: ' + chatId + '\n\nIf you\'re not registered, ask your admin to add this Chat ID in VPC → AI Agent → Users.');
+        await sendTgMessage(chatId, '🤖 VPC Bot\n\nI\'m your VPC server assistant. Send me any command or question.\n\nYour Chat ID: ' + chatId + '\n\nIf you\'re not registered, ask your admin to add this Chat ID in VPC → AI Agent → Users.');
         continue;
       }
 
@@ -146,7 +147,7 @@ async function pollOnce() {
       // Show typing indicator
       await sendTyping(chatId);
 
-      // Run Jarvis chat
+      // Run Bot chat
       try {
         const result = await aiAgent.chat(text, user.id, pool, { channel: 'telegram' });
         let response = result.response || 'Done.';
@@ -171,7 +172,7 @@ async function pollOnce() {
   } catch (err) {
     // Network errors, token issues — log silently
     if (!err.message?.includes('terminated by other getUpdates')) {
-      console.error('[Jarvis Telegram] Poll error:', err.message);
+      console.error('[VPC Bot] Poll error:', err.message);
     }
   }
 }
@@ -179,7 +180,7 @@ async function pollOnce() {
 function startPolling() {
   if (pollingActive) return;
   pollingActive = true;
-  console.log('[Jarvis Telegram] Bot polling started');
+  console.log('[VPC Bot] Telegram polling started');
 
   async function loop() {
     while (pollingActive) {
@@ -194,7 +195,7 @@ function startPolling() {
 function stopPolling() {
   pollingActive = false;
   if (pollingTimer) { clearTimeout(pollingTimer); pollingTimer = null; }
-  console.log('[Jarvis Telegram] Bot polling stopped');
+  console.log('[VPC Bot] Telegram polling stopped');
 }
 
 // ── Init / reload ────────────────────────────────────────────────────────
@@ -218,10 +219,10 @@ async function reload() {
         // Verify token works
         try {
           const me = await tgRequest('getMe', {});
-          console.log(`[Jarvis Telegram] Bot connected: @${me.username}`);
+          console.log(`[VPC Bot] Telegram connected: @${me.username}`);
           startPolling();
         } catch (err) {
-          console.error('[Jarvis Telegram] Invalid bot token:', err.message);
+          console.error('[VPC Bot] Invalid bot token:', err.message);
           botToken = null;
         }
       } else if (token && !pollingActive) {
@@ -232,7 +233,7 @@ async function reload() {
       botToken = null;
     }
   } catch (err) {
-    console.error('[Jarvis Telegram] Init error:', err.message);
+    console.error('[VPC Bot] Init error:', err.message);
   }
 }
 
@@ -240,7 +241,7 @@ async function reload() {
 
 /**
  * Send a proactive message to all registered Telegram users.
- * Used by Jarvis when it detects emergencies or wants to alert the team.
+ * Used by Bot when it detects emergencies or wants to alert the team.
  */
 async function broadcast(message) {
   if (!botToken || !pool) return;
@@ -270,6 +271,94 @@ async function messageUser(userName, message) {
   } catch {}
 }
 
+// ── Server Alert System ──────────────────────────────────────────────────
+
+/**
+ * Check notification preferences before sending alerts.
+ * Returns true if the given alert type is enabled.
+ */
+async function isAlertEnabled(alertType) {
+  if (!pool) return false;
+  try {
+    const { rows } = await pool.query("SELECT value FROM vpc_settings WHERE key = 'telegram_notifications'");
+    if (!rows[0]?.value) return true; // default: all enabled
+    const prefs = JSON.parse(rows[0].value);
+    return prefs[alertType] !== false;
+  } catch { return true; }
+}
+
+/**
+ * Send a server alert to all Telegram users (respects notification preferences).
+ * @param {string} type - Alert type key (e.g. 'system_alerts', 'pr_created')
+ * @param {string} title - Short alert title
+ * @param {string} details - Alert details
+ * @param {'info'|'warning'|'error'|'success'} severity
+ */
+async function sendAlert(type, title, details, severity = 'info') {
+  if (!botToken || !pool) return;
+  if (!(await isAlertEnabled(type))) return;
+
+  const icons = { info: 'ℹ️', warning: '⚠️', error: '🔴', success: '✅' };
+  const icon = icons[severity] || 'ℹ️';
+  const msg = `${icon} ${title}\n\n${details}`;
+
+  try {
+    await broadcast(msg);
+  } catch (err) {
+    console.error('[VPC Bot] Alert send failed:', err.message);
+  }
+}
+
+// ── Convenience Alert Functions ──────────────────────────────────────────
+
+function alertDeploySuccess(projectName) {
+  return sendAlert('system_alerts', 'Deploy Complete', `Project "${projectName}" deployed successfully.`, 'success');
+}
+
+function alertDeployFailed(projectName, error) {
+  return sendAlert('system_alerts', 'Deploy Failed', `Project "${projectName}" failed to deploy.\n\nError: ${error}`, 'error');
+}
+
+function alertServerDown(service) {
+  return sendAlert('system_alerts', 'Service Down', `${service} is not responding. Check your server immediately.`, 'error');
+}
+
+function alertBackupComplete(dbName) {
+  return sendAlert('system_alerts', 'Backup Complete', `Database "${dbName}" backed up successfully.`, 'success');
+}
+
+function alertBackupFailed(dbName, error) {
+  return sendAlert('system_alerts', 'Backup Failed', `Backup of "${dbName}" failed.\n\nError: ${error}`, 'error');
+}
+
+function alertPRCreated(repoName, prNumber, title) {
+  return sendAlert('pr_created', 'New Pull Request', `#${prNumber} "${title}" in ${repoName}`, 'info');
+}
+
+function alertPRMerged(repoName, prNumber, title) {
+  return sendAlert('pr_merged', 'PR Merged', `#${prNumber} "${title}" merged in ${repoName}`, 'success');
+}
+
+function alertPRConflict(repoName, prNumber) {
+  return sendAlert('pr_conflict', 'Merge Conflict', `PR #${prNumber} in ${repoName} has conflicts that need resolving.`, 'warning');
+}
+
+function alertHighDisk(usagePercent) {
+  return sendAlert('system_alerts', 'Disk Usage High', `Server disk usage is at ${usagePercent}%. Consider cleaning up.`, 'warning');
+}
+
+function alertHighMemory(usagePercent) {
+  return sendAlert('system_alerts', 'Memory Usage High', `Server memory usage is at ${usagePercent}%. A process may be consuming too much.`, 'warning');
+}
+
+function alertProcessCrashed(processName) {
+  return sendAlert('system_alerts', 'Process Crashed', `PM2 process "${processName}" crashed and was restarted.`, 'error');
+}
+
+function alertUpgradeAvailable(commitsBehind) {
+  return sendAlert('system_alerts', 'VPC Update Available', `Your VPC is ${commitsBehind} commit(s) behind. Upgrade from VPC Store → System.`, 'info');
+}
+
 module.exports = {
   init,
   reload,
@@ -278,4 +367,17 @@ module.exports = {
   broadcast,
   messageUser,
   sendTgMessage,
+  sendAlert,
+  alertDeploySuccess,
+  alertDeployFailed,
+  alertServerDown,
+  alertBackupComplete,
+  alertBackupFailed,
+  alertPRCreated,
+  alertPRMerged,
+  alertPRConflict,
+  alertHighDisk,
+  alertHighMemory,
+  alertProcessCrashed,
+  alertUpgradeAvailable,
 };

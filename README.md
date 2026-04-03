@@ -40,6 +40,22 @@
 
 ---
 
+## Install
+
+One command to install VPC on any Ubuntu/Debian VPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PATILYASHH/VPC/main/install.sh | sudo bash
+```
+
+The installer will:
+- Install Node.js, PostgreSQL, Nginx, PM2
+- Ask for your admin username, email, and password
+- Optionally configure a domain with SSL
+- Start VPC and show you the access URL + credentials
+
+---
+
 ## What is VPC?
 
 VPC (Virtual PC Control) is a **web-based desktop environment** for managing your VPS. Instead of juggling terminals, dashboards, and tools — you get a single OS-like interface with windowed apps, a taskbar, and a launcher. Everything your server needs, in one place.
@@ -148,6 +164,21 @@ Monitor and control your server infrastructure.
 
 <br />
 
+### AI Agent (Jarvis)
+
+An autonomous AI agent that lives on your server — thinks, diagnoses, and acts.
+
+- Multi-provider support: **Anthropic Claude**, **OpenAI GPT**, **Ollama** (local)
+- 30+ built-in tools: deploy, restart, SQL, git, file ops, diagnostics
+- Autonomous task management with priority-based TODOs
+- Persistent memory across conversations
+- Telegram bot integration — chat with your server from your phone
+- Proactive alerts: deploy status, backup results, PR events, resource warnings
+- Approval workflow for dangerous operations (write files, run scripts)
+- Auto-diagnose issues: checks logs, services, disk, memory, DB health
+
+<br />
+
 ### Security
 
 - JWT authentication with TOTP (2FA) support
@@ -179,7 +210,7 @@ The **VPC Sync** extension brings VPSHub into your editor:
 | **Frontend** | React 18, Vite, TailwindCSS, Radix UI, Zustand, React Query |
 | **Backend** | Node.js, Express, PostgreSQL |
 | **Auth** | JWT, TOTP, bcrypt |
-| **AI** | Anthropic Claude (code review, PR analysis) |
+| **AI** | Anthropic Claude, OpenAI GPT, Ollama (multi-provider) |
 | **Process Manager** | PM2 |
 | **Reverse Proxy** | Nginx |
 | **Extension** | VS Code SCM Provider API |
@@ -362,7 +393,7 @@ VPC/
 │   ├── routes/                  # API routes
 │   ├── services/                # Business logic
 │   ├── middleware/               # Auth, rate limiting, permissions
-│   ├── migrations/              # SQL migrations (001-035)
+│   ├── migrations/              # SQL migrations (001-036)
 │   └── db/                      # Migration runner, admin seeder
 ├── frontend/
 │   └── src/

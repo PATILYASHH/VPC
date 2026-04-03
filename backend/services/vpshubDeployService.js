@@ -1,6 +1,7 @@
 const gitService = require('./vpshubGitService');
 const dbService = require('./dbService');
 const webHostingService = require('./webHostingService');
+const tgBot = require('./jarvisTelegramService');
 
 // ─── Link/Unlink Repo to DB Project ──────────────────────
 
@@ -232,7 +233,13 @@ async function deployHosting(pool, hostingId) {
   const project = await webHostingService.getProject(pool, hostingId);
   if (!project) throw new Error('Hosting project not found');
 
-  await webHostingService.deploy(pool, project);
+  try {
+    await webHostingService.deploy(pool, project);
+    tgBot.alertDeploySuccess(project.name || project.slug).catch(() => {});
+  } catch (err) {
+    tgBot.alertDeployFailed(project.name || project.slug, err.message).catch(() => {});
+    throw err;
+  }
   const updated = await webHostingService.getProject(pool, hostingId);
   return updated;
 }
@@ -243,8 +250,10 @@ async function redeployHosting(pool, hostingId) {
 
   try {
     await webHostingService.deploy(pool, project);
+    tgBot.alertDeploySuccess(project.name || project.slug).catch(() => {});
     return { success: true };
   } catch (err) {
+    tgBot.alertDeployFailed(project.name || project.slug, err.message).catch(() => {});
     return { success: false, error: err.message };
   }
 }

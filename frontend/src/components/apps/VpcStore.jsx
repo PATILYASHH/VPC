@@ -18,7 +18,7 @@ const PRODUCTS = [
     id: 'vpc-sync-cli',
     title: 'VPC Sync CLI',
     subtitle: 'Version Control from Terminal',
-    category: 'cli',
+    category: 'external',
     icon: Terminal,
     iconColor: 'text-emerald-400',
     iconBg: 'bg-emerald-500/10',
@@ -68,14 +68,14 @@ const PRODUCTS = [
     id: 'vpc-sync-extension',
     title: 'VPC Sync for VS Code',
     subtitle: 'IDE Integration',
-    category: 'extension',
+    category: 'external',
     icon: Code,
     iconColor: 'text-blue-400',
     iconBg: 'bg-blue-500/10',
     accentColor: 'blue',
     accentGradient: 'from-blue-600/20 to-indigo-600/10',
-    version: '7.1.0',
-    size: '57 KB',
+    version: '8.0.0',
+    size: '60 KB',
     downloadUrl: '/downloads/vpc-sync.vsix',
     filename: 'vpc-sync.vsix',
     featured: true,
@@ -102,13 +102,56 @@ const PRODUCTS = [
       { version: '6.3.0', date: '2026-03-29', changes: ['Connection form with repo selector', 'Connected view with branch, Push/Pull, sync status'] },
     ],
   },
+  {
+    id: 'ollama',
+    title: 'Ollama',
+    subtitle: 'Run AI Models Locally',
+    category: 'system-3rdparty',
+    icon: Cpu,
+    iconColor: 'text-violet-400',
+    iconBg: 'bg-violet-500/10',
+    accentColor: 'violet',
+    accentGradient: 'from-violet-600/20 to-purple-600/10',
+    version: 'latest',
+    size: '~800 MB',
+    downloadUrl: null,
+    filename: null,
+    featured: true,
+    isNew: true,
+    installable: true,
+    description: 'Run AI models locally on your server. Free, private, no API key needed. Works with VPC Bot.',
+    longDescription: 'Ollama lets you run open-source AI models directly on your VPC server. Once installed, it integrates with VPC Bot as a free provider. Run Llama 3.1, Mistral, CodeLlama, and more — all locally without sending data to external APIs.',
+    features: [
+      { icon: Shield, label: 'Private — your data never leaves the server' },
+      { icon: Zap, label: 'Fast local inference with GPU support' },
+      { icon: Package, label: 'One-click model downloads (Llama 3.1, Mistral, etc.)' },
+      { icon: Layers, label: 'Integrated with VPC Bot as a free provider' },
+    ],
+    requirements: 'Linux server, 8GB+ RAM recommended',
+    platforms: ['Linux', 'macOS'],
+    commands: [
+      { cmd: 'ollama list', desc: 'List installed models' },
+      { cmd: 'ollama pull llama3.1', desc: 'Download Llama 3.1 model' },
+      { cmd: 'ollama pull codellama', desc: 'Download CodeLlama for coding' },
+      { cmd: 'ollama pull mistral', desc: 'Download Mistral 7B' },
+      { cmd: 'ollama run llama3.1', desc: 'Chat with a model locally' },
+      { cmd: 'ollama ps', desc: 'Show running models' },
+    ],
+    installSteps: [
+      { title: 'Install', code: 'curl -fsSL https://ollama.com/install.sh | sh' },
+      { title: 'Pull a Model', code: 'ollama pull llama3.1' },
+      { title: 'Set as Provider', code: null, text: 'Go to AI Agent Settings → Providers → Set Ollama as default' },
+    ],
+    changelog: [
+      { version: 'latest', date: '2026', changes: ['Local AI inference', 'GPU acceleration support', 'OpenAI-compatible API', 'Integration with VPC Bot'] },
+    ],
+  },
 ];
 
 const CATEGORIES = [
   { id: 'all', label: 'Discover', icon: Sparkles },
   { id: 'system', label: 'System', icon: Monitor },
-  { id: 'cli', label: 'Developer Tools', icon: Terminal },
-  { id: 'extension', label: 'Extensions', icon: Code },
+  { id: 'external', label: 'External', icon: Download },
 ];
 
 // ─── Main Store Component ────────────────────────────────────
@@ -119,10 +162,13 @@ export default function VpcStore() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filtered = PRODUCTS.filter(p => {
-    if (activeCategory !== 'all' && activeCategory !== 'system' && p.category !== activeCategory) return false;
-    if (activeCategory === 'system') return false; // system tab only shows upgrade
-    if (searchQuery && !p.title.toLowerCase().includes(searchQuery.toLowerCase()) && !p.description.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
+    if (searchQuery) {
+      return p.title.toLowerCase().includes(searchQuery.toLowerCase()) || p.description.toLowerCase().includes(searchQuery.toLowerCase());
+    }
+    if (activeCategory === 'all') return true;
+    if (activeCategory === 'system') return p.category === 'system-3rdparty' || p.category === 'system-app';
+    if (activeCategory === 'external') return p.category === 'external';
+    return p.category === activeCategory;
   });
 
   if (selectedProduct) {
@@ -141,7 +187,7 @@ export default function VpcStore() {
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
-                VPC OS v2.0.0
+                VPC OS v2.1.0
               </Badge>
               <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
                 {PRODUCTS.length} apps
@@ -183,45 +229,9 @@ export default function VpcStore() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        {/* Software Upgrade */}
-        {(activeCategory === 'all' || activeCategory === 'system') && !searchQuery && (
-          <div className="px-6 pt-5">
-            <SoftwareUpgrade />
-          </div>
-        )}
 
-        {/* Featured Hero — only on Discover tab */}
-        {activeCategory === 'all' && !searchQuery && (
-          <div className="px-6 pt-5">
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">Featured</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {PRODUCTS.filter(p => p.featured).map(product => (
-                <FeaturedCard key={product.id} product={product} onSelect={setSelectedProduct} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* App list */}
-        {(activeCategory !== 'all' && activeCategory !== 'system') && (
-          <div className="px-6 py-5">
-            {filtered.length === 0 ? (
-              <div className="text-center py-16">
-                <Package className="w-10 h-10 text-muted-foreground/10 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground/30">No apps found</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filtered.map(product => (
-                  <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Search results */}
-        {searchQuery && (
+        {/* ── Search Results ── */}
+        {searchQuery ? (
           <div className="px-6 py-5">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">
               Results for "{searchQuery}"
@@ -239,14 +249,85 @@ export default function VpcStore() {
               </div>
             )}
           </div>
-        )}
+        ) : activeCategory === 'all' ? (
+          <>
+            {/* ── Discover: Featured ── */}
+            <div className="px-6 pt-5">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">Featured</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {PRODUCTS.filter(p => p.featured).map(product => (
+                  <FeaturedCard key={product.id} product={product} onSelect={setSelectedProduct} />
+                ))}
+              </div>
+            </div>
 
-        {/* All apps list — on Discover tab below featured */}
-        {activeCategory === 'all' && !searchQuery && (
+            {/* ── Discover: All Apps ── */}
+            <div className="px-6 py-5">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">All Apps</h2>
+              <div className="space-y-2">
+                {PRODUCTS.map(product => (
+                  <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                ))}
+              </div>
+            </div>
+          </>
+        ) : activeCategory === 'system' ? (
+          <>
+            {/* ── System: Software Upgrade ── */}
+            <div className="px-6 pt-5">
+              <SoftwareUpgrade />
+            </div>
+
+            {/* ── System: System Apps ── */}
+            <div className="px-6 pt-5">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">System Apps</h2>
+              {PRODUCTS.filter(p => p.category === 'system-app').length === 0 ? (
+                <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-6 text-center">
+                  <Package className="w-8 h-8 text-muted-foreground/10 mx-auto mb-2" />
+                  <p className="text-xs text-muted-foreground/30">No system apps yet — coming soon</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {PRODUCTS.filter(p => p.category === 'system-app').map(product => (
+                    <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── System: 3rd Party ── */}
+            <div className="px-6 py-5">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">3rd Party</h2>
+              {PRODUCTS.filter(p => p.category === 'system-3rdparty').length === 0 ? (
+                <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-6 text-center">
+                  <p className="text-xs text-muted-foreground/30">No 3rd party apps</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {PRODUCTS.filter(p => p.category === 'system-3rdparty').map(product => (
+                    <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : activeCategory === 'external' ? (
+          <>
+            {/* ── External Apps ── */}
+            <div className="px-6 py-5">
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">External Apps</h2>
+              <p className="text-[11px] text-muted-foreground/30 mb-4">Download and install on your device — VS Code extensions, CLI tools, and desktop apps.</p>
+              <div className="space-y-2">
+                {PRODUCTS.filter(p => p.category === 'external').map(product => (
+                  <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
           <div className="px-6 py-5">
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">All Apps</h2>
             <div className="space-y-2">
-              {PRODUCTS.map(product => (
+              {filtered.map(product => (
                 <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
               ))}
             </div>
@@ -580,9 +661,20 @@ function FeaturedCard({ product, onSelect }) {
 
 function AppListItem({ product, onSelect }) {
   const [downloading, setDownloading] = useState(false);
+  const [ollamaStatus, setOllamaStatus] = useState(null);
+
+  useEffect(() => {
+    if (product.id === 'ollama') {
+      api.get('/admin/settings/ollama/status').then(({ data }) => setOllamaStatus(data)).catch(() => {});
+    }
+  }, [product.id]);
 
   function handleDownload(e) {
     e.stopPropagation();
+    if (product.installable) {
+      onSelect(product);
+      return;
+    }
     setDownloading(true);
     const a = document.createElement('a');
     a.href = product.downloadUrl;
@@ -590,6 +682,8 @@ function AppListItem({ product, onSelect }) {
     a.click();
     setTimeout(() => setDownloading(false), 2000);
   }
+
+  const isOllamaInstalled = product.id === 'ollama' && ollamaStatus?.installed;
 
   return (
     <div
@@ -603,6 +697,7 @@ function AppListItem({ product, onSelect }) {
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold truncate">{product.title}</h3>
           {product.isNew && <Badge className="bg-emerald-500/20 text-emerald-400 border-0 text-[8px] px-1.5 py-0">NEW</Badge>}
+          {isOllamaInstalled && <Badge className="bg-violet-500/20 text-violet-400 border-0 text-[8px] px-1.5 py-0">INSTALLED</Badge>}
         </div>
         <p className="text-[11px] text-muted-foreground/40 truncate">{product.description}</p>
         <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground/30">
@@ -613,12 +708,14 @@ function AppListItem({ product, onSelect }) {
       <button
         onClick={handleDownload}
         className={`px-4 py-1.5 rounded-full text-[11px] font-semibold shrink-0 transition-all ${
-          downloading
-            ? 'bg-emerald-500/20 text-emerald-400'
-            : 'bg-white/[0.08] text-blue-400 hover:bg-white/[0.12]'
+          isOllamaInstalled
+            ? 'bg-violet-500/20 text-violet-400'
+            : downloading
+              ? 'bg-emerald-500/20 text-emerald-400'
+              : 'bg-white/[0.08] text-blue-400 hover:bg-white/[0.12]'
         }`}
       >
-        {downloading ? <Check className="w-3.5 h-3.5" /> : 'Get'}
+        {isOllamaInstalled ? 'Manage' : downloading ? <Check className="w-3.5 h-3.5" /> : product.category?.startsWith('system') ? 'Install' : 'Get'}
       </button>
     </div>
   );
@@ -630,8 +727,19 @@ function ProductDetail({ product, onBack }) {
   const [copiedCmd, setCopiedCmd] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [ollamaStatus, setOllamaStatus] = useState(null);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [pullingModel, setPullingModel] = useState(null);
 
   const serverUrl = window.location.origin;
+
+  useEffect(() => {
+    if (product.id === 'ollama') loadOllamaStatus();
+  }, [product.id]);
+
+  function loadOllamaStatus() {
+    api.get('/admin/settings/ollama/status').then(({ data }) => setOllamaStatus(data)).catch(() => {});
+  }
 
   function copyCommand(id, text) {
     navigator.clipboard.writeText(text.replace('{SERVER}', serverUrl));
@@ -640,12 +748,32 @@ function ProductDetail({ product, onBack }) {
   }
 
   function handleDownload() {
+    if (product.installable) return;
     setDownloading(true);
     const a = document.createElement('a');
     a.href = product.downloadUrl;
     a.download = product.filename;
     a.click();
     setTimeout(() => setDownloading(false), 2000);
+  }
+
+  async function handlePullModel(modelName) {
+    setPullingModel(modelName);
+    try {
+      await api.post('/admin/settings/ollama/pull', { model: modelName });
+      toast.success(`Model ${modelName} pulled successfully`);
+      loadOllamaStatus();
+    } catch (err) {
+      toast.error(err.response?.data?.error || `Failed to pull ${modelName}`);
+    } finally { setPullingModel(null); }
+  }
+
+  async function handleDeleteModel(modelName) {
+    try {
+      await api.delete(`/admin/settings/ollama/models/${modelName}`);
+      toast.success(`Model ${modelName} deleted`);
+      loadOllamaStatus();
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to delete'); }
   }
 
   const tabs = [
@@ -673,18 +801,35 @@ function ProductDetail({ product, onBack }) {
               <p className="text-xs text-muted-foreground/40 mt-0.5">{product.subtitle}</p>
 
               <div className="flex items-center gap-3 mt-3">
-                <button
-                  onClick={handleDownload}
-                  className={`inline-flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold transition-all ${
-                    downloading
-                      ? 'bg-emerald-500/20 text-emerald-400'
-                      : product.accentColor === 'emerald'
-                        ? 'bg-emerald-500 text-white hover:bg-emerald-400'
-                        : 'bg-blue-500 text-white hover:bg-blue-400'
-                  }`}
-                >
-                  {downloading ? <><Check className="w-4 h-4" /> Done</> : <><Download className="w-4 h-4" /> Get</>}
-                </button>
+                {product.installable ? (
+                  ollamaStatus?.installed ? (
+                    <span className="inline-flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold bg-violet-500/20 text-violet-400">
+                      <CheckCircle2 className="w-4 h-4" /> Installed
+                    </span>
+                  ) : (
+                    <a
+                      href="https://ollama.com/download"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold bg-violet-500 text-white hover:bg-violet-400 transition-all"
+                    >
+                      <Download className="w-4 h-4" /> Download from ollama.com
+                    </a>
+                  )
+                ) : (
+                  <button
+                    onClick={handleDownload}
+                    className={`inline-flex items-center gap-2 px-6 py-2 rounded-full text-sm font-semibold transition-all ${
+                      downloading
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : product.accentColor === 'emerald'
+                          ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+                          : 'bg-blue-500 text-white hover:bg-blue-400'
+                    }`}
+                  >
+                    {downloading ? <><Check className="w-4 h-4" /> Done</> : <><Download className="w-4 h-4" /> Get</>}
+                  </button>
+                )}
               </div>
 
               <div className="flex items-center gap-5 mt-3 text-[11px] text-muted-foreground/30">
@@ -742,6 +887,82 @@ function ProductDetail({ product, onBack }) {
                 ))}
               </div>
             </div>
+
+            {/* Ollama Model Management */}
+            {product.id === 'ollama' && ollamaStatus?.installed && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/25 mb-4">Installed Models</h3>
+                {ollamaStatus.models?.length > 0 ? (
+                  <div className="space-y-2">
+                    {ollamaStatus.models.map(m => (
+                      <div key={m.name} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+                        <div>
+                          <p className="text-sm font-medium">{m.name}</p>
+                          <p className="text-[10px] text-muted-foreground/40">{(m.size / 1e9).toFixed(1)} GB</p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteModel(m.name)}
+                          className="px-3 py-1 rounded-lg text-[10px] bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground/40">No models installed yet. Pull one below.</p>
+                )}
+
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/25 mb-3 mt-6">Pull Models</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {['llama3.1', 'llama3.1:8b', 'codellama', 'mistral', 'gemma2:9b', 'phi3', 'qwen2.5-coder'].map(name => {
+                    const installed = ollamaStatus.models?.some(m => m.name === name || m.name.startsWith(name + ':'));
+                    return (
+                      <button
+                        key={name}
+                        onClick={() => !installed && !pullingModel && handlePullModel(name)}
+                        disabled={installed || !!pullingModel}
+                        className={`flex items-center justify-between p-3 rounded-xl border transition-all text-left ${
+                          installed
+                            ? 'bg-violet-500/5 border-violet-500/20 cursor-default'
+                            : 'bg-white/[0.02] border-white/[0.04] hover:border-white/[0.08] cursor-pointer'
+                        }`}
+                      >
+                        <span className="text-xs font-medium">{name}</span>
+                        {installed ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-violet-400" />
+                        ) : pullingModel === name ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5 text-muted-foreground/30" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {product.id === 'ollama' && !ollamaStatus?.installed && (
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                <p className="text-xs text-amber-400 font-medium mb-2">Ollama not detected on this server</p>
+                <p className="text-[11px] text-muted-foreground/50 mb-3">Download and install Ollama, then refresh to manage models from here.</p>
+                <div className="flex items-center gap-3">
+                  <a
+                    href="https://ollama.com/download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11px] font-medium bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 transition-colors"
+                  >
+                    <Download className="w-3 h-3" /> Download Ollama
+                  </a>
+                  <button onClick={loadOllamaStatus} className="flex items-center gap-1.5 text-[11px] text-blue-400 hover:text-blue-300">
+                    <RefreshCw className="w-3 h-3" /> Check again
+                  </button>
+                </div>
+                <pre className="text-[10px] bg-black/20 rounded-lg p-2.5 mt-3 font-mono text-muted-foreground/40">Or via SSH: curl -fsSL https://ollama.com/install.sh | sh</pre>
+              </div>
+            )}
           </div>
         )}
 

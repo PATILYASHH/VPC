@@ -8,6 +8,11 @@ const syncService = require('./syncService');
 async function execute(command, pool) {
   const start = Date.now();
 
+  // ── AI commands ──────────────────────────────────────────────
+  if (command.startsWith('vpc ai ')) {
+    return handleAiCommand(command, pool, start);
+  }
+
   // ── Dynamic DB project commands (vpc db list / vpc db <slug> <subcmd>) ──
   if (command === 'vpc db list' || /^vpc db [a-z0-9-]+ (info|tables|size|sql|fix-ownership)/.test(command)) {
     return handleDbCommand(command, pool, start);
@@ -105,6 +110,80 @@ async function execute(command, pool) {
     default:
       return { output: `Unknown command: ${command}`, exitCode: 127, duration_ms: Date.now() - start };
   }
+}
+
+// ── AI commands ──────────────────────────────────────────────────
+async function handleAiCommand(command, pool, start) {
+  const aiProvider = require('./aiProviderService');
+  const sub = command.slice('vpc ai '.length).trim();
+
+  // vpc ai providers
+  if (sub === 'providers') {
+    const providers = await aiProvider.getAvailableProviders(pool);
+    const defaultId = await aiProvider.getDefaultProvider(pool);
+    const lines = ['PROVIDER        STATUS     COST       MODEL', '─'.repeat(65)];
+    for (const p of providers) {
+      const status = p.available ? '✓ ready' : '✗ unavail';
+      const def = p.id === defaultId ? ' (default)' : '';
+      lines.push(`${(p.name + def).padEnd(16)} ${status.padEnd(11)} ${p.costTier.padEnd(11)} ${p.currentModel}`);
+    }
+    return { output: lines.join('\n'), exitCode: 0, duration_ms: Date.now() - start };
+  }
+
+  // vpc ai use <provider>
+  if (sub.startsWith('use ')) {
+    const providerId = sub.slice(4).trim();
+    try {
+      await aiProvider.setDefaultProvider(pool, providerId);
+      return { output: `Default AI provider set to: ${providerId}`, exitCode: 0, duration_ms: Date.now() - start };
+    } catch (err) {
+      return { output: `Error: ${err.message}`, exitCode: 1, duration_ms: Date.now() - start };
+    }
+  }
+
+  // vpc ai sql <description>
+  if (sub.startsWith('sql ')) {
+    const desc = sub.slice(4).trim();
+    const system = 'You are a PostgreSQL expert. Convert the user\'s natural language description into a valid SQL query. Return ONLY the SQL query, no explanation.';
+    try {
+      const result = await aiProvider.chat(desc, { pool, system, messages: [{ role: 'user', content: desc }] });
+      return { output: result.text, exitCode: 0, duration_ms: Date.now() - start };
+    } catch (err) {
+      return { output: `AI Error: ${err.message}`, exitCode: 1, duration_ms: Date.now() - start };
+    }
+  }
+
+  // vpc ai summarize logs
+  if (sub === 'summarize logs') {
+    try {
+      const { rows } = await pool.query(
+        "SELECT action, details, created_at FROM action_logs ORDER BY created_at DESC LIMIT 50"
+      );
+      if (rows.length === 0) return { output: 'No recent logs found.', exitCode: 0, duration_ms: Date.now() - start };
+      const logText = rows.map(r => `[${r.created_at}] ${r.action}: ${r.details || ''}`).join('\n');
+      const result = await aiProvider.chat(logText, {
+        pool,
+        system: 'Summarize these server action logs concisely. Highlight any errors, unusual patterns, or important events.',
+        messages: [{ role: 'user', content: `Here are the recent server logs:\n\n${logText}\n\nSummarize the key events.` }],
+      });
+      return { output: result.text, exitCode: 0, duration_ms: Date.now() - start };
+    } catch (err) {
+      return { output: `AI Error: ${err.message}`, exitCode: 1, duration_ms: Date.now() - start };
+    }
+  }
+
+  // vpc ai ask <question> (catch-all)
+  if (sub.startsWith('ask ')) {
+    const question = sub.slice(4).trim();
+    try {
+      const result = await aiProvider.chat(question, { pool });
+      return { output: result.text, exitCode: 0, duration_ms: Date.now() - start };
+    } catch (err) {
+      return { output: `AI Error: ${err.message}`, exitCode: 1, duration_ms: Date.now() - start };
+    }
+  }
+
+  return { output: `Unknown AI command. Available: vpc ai ask, vpc ai sql, vpc ai providers, vpc ai use, vpc ai summarize logs`, exitCode: 1, duration_ms: Date.now() - start };
 }
 
 // ── DB project commands ──────────────────────────────────────────

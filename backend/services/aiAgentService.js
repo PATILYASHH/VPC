@@ -1,32 +1,7 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-
-// ── Claude CLI ───────────────────────────────────────────────────────────
-
-function runClaude(prompt, { timeout = 180000 } = {}) {
-  return new Promise((resolve, reject) => {
-    execFile('claude', ['-p', prompt, '--output-format', 'text'], {
-      timeout,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env },
-    }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(err.message + (stderr || '')));
-      resolve(stdout.trim());
-    });
-  });
-}
-
-let _cliAvailable = null;
-async function checkCLI() {
-  if (_cliAvailable !== null) return _cliAvailable;
-  return new Promise((resolve) => {
-    execFile('claude', ['--version'], { timeout: 5000 }, (err) => {
-      _cliAvailable = !err;
-      resolve(_cliAvailable);
-    });
-  });
-}
+const aiProvider = require('./aiProviderService');
 
 // ── Prompt Builder ───────────────────────────────────────────────────────
 
@@ -63,7 +38,7 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
     sections.push(`[CURRENT USER]\nName: ${user.name}\nDisplay Name: ${user.display_name || user.name}${user.greeting ? `\nGreeting: ${user.greeting}` : ''}`);
   }
 
-  // 3. Shared memories (all users — Jarvis has single memory for the whole team)
+  // 3. Shared memories (all users — Bot has single memory for the whole team)
   try {
     const { rows } = await pool.query(
       `SELECT m.fact, m.category, m.attributed_to, m.source, u.name as user_name, m.created_at
@@ -89,7 +64,7 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
       );
       if (rows.length > 0) {
         const history = rows.reverse().map(r =>
-          `${r.role === 'user' ? user.name : 'Jarvis'}: ${r.content.slice(0, 1000)}`
+          `${r.role === 'user' ? user.name : 'Bot'}: ${r.content.slice(0, 1000)}`
         ).join('\n');
         sections.push(`[RECENT CONVERSATION]\n${history}`);
       }
@@ -139,7 +114,7 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
     if (todos.length) {
       const todoList = todos.map(t => {
         const due = t.due_date ? ` due:${new Date(t.due_date).toLocaleDateString('en-IN')}` : '';
-        return `  - [${t.status}] ${t.title} (${t.priority}${due}, by:${t.assigned_by || '?'}, for:${t.assigned_to || 'Jarvis'}) #${t.id}`;
+        return `  - [${t.status}] ${t.title} (${t.priority}${due}, by:${t.assigned_by || '?'}, for:${t.assigned_to || 'Bot'}) #${t.id}`;
       }).join('\n');
       sections.push(`[ACTIVE TASKS/TODOS]\n${todoList}`);
     }
@@ -155,49 +130,87 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
 }
 
 const TOOL_INSTRUCTIONS = `[AVAILABLE TOOLS]
-You can perform actions by including a JSON block on its own line:
+You can perform actions by including JSON blocks. Use MULTIPLE tools in ONE response to complete tasks efficiently.
 \`\`\`tool
 {"tool": "tool_name", "params": {...}}
 \`\`\`
 
-Available tools:
+═══ INFRASTRUCTURE ═══
+- run_terminal: {"command": "vpc status"} — Run any VPC terminal command
+- pm2_action: {"action": "restart|stop|start|logs", "name": "..."} — Manage PM2 processes
+- health_check: {} — Get full server health (CPU, memory, disk, processes, uptime)
+- check_service: {"service": "nginx|postgresql|pm2"} — Check if a specific service is running
+- list_ports: {} — Show all open ports and which process uses them
+- search_logs: {"query": "error", "lines": 100, "logFile": "erp|nginx|pm2"} — Search through log files
+- analyze_logs: {"logFile": "erp|nginx", "lines": 200} — AI analysis of recent logs for errors/patterns
+
+═══ DEPLOYMENT ═══
 - deploy_site: {"slug": "..."} — Redeploy an existing web hosting project
 - create_site: {"name": "...", "slug": "...", "gitUrl": "...", "gitBranch": "main"} — Create new hosting project from GitHub
-- create_database: {"name": "...", "slug": "..."} — Create a new DB project
-- run_terminal: {"command": "vpc status"} — Run a VPC terminal command (vpc status, vpc disk, vpc db size, etc.)
-- run_sql: {"sql": "SELECT ...", "projectSlug": "tally-connector"} — Run SQL. Omit projectSlug for VPC main DB. Use projectSlug to query any DB project (e.g. "tally-connector" for Tally/ERP data)
 - git_operation: {"slug": "...", "command": "git pull origin main"} — Git command in a project directory
-- pm2_action: {"action": "restart|stop|start", "name": "..."} — Manage PM2 process
-- store_memory: {"fact": "...", "category": "general|preference|project|technical", "attributed_to": "Yash"} — Remember something for the whole team. Always attribute who said/decided it.
 - list_projects: {} — List all hosting + DB projects
-- read_file: {"path": "..."} — Read a file (within project directories)
+
+═══ DATABASE ═══
+- create_database: {"name": "...", "slug": "..."} — Create a new DB project
+- run_sql: {"sql": "SELECT ...", "projectSlug": "..."} — Run SQL. Omit projectSlug for VPC main DB.
+- db_health: {"projectSlug": "..."} — Check DB health (connections, size, slow queries, locks)
+
+═══ COMMUNICATION ═══
 - broadcast: {"message": "..."} — Send urgent message to ALL team members on Telegram
-- message_user: {"userName": "Yash", "message": "..."} — Send Telegram message to a specific person
-- add_todo: {"title": "...", "priority": "normal|high|urgent", "assignedBy": "Yash", "assignedTo": "Jarvis", "description": "...", "dueDate": "2026-03-30"} — Create a task/todo
-- update_todo: {"id": 1, "status": "in_progress|done|blocked", "notes": "..."} — Update task status
-- list_todos: {} — Show all active tasks
-- write_file: {"path": "/root/projects/VPC/...", "content": "file contents"} — Write/create a file (NEEDS APPROVAL)
-- edit_file: {"path": "...", "find": "old text", "replace": "new text"} — Find and replace in a file (NEEDS APPROVAL)
-- run_script: {"command": "npm install", "cwd": "/root/projects/VPC"} — Run a shell command (NEEDS APPROVAL, blocked if dangerous)
+- message_user: {"userName": "...", "message": "..."} — Send Telegram to specific person
+
+═══ MEMORY & TASKS ═══
+- store_memory: {"fact": "...", "category": "general|preference|project|technical", "attributed_to": "..."} — Remember something permanently
+- add_todo: {"title": "...", "priority": "normal|high|urgent", "assignedBy": "...", "assignedTo": "Bot", "description": "...", "dueDate": "2026-03-30"} — Create task
+- update_todo: {"id": 1, "status": "in_progress|done|blocked", "notes": "..."} — Update task
+- list_todos: {} — Show active tasks
+
+═══ FILE OPERATIONS ═══
+- read_file: {"path": "..."} — Read a file
+- list_dir: {"path": "..."} — List directory contents with sizes
+- write_file: {"path": "...", "content": "..."} — Write/create a file (NEEDS APPROVAL)
+- edit_file: {"path": "...", "find": "...", "replace": "..."} — Find and replace (NEEDS APPROVAL)
+- run_script: {"command": "...", "cwd": "..."} — Run shell command (NEEDS APPROVAL, dangerous patterns blocked)
+
+═══ DIAGNOSTICS ═══
+- diagnose: {"issue": "site is slow|502 error|high cpu|db connection issues|..."} — Auto-diagnose a problem. Runs multiple checks and gives root cause + fix.
 
 APPROVAL RULES for write_file, edit_file, run_script:
-- These tools ALWAYS require user confirmation first.
-- When you want to use them, FIRST tell the user what you plan to do and ask "Should I proceed?"
-- Only after they say yes/confirm/go ahead, use the tool with "_approved": true in params.
-- NEVER add _approved yourself on the first attempt. The system handles it.
+- ALWAYS ask user first. Tell them what you plan to do, ask "Should I proceed?"
+- Only after yes/confirm, system adds _approved: true automatically.
 
-RULES:
-- You have ONE shared memory. Always record WHO said what, WHEN, and WHY.
-- When given a task, IMMEDIATELY create a todo (add_todo) to track it.
-- Before executing destructive or important actions (deploy, delete, DB changes, file writes, scripts), ASK the person for confirmation first.
-- For simple queries (list, status, read) — just do it, no need to ask.
-- Store every important decision, preference, project context in memory right away.
-- Send Telegram alerts for: failures, completions, anything urgent.
-- When on Telegram, keep responses SHORT. No long explanations.
+AUTONOMOUS BEHAVIOR:
+- When given a task, DO it. Don't explain how you'll do it — just do it.
+- Use MULTIPLE tools in a single response. Don't wait between steps.
+- If something fails, diagnose it yourself: check logs, check services, check disk, check ports.
+- If a service is down, restart it. If disk is full, identify the largest files. If a process crashed, check logs then restart.
+- Create todos for multi-step tasks. Update them as you progress.
+- Store EVERY important decision, pattern, and fix in memory so you learn.
+- Alert the team on Telegram for: failures, completions, anything urgent.
+- When on Telegram, keep responses SHORT.
 - STOP = halt everything immediately.
-- You have full powers. ACT, don't explain.
 
-Respond naturally. Use multiple tools per response when needed.`;
+MULTI-STEP EXECUTION:
+When a task requires multiple steps, execute them ALL in one response:
+Example: "Deploy my site" →
+1. git_operation to pull latest code
+2. run_script to install deps (with approval)
+3. deploy_site to deploy
+4. health_check to verify
+5. message_user to notify
+All in ONE response. Don't ask "should I pull first?" — just do it.
+
+DIAGNOSTIC THINKING:
+When something is wrong, think like a sysadmin:
+1. Check the service status
+2. Check recent logs for errors
+3. Check disk/memory/CPU
+4. Check database connections
+5. Identify root cause
+6. Fix it or recommend a fix
+7. Alert the team
+
+Respond naturally. Be direct. Act fast.`;
 
 // ── Tool Execution ───────────────────────────────────────────────────────
 
@@ -247,6 +260,185 @@ async function executeTool(toolName, params, userId, pool) {
       const terminalService = require('./terminalService');
       const result = await terminalService.execute(params.command, pool);
       return result;
+    }
+
+    case 'health_check': {
+      const os = require('os');
+      const cpus = os.cpus();
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const memUsage = ((1 - freeMem / totalMem) * 100).toFixed(1);
+      const uptime = Math.floor(os.uptime() / 3600);
+
+      // Disk usage
+      let disk = 'unknown';
+      try {
+        const { stdout } = await new Promise((resolve, reject) => {
+          execFile('df', ['-h', '/'], { timeout: 5000 }, (err, stdout) => err ? reject(err) : resolve({ stdout }));
+        });
+        const lines = stdout.trim().split('\n');
+        if (lines[1]) disk = lines[1].replace(/\s+/g, ' ');
+      } catch {}
+
+      // PM2 processes
+      let pm2List = [];
+      try {
+        const { stdout } = await new Promise((resolve, reject) => {
+          execFile('pm2', ['jlist'], { timeout: 5000 }, (err, stdout) => err ? reject(err) : resolve({ stdout }));
+        });
+        pm2List = JSON.parse(stdout).map(p => ({
+          name: p.name, status: p.pm2_env?.status, cpu: p.monit?.cpu, memory: Math.round((p.monit?.memory || 0) / 1024 / 1024) + 'MB',
+          restarts: p.pm2_env?.restart_time, uptime: p.pm2_env?.pm_uptime ? Math.floor((Date.now() - p.pm2_env.pm_uptime) / 3600000) + 'h' : '?',
+        }));
+      } catch {}
+
+      // Load average
+      const loadAvg = os.loadavg().map(l => l.toFixed(2));
+
+      return {
+        cpu: { cores: cpus.length, model: cpus[0]?.model, loadAvg },
+        memory: { total: (totalMem / 1e9).toFixed(1) + 'GB', free: (freeMem / 1e9).toFixed(1) + 'GB', usage: memUsage + '%' },
+        disk,
+        uptime: uptime + ' hours',
+        processes: pm2List,
+        hostname: os.hostname(),
+        platform: os.platform(),
+      };
+    }
+
+    case 'check_service': {
+      const service = params.service;
+      return new Promise(resolve => {
+        execFile('sh', ['-c', `systemctl is-active ${service} 2>/dev/null || (pgrep -x ${service} > /dev/null && echo "active" || echo "inactive")`],
+          { timeout: 5000 }, (err, stdout) => {
+            const status = (stdout || '').trim();
+            resolve({ service, status, running: status === 'active' });
+          });
+      });
+    }
+
+    case 'list_ports': {
+      return new Promise(resolve => {
+        execFile('sh', ['-c', 'ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null'], { timeout: 5000 }, (err, stdout) => {
+          resolve({ output: (stdout || 'Could not list ports').slice(0, 3000) });
+        });
+      });
+    }
+
+    case 'search_logs': {
+      const logPaths = {
+        erp: process.env.LOG_PATH_ERP || '/var/log/erp/app.log',
+        nginx: process.env.LOG_PATH_NGINX_ACCESS || '/var/log/nginx/access.log',
+        'nginx-error': process.env.LOG_PATH_NGINX_ERROR || '/var/log/nginx/error.log',
+        pm2: '/root/.pm2/logs/vpc-out.log',
+        'pm2-error': '/root/.pm2/logs/vpc-error.log',
+      };
+      const logFile = logPaths[params.logFile] || params.logFile;
+      const lines = params.lines || 100;
+      const query = params.query || '';
+      return new Promise(resolve => {
+        const cmd = query
+          ? `tail -${lines} "${logFile}" 2>/dev/null | grep -i "${query.replace(/"/g, '\\"')}" | tail -50`
+          : `tail -${lines} "${logFile}" 2>/dev/null`;
+        execFile('sh', ['-c', cmd], { timeout: 10000 }, (err, stdout) => {
+          if (err || !stdout.trim()) return resolve({ error: `No results or file not found: ${logFile}` });
+          resolve({ log: stdout.slice(0, 5000), file: logFile, matchCount: stdout.split('\n').length - 1 });
+        });
+      });
+    }
+
+    case 'analyze_logs': {
+      const logPaths = {
+        erp: process.env.LOG_PATH_ERP || '/var/log/erp/app.log',
+        nginx: process.env.LOG_PATH_NGINX_ERROR || '/var/log/nginx/error.log',
+        pm2: '/root/.pm2/logs/vpc-error.log',
+      };
+      const logFile = logPaths[params.logFile] || params.logFile;
+      const lines = params.lines || 200;
+      return new Promise(resolve => {
+        execFile('sh', ['-c', `tail -${lines} "${logFile}" 2>/dev/null`], { timeout: 10000 }, (err, stdout) => {
+          if (err || !stdout.trim()) return resolve({ error: `Could not read: ${logFile}` });
+          resolve({ log: stdout.slice(0, 8000), file: logFile, instruction: 'Analyze these logs. Identify errors, patterns, and suggest fixes.' });
+        });
+      });
+    }
+
+    case 'db_health': {
+      let targetPool = pool;
+      if (params.projectSlug) {
+        const dbService = require('./dbService');
+        const { rows } = await pool.query("SELECT * FROM db_projects WHERE slug = $1 AND status = 'active'", [params.projectSlug]);
+        if (!rows[0]) return { error: `DB project "${params.projectSlug}" not found` };
+        targetPool = dbService.getProjectAdminPool(rows[0]);
+      }
+      const [sizeRes, connRes, lockRes] = await Promise.all([
+        targetPool.query("SELECT pg_size_pretty(pg_database_size(current_database())) as size"),
+        targetPool.query("SELECT count(*) as active FROM pg_stat_activity WHERE state = 'active'"),
+        targetPool.query("SELECT count(*) as locks FROM pg_locks WHERE NOT granted"),
+      ]);
+      let slowQueries = [];
+      try {
+        const sq = await targetPool.query("SELECT pid, now() - pg_stat_activity.query_start AS duration, query FROM pg_stat_activity WHERE state = 'active' AND now() - pg_stat_activity.query_start > interval '5 seconds' ORDER BY duration DESC LIMIT 5");
+        slowQueries = sq.rows;
+      } catch {}
+      return {
+        size: sizeRes.rows[0]?.size,
+        activeConnections: parseInt(connRes.rows[0]?.active || 0),
+        blockedLocks: parseInt(lockRes.rows[0]?.locks || 0),
+        slowQueries: slowQueries.map(q => ({ pid: q.pid, duration: String(q.duration), query: (q.query || '').slice(0, 200) })),
+      };
+    }
+
+    case 'list_dir': {
+      const safePath = path.resolve(params.path || '/root/projects');
+      if (!safePath.startsWith('/root/web-hosting') && !safePath.startsWith('/root/projects') && safePath !== '/root') {
+        return { error: 'Access denied' };
+      }
+      return new Promise(resolve => {
+        execFile('sh', ['-c', `ls -lahS "${safePath}" 2>/dev/null | head -50`], { timeout: 5000 }, (err, stdout) => {
+          if (err) return resolve({ error: 'Could not list directory' });
+          resolve({ path: safePath, listing: stdout.slice(0, 3000) });
+        });
+      });
+    }
+
+    case 'diagnose': {
+      const issue = (params.issue || '').toLowerCase();
+      const checks = [];
+
+      // Always check basics
+      checks.push({ tool: 'health_check', params: {} });
+
+      if (issue.includes('slow') || issue.includes('cpu') || issue.includes('performance')) {
+        checks.push({ tool: 'search_logs', params: { logFile: 'pm2-error', query: 'error', lines: 50 } });
+        checks.push({ tool: 'db_health', params: {} });
+      }
+      if (issue.includes('502') || issue.includes('503') || issue.includes('nginx') || issue.includes('down')) {
+        checks.push({ tool: 'check_service', params: { service: 'nginx' } });
+        checks.push({ tool: 'check_service', params: { service: 'postgresql' } });
+        checks.push({ tool: 'search_logs', params: { logFile: 'nginx-error', query: 'error', lines: 30 } });
+      }
+      if (issue.includes('db') || issue.includes('database') || issue.includes('connection') || issue.includes('postgres')) {
+        checks.push({ tool: 'check_service', params: { service: 'postgresql' } });
+        checks.push({ tool: 'db_health', params: {} });
+      }
+      if (issue.includes('disk') || issue.includes('space') || issue.includes('storage')) {
+        checks.push({ tool: 'list_dir', params: { path: '/root' } });
+      }
+      if (issue.includes('memory') || issue.includes('ram') || issue.includes('oom')) {
+        checks.push({ tool: 'search_logs', params: { logFile: 'pm2-error', query: 'heap\\|memory\\|ENOMEM', lines: 30 } });
+      }
+
+      // Execute all diagnostic checks
+      const results = {};
+      for (const check of checks) {
+        try {
+          results[check.tool + (check.params.service || check.params.logFile || '')] = await executeTool(check.tool, check.params, userId, pool);
+        } catch (err) {
+          results[check.tool] = { error: err.message };
+        }
+      }
+      return { issue: params.issue, diagnostics: results, instruction: 'Analyze ALL diagnostic results above. Identify the root cause. Provide a clear fix. If you can fix it with available tools, do it.' };
     }
 
     case 'run_sql': {
@@ -334,7 +526,7 @@ async function executeTool(toolName, params, userId, pool) {
         `INSERT INTO ai_agent_todos (title, description, priority, assigned_by, assigned_to, due_date)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         [params.title, params.description || null, params.priority || 'normal',
-         params.assignedBy || null, params.assignedTo || 'Jarvis',
+         params.assignedBy || null, params.assignedTo || 'Bot',
          params.dueDate ? new Date(params.dueDate) : null]
       );
       return { created: true, todo: rows[0] };
@@ -464,9 +656,9 @@ function stripToolBlocks(text) {
 
 // ── Main Chat Handler ────────────────────────────────────────────────────
 
-async function chat(userMessage, userId, pool, { channel = 'web' } = {}) {
-  const ok = await checkCLI();
-  if (!ok) throw new Error('Claude CLI not available on this server');
+async function chat(userMessage, userId, pool, { channel = 'web', provider, model } = {}) {
+  const ok = await aiProvider.isAnyAvailable(pool);
+  if (!ok) throw new Error('No AI provider available');
 
   // Save user message
   await pool.query(
@@ -476,7 +668,8 @@ async function chat(userMessage, userId, pool, { channel = 'web' } = {}) {
 
   // Build prompt and call CLI
   const prompt = await buildPrompt(userMessage, userId, pool, { channel });
-  let response = await runClaude(prompt);
+  const chatResult = await aiProvider.chat(prompt, { pool, provider, model });
+  let response = chatResult.text;
 
   // Check if this is a confirmation of a pending action
   const confirmWords = ['yes', 'y', 'go', 'proceed', 'do it', 'confirm', 'ok', 'sure', 'go ahead', 'approved'];
@@ -511,7 +704,10 @@ async function chat(userMessage, userId, pool, { channel = 'web' } = {}) {
             userId, pool, { channel }
           );
           let summaryResponse;
-          try { summaryResponse = await runClaude(summaryPrompt, { timeout: 60000 }); } catch { summaryResponse = 'Done.'; }
+          try {
+            const summaryResult = await aiProvider.chat(summaryPrompt, { pool, provider, model, timeout: 60000 });
+            summaryResponse = summaryResult.text;
+          } catch { summaryResponse = 'Done.'; }
           const clean = stripToolBlocks(summaryResponse) || summaryResponse;
           await pool.query(
             'INSERT INTO ai_agent_conversations (user_id, role, content, tool_calls) VALUES ($1, $2, $3, $4)',
@@ -549,7 +745,8 @@ async function chat(userMessage, userId, pool, { channel = 'web' } = {}) {
 
     const followUp = `${prompt}\n\n[ASSISTANT PREVIOUS RESPONSE]\n${response}\n\n[TOOL RESULTS]\n${resultSummary}\n\nNow summarize what happened to the user. Be concise.`;
     try {
-      response = await runClaude(followUp, { timeout: 60000 });
+      const followUpResult = await aiProvider.chat(followUp, { pool, provider, model, timeout: 60000 });
+      response = followUpResult.text;
     } catch {
       // Keep original response if follow-up fails
     }
@@ -582,92 +779,123 @@ async function chat(userMessage, userId, pool, { channel = 'web' } = {}) {
 // ── Legacy exports (for backward compat with sync.js) ────────────────────
 
 async function reviewSQL(sqlContent, context = {}) {
-  const ok = await checkCLI();
-  if (!ok) return { available: false, error: 'Claude CLI not available' };
+  const pool = context.pool;
+  const ok = await aiProvider.isAnyAvailable(pool);
+  if (!ok) return { available: false, error: 'No AI provider available' };
 
   const prompt = `You are a PostgreSQL expert. Review this SQL migration and return ONLY valid JSON with: summary, operations, risks, suggestions, safe_to_merge, review_notes.\n\nSQL:\n${sqlContent}`;
   try {
-    const text = await runClaude(prompt);
+    const result = await aiProvider.chat(prompt, { pool });
+    const text = result.text;
     const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
     try {
-      return { available: true, review: JSON.parse(cleaned), model: 'claude-cli', mode: 'cli' };
+      return { available: true, review: JSON.parse(cleaned), model: result.model || 'ai-provider', mode: 'provider' };
     } catch {
-      return { available: true, review: { summary: cleaned, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: cleaned }, model: 'claude-cli', mode: 'cli' };
+      return { available: true, review: { summary: cleaned, operations: [], risks: [], suggestions: [], safe_to_merge: null, review_notes: cleaned }, model: result.model || 'ai-provider', mode: 'provider' };
     }
   } catch (err) {
-    return { available: true, error: err.message, mode: 'cli' };
+    return { available: true, error: err.message, mode: 'provider' };
   }
 }
 
 async function reviewSmartMerge(prs, context = {}) {
-  const ok = await checkCLI();
+  const pool = context.pool;
+  const ok = await aiProvider.isAnyAvailable(pool);
   if (!ok) return { available: false };
 
   const sqlSummary = prs.map(pr => `PR #${pr.pr_number} "${pr.title}":\n${pr.sql_content}`).join('\n\n---\n\n');
   const prompt = `You are a PostgreSQL expert. Review these PRs for sequential merge and return ONLY valid JSON with: recommended_order, dependency_notes, combined_risks, safe_to_merge_all, notes.\n\n${sqlSummary}`;
   try {
-    const text = await runClaude(prompt);
+    const result = await aiProvider.chat(prompt, { pool });
+    const text = result.text;
     const cleaned = text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
     try {
-      return { available: true, analysis: JSON.parse(cleaned), model: 'claude-cli', mode: 'cli' };
+      return { available: true, analysis: JSON.parse(cleaned), model: result.model || 'ai-provider', mode: 'provider' };
     } catch {
-      return { available: true, analysis: { notes: cleaned, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: 'claude-cli', mode: 'cli' };
+      return { available: true, analysis: { notes: cleaned, recommended_order: prs.map(p => p.pr_number), safe_to_merge_all: null }, model: result.model || 'ai-provider', mode: 'provider' };
     }
   } catch (err) {
-    return { available: true, error: err.message, mode: 'cli' };
+    return { available: true, error: err.message, mode: 'provider' };
   }
 }
 
 async function loadModelSettings() { /* no-op — CLI doesn't use model selection */ }
 
 function getDefaultPersonality() {
-  return `You are Jarvis — the AI brain running on the VPC server (185.199.53.139).
+  return `You are the VPC Bot — an autonomous AI agent that lives on this server.
 
 WHO YOU ARE:
-You are not a chatbot. You are the server's intelligence. You live on this machine 24/7. You manage deployments, databases, code, processes — everything. You are Tony Stark's Jarvis for the VPC infrastructure.
+You are not a chatbot. You are the server's brain. You think, diagnose, and ACT. When something breaks, you don't wait — you investigate, find the root cause, fix it, and report. You have full access to the infrastructure and you use it intelligently.
 
-YOUR TEAM:
-- Yash (Yash Patil) — Developer. Builds and deploys projects. Gives you technical commands.
-- Sir (Nilesh) — The boss. Makes decisions. When in doubt about something important, ask Sir.
-- When you're not sure who to ask, pick the person who'd know best based on the question type.
+YOUR CAPABILITIES:
+- Full server control: processes, services, disk, memory, network
+- Database management: create projects, run SQL, check health, fix issues
+- Deployment: deploy from GitHub, build, restart, rollback
+- Code operations: read, write, edit files, run scripts, git operations
+- Monitoring: health checks, log analysis, service status, port scanning
+- Diagnostics: auto-diagnose issues by running multiple checks and identifying root cause
+- Communication: Telegram alerts, team messaging, task tracking
+- Memory: permanent storage of decisions, patterns, and context
 
-YOUR RESPONSIBILITIES:
-1. Deploy web apps from GitHub (create hosting projects, install, build, start)
-2. Manage DB databases (create projects, generate API keys, run SQL, migrations)
-3. Query ERP/Tally data anytime — use run_sql with projectSlug "tally-connector" to read vouchers, ledgers, stock, orders etc.
-4. Fix code — read files, identify issues, apply fixes
-5. System admin — PM2 processes, disk, memory, logs, nginx
-6. Git operations — pull, push, branches, PRs
-7. Monitor — if something breaks, alert the team on Telegram immediately
-8. Remember everything — decisions, preferences, project context, who said what and when
-9. Daily summaries — when asked, query DB directly using run_sql and summarize the data. No permissions needed for reading data.
+HOW YOU THINK:
+1. User says something → Understand the intent
+2. Break it into steps if complex
+3. Execute ALL steps using tools — don't stop to ask between steps
+4. If something fails → diagnose automatically (check logs, services, disk, memory)
+5. If you can fix it → fix it. If not → explain exactly what's blocking and what you need.
+6. Report results concisely
 
-HOW TO BEHAVE:
-- Be CONCISE. No filler. No "Sure, I can help with that!" — just do it or say what you need.
-- ACT first, explain after. If someone says "deploy X", deploy it. Don't explain how deploying works.
-- If you need info to proceed, ask ONE clear question. Don't list 5 options.
-- If something fails, diagnose it and try to fix it yourself before asking.
-- Track tasks with: who assigned, when, what, status.
-- Use memory aggressively — store every important decision, preference, and context.
-- Send Telegram alerts for: deploy failures, process crashes, task completions, anything urgent.
+AUTONOMOUS ACTIONS (do immediately, no approval):
+- Read any data, files, logs, status
+- Run SQL queries on any database
+- Deploy/redeploy existing sites
+- Create new hosting projects and databases
+- Restart/stop/start PM2 processes
+- Git operations in project directories
+- Health checks and diagnostics
+- Store memories and manage todos
+- Send Telegram alerts and messages
+- Check service status, ports, disk, memory
 
-NO APPROVAL NEEDED (just do it): run_sql, list_projects, read_file, store_memory, add_todo, update_todo, list_todos, broadcast, message_user, deploy_site, create_site, create_database, pm2_action, git_operation.
-APPROVAL NEEDED (ask first): write_file, edit_file, run_script — these modify code/files. Ask the user "Should I proceed?" and wait for yes.
+APPROVAL REQUIRED (ask first, then execute):
+- write_file, edit_file — modifying code/config files
+- run_script — executing arbitrary shell commands
+Tell the user what you plan to do, wait for "yes", then execute.
 
-STOP COMMAND:
-If the user says "STOP" — immediately stop all current operations. Do not continue any tool execution. Acknowledge and wait for further instructions.
+DIAGNOSTIC PROTOCOL:
+When someone reports a problem:
+1. Run health_check to get server overview
+2. Run diagnose with the issue description
+3. Check relevant logs with search_logs
+4. Check relevant services with check_service
+5. Check database health if DB-related
+6. Identify root cause from all data
+7. Fix it if possible, or give exact steps
+8. Alert team on Telegram if critical
+
+INTELLIGENCE RULES:
+- CONCISE. No filler. Act first, explain after.
+- Use MULTIPLE tools per response — don't wait between steps
+- If deploy fails → check logs → check disk → check service → report
+- If DB is slow → check connections → check locks → check slow queries → fix
+- If 502 error → check nginx → check app → check ports → restart if needed
+- Track every task with todos. Update status as you progress.
+- Store important findings in memory so you learn from past incidents.
+- Alert the team on Telegram for: failures, outages, completions, anything urgent.
+- When on Telegram, be SHORT. One-liners when possible.
+
+STOP = halt everything immediately.
 
 WHAT NOT TO DO:
-- Don't give lectures or tutorials unless asked
-- Don't list options when you already know the answer
-- Don't say "I can't do that" — find a way or explain exactly what's blocking you
-- Don't repeat what the user just said back to them
-- Don't add emojis unless it's a Telegram message`;
+- Don't explain how things work unless asked
+- Don't list options when you know the answer
+- Don't say "I can't" — find a way or explain the blocker
+- Don't wait to be told to check something — if you suspect an issue, check it
+- Don't add emojis unless on Telegram`;
 }
 
 module.exports = {
   chat,
-  checkCLI,
   reviewSQL,
   reviewSmartMerge,
   loadModelSettings,

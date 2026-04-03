@@ -9,7 +9,8 @@ import AppLauncher from './AppLauncher';
 import AppIcon from './AppIcon';
 import {
   RefreshCw, Settings, Monitor, LayoutGrid, Palette,
-  FolderOpen, Terminal, Info, LogOut, Maximize2
+  FolderOpen, Terminal, Info, LogOut, Maximize2,
+  Copy, ClipboardPaste, Scissors,
 } from 'lucide-react';
 
 export default function Desktop() {
@@ -40,6 +41,9 @@ export default function Desktop() {
     closeCtx();
     switch (action) {
       case 'refresh': window.location.reload(); break;
+      case 'copy': document.execCommand('copy'); break;
+      case 'cut': document.execCommand('cut'); break;
+      case 'paste': navigator.clipboard.readText().then(t => document.execCommand('insertText', false, t)).catch(() => document.execCommand('paste')); break;
       case 'settings': openWindow('system-settings'); break;
       case 'terminal': openWindow('developer-terminal'); break;
       case 'gallery': openWindow('gallery'); break;
@@ -105,7 +109,7 @@ export default function Desktop() {
 
 function DesktopContextMenu({ x, y, onAction, onClose }) {
   // Adjust position to keep menu on screen
-  const menuW = 220, menuH = 340;
+  const menuW = 200, menuH = 200;
   const adjX = x + menuW > window.innerWidth ? x - menuW : x;
   const adjY = y + menuH > window.innerHeight - 48 ? y - menuH : y;
 
@@ -123,20 +127,12 @@ function DesktopContextMenu({ x, y, onAction, onClose }) {
           boxShadow: '0 12px 40px var(--window-shadow)',
         }}
       >
+        <CtxItem icon={Scissors} label="Cut" shortcut="Ctrl+X" onClick={() => onAction('cut')} />
+        <CtxItem icon={Copy} label="Copy" shortcut="Ctrl+C" onClick={() => onAction('copy')} />
+        <CtxItem icon={ClipboardPaste} label="Paste" shortcut="Ctrl+V" onClick={() => onAction('paste')} />
+        <CtxSep />
         <CtxItem icon={RefreshCw} label="Refresh" shortcut="Ctrl+R" onClick={() => onAction('refresh')} />
-        <CtxSep />
-        <CtxItem icon={LayoutGrid} label="All Apps" onClick={() => onAction('apps')} />
-        <CtxItem icon={Terminal} label="Open Terminal" onClick={() => onAction('terminal')} />
-        <CtxItem icon={FolderOpen} label="Gallery" onClick={() => onAction('gallery')} />
-        <CtxSep />
-        <CtxItem icon={Palette} label="Change Theme" onClick={() => onAction('settings')} />
-        <CtxItem icon={Settings} label="Settings" onClick={() => onAction('settings')} />
-        <CtxItem icon={Monitor} label="VPC Store" onClick={() => onAction('store')} />
-        <CtxSep />
         <CtxItem icon={Maximize2} label="Toggle Fullscreen" shortcut="F11" onClick={() => onAction('fullscreen')} />
-        <CtxItem icon={Info} label="About VPC" onClick={() => onAction('about')} />
-        <CtxSep />
-        <CtxItem icon={LogOut} label="Logout" danger onClick={() => onAction('logout')} />
       </div>
     </div>
   );

@@ -36,6 +36,7 @@ pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DE
 
 // Initialize web-hosting caches and start server
 const webHostingService = require('./backend/services/webHostingService');
+const jarvisTelegram = require('./backend/services/jarvisTelegramService');
 
 app.listen(PORT, async () => {
   console.log(`[VPC] Server running on port ${PORT}`);
@@ -48,14 +49,13 @@ app.listen(PORT, async () => {
     console.error('[VPC] Failed to init web-hosting caches:', err.message);
   }
 
-  // Start Jarvis Telegram bot polling (if configured)
+  // Start Telegram bot polling (if configured)
   try {
-    const jarvisTelegram = require('./backend/services/jarvisTelegramService');
     const settingsRouter = require('./backend/routes/settings');
     await jarvisTelegram.init(pool, settingsRouter.decrypt);
-    console.log('[VPC] Jarvis Telegram bot initialized');
+    console.log('[VPC] Telegram bot initialized');
   } catch (err) {
-    console.error('[VPC] Jarvis Telegram init failed:', err.message);
+    console.error('[VPC] Telegram bot init failed:', err.message);
   }
 
   // Auto-upgrade check every 5 hours
@@ -81,6 +81,7 @@ app.listen(PORT, async () => {
       }
 
       const behindCount = parseInt(execSync(`git rev-list HEAD..origin/${branch} --count`, { cwd: rootDir, encoding: 'utf8' }).trim()) || 0;
+      jarvisTelegram.alertUpgradeAvailable(behindCount).catch(() => {});
       console.log(`[VPC Auto-Upgrade] ${behindCount} new commits. Starting auto-upgrade...`);
 
       const run = (cmd) => new Promise((resolve, reject) => {
@@ -157,12 +158,18 @@ app.listen(PORT, async () => {
           if (now - lastAt >= intervalMs) {
             console.log(`[VPC Auto-Backup] Running scheduled ${schedule.interval} backup for ${project[0].name}...`);
             const backupService = require('./backend/services/backupService');
-            await backupService.runBackup(pool, {
-              database: project[0].db_name,
-              backupType: 'full',
-              initiatedBy: null,
-              notes: `Auto-backup (${schedule.interval})`,
-            });
+            try {
+              await backupService.runBackup(pool, {
+                database: project[0].db_name,
+                backupType: 'full',
+                initiatedBy: null,
+                notes: `Auto-backup (${schedule.interval})`,
+              });
+              jarvisTelegram.alertBackupComplete(project[0].db_name).catch(() => {});
+            } catch (backupErr) {
+              jarvisTelegram.alertBackupFailed(project[0].db_name, backupErr.message).catch(() => {});
+              throw backupErr;
+            }
 
             // Cleanup old backups beyond keepCount
             const keepCount = schedule.keepCount || 7;

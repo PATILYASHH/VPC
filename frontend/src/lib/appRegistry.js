@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -12,6 +12,7 @@ import Gallery from '@/components/apps/Gallery';
 import WebHosting from '@/components/apps/WebHosting';
 import VPSHub from '@/components/apps/VPSHub';
 import AgentSettings from '@/components/apps/AgentSettings';
+import JarvisChat from '@/components/apps/JarvisChat';
 import VpcStore from '@/components/apps/VpcStore';
 import SystemSettings from '@/components/apps/SystemSettings';
 
@@ -195,20 +196,34 @@ const APP_REGISTRY = {
     minWidth: 500,
     minHeight: 350,
   },
+  'vpc-bot': {
+    id: 'vpc-bot',
+    title: 'VPC Bot',
+    description: 'AI Chat Assistant',
+    icon: Bot,
+    iconColor: 'text-violet-400',
+    iconBg: 'bg-gradient-to-br from-violet-500/20 to-indigo-500/20',
+    category: 'system',
+    component: JarvisChat,
+    defaultWidth: 600,
+    defaultHeight: 700,
+    minWidth: 400,
+    minHeight: 500,
+  },
   'agent-settings': {
     id: 'agent-settings',
     title: 'AI Agent',
-    description: 'Agent Configuration',
+    description: 'Bot Brain & Config',
     icon: Brain,
     iconColor: 'text-purple-400',
     iconBg: 'bg-purple-500/15',
     category: 'system',
     component: AgentSettings,
     permission: 'ai_agent',
-    defaultWidth: 850,
-    defaultHeight: 600,
-    minWidth: 500,
-    minHeight: 400,
+    defaultWidth: 950,
+    defaultHeight: 650,
+    minWidth: 700,
+    minHeight: 500,
   },
   'vpc-store': {
     id: 'vpc-store',

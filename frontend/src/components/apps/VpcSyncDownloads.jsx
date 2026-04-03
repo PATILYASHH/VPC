@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
 const CLI_VERSION = '1.0.0';
-const EXTENSION_VERSION = '5.0.0';
+const EXTENSION_VERSION = '8.0.0';
 
 export default function VpcSyncDownloads() {
   const [copiedCmd, setCopiedCmd] = useState(null);

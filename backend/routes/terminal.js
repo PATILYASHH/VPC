@@ -4,7 +4,7 @@ const terminalService = require('../services/terminalService');
 const router = express.Router();
 
 // Dynamic command prefixes that accept arguments
-const DYNAMIC_PREFIXES = ['vpc db ', 'vpc db query '];
+const DYNAMIC_PREFIXES = ['vpc db ', 'vpc db query ', 'vpc ai '];
 
 // GET /api/admin/terminal/commands
 router.get('/commands', async (req, res) => {

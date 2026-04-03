@@ -284,11 +284,11 @@ export default function SystemSettings() {
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">VPC OS Version</span>
-                    <span className="font-mono font-medium">v2.0.0</span>
+                    <span className="font-mono font-medium">v2.1.0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">VPC Sync Extension</span>
-                    <span className="font-mono font-medium">v7.1.0</span>
+                    <span className="font-mono font-medium">v8.0.0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Node.js</span>

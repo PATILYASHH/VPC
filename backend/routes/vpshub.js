@@ -6,6 +6,7 @@ const authService = require('../services/vpshubAuthService');
 const prService = require('../services/vpshubPrService');
 const issueService = require('../services/vpshubIssueService');
 const deployService = require('../services/vpshubDeployService');
+const tgBot = require('../services/jarvisTelegramService');
 
 // Multer memory storage for file uploads (files go into VCS, not disk)
 // No file size limit, no file count limit — users can drop entire projects
@@ -368,6 +369,7 @@ router.post('/repos/:owner/:repo/pulls', async (req, res) => {
       metadata: { title },
     });
 
+    tgBot.alertPRCreated(repo.name, pr.pr_number, pr.title).catch(() => {});
     res.status(201).json({ pull: { ...pr, author_username: req.admin.username } });
   } catch (err) {
     console.error('[VPSHub] Create PR error:', err.message);
@@ -436,6 +438,7 @@ router.post('/repos/:owner/:repo/pulls/:number/merge', async (req, res) => {
         refType: 'pull_request', refId: pr.id, refNumber: pr.pr_number,
         metadata: { merge_sha: result.merge_sha },
       });
+      tgBot.alertPRMerged(repo.name, pr.pr_number, pr.title).catch(() => {});
     }
 
     res.json(result);
@@ -1135,7 +1138,7 @@ router.get('/downloads/info', (req, res) => {
       downloadUrl: '/downloads/vpc-sync-cli.tar.gz',
     },
     extension: {
-      version: '5.0.0',
+      version: '8.0.0',
       filename: 'vpc-sync.vsix',
       available: fs.existsSync(vsixPath),
       size: fs.existsSync(vsixPath) ? fs.statSync(vsixPath).size : 0,

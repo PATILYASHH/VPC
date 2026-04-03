@@ -1,35 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const crypto = require('crypto');
-
-// Encryption for secret values (Telegram tokens etc.)
-const ENC_ALGO = 'aes-256-gcm';
-const ENC_KEY = crypto.scryptSync(process.env.JWT_SECRET || 'vpc-default-key', 'vpc-settings-salt', 32);
-
-function encrypt(text) {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ENC_ALGO, ENC_KEY, iv);
-  let enc = cipher.update(text, 'utf8', 'hex');
-  enc += cipher.final('hex');
-  const tag = cipher.getAuthTag().toString('hex');
-  return `${iv.toString('hex')}:${tag}:${enc}`;
-}
-
-function decrypt(data) {
-  try {
-    const [ivHex, tagHex, encrypted] = data.split(':');
-    const decipher = crypto.createDecipheriv(ENC_ALGO, ENC_KEY, Buffer.from(ivHex, 'hex'));
-    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
-    let dec = decipher.update(encrypted, 'hex', 'utf8');
-    dec += decipher.final('utf8');
-    return dec;
-  } catch { return null; }
-}
-
-function maskSecret(val) {
-  if (!val || val.length < 16) return val ? '***' : '';
-  return val.slice(0, 8) + '...' + val.slice(-4);
-}
+const { encrypt, decrypt, maskSecret } = require('../utils/encryption');
 
 async function ensureTable(pool) {
   await pool.query(`
@@ -87,7 +58,7 @@ router.delete('/:key', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// AI AGENT — Jarvis
+// AI AGENT — Bot
 // ══════════════════════════════════════════════════════════════════════════
 
 const aiAgent = require('../services/aiAgentService');
@@ -96,13 +67,11 @@ const aiAgent = require('../services/aiAgentService');
 
 router.post('/ai-agent/test', async (req, res) => {
   try {
-    const ok = await aiAgent.checkCLI();
-    if (!ok) return res.json({ success: false, error: 'Claude CLI not found on this server. Install Claude Code to enable AI agent.' });
-    const { execFile } = require('child_process');
-    execFile('claude', ['-p', 'Say "Jarvis online"', '--output-format', 'text'], { timeout: 30000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
-      if (err) return res.json({ success: false, error: err.message });
-      res.json({ success: true, message: 'Jarvis is online', response: stdout.trim().slice(0, 200) });
-    });
+    const aiProvider = require('../services/aiProviderService');
+    const ok = await aiProvider.isAnyAvailable(req.app.get('pool'));
+    if (!ok) return res.json({ success: false, error: 'No AI provider available. Configure at least one provider to enable AI agent.' });
+    const result = await aiProvider.chat('Say "Bot online"', { pool: req.app.get('pool') });
+    res.json({ success: true, message: 'Bot is online', response: (result.text || '').slice(0, 200) });
   } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
@@ -111,9 +80,9 @@ router.post('/ai-agent/test', async (req, res) => {
 router.post('/ai-agent/chat', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
-    const { message, userId } = req.body;
+    const { message, userId, provider, model } = req.body;
     if (!message) return res.status(400).json({ error: 'Message is required' });
-    const result = await aiAgent.chat(message, userId || null, pool);
+    const result = await aiAgent.chat(message, userId || null, pool, { provider, model });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -323,13 +292,177 @@ function getDefaultTelegramNotifications() {
   return { pr_created: true, pr_reviewed: true, pr_merged: true, pr_closed: false, pr_reopened: false, pr_conflict: true, pr_test_passed: false, pr_test_failed: true, smart_merge: true, system_alerts: true };
 }
 
-// Reload Jarvis Telegram bot after config changes
+// Reload Bot Telegram after config changes
 router.post('/ai-agent/telegram/reload', async (req, res) => {
   try {
     const jarvisTg = require('../services/jarvisTelegramService');
     await jarvisTg.reload();
     res.json({ success: true, message: 'Telegram bot reloaded' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Bot Todos/Tasks ─────────────────────────────────────────
+
+router.get('/ai-agent/todos', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const status = req.query.status; // optional filter: pending, in_progress, done, blocked
+    let query = 'SELECT * FROM ai_agent_todos';
+    const params = [];
+    if (status) {
+      query += ' WHERE status = $1';
+      params.push(status);
+    }
+    query += ' ORDER BY CASE priority WHEN \'urgent\' THEN 0 WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 ELSE 3 END, created_at DESC';
+    const { rows } = await pool.query(query, params);
+    res.json({ todos: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/ai-agent/todos', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { title, description, priority, assignedBy, assignedTo, dueDate } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title required' });
+    const { rows } = await pool.query(
+      `INSERT INTO ai_agent_todos (title, description, priority, assigned_by, assigned_to, due_date)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [title, description || null, priority || 'normal', assignedBy || 'User', assignedTo || 'Bot', dueDate ? new Date(dueDate) : null]
+    );
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/ai-agent/todos/:id', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { status, notes, title, priority } = req.body;
+    const sets = ['updated_at = NOW()'];
+    const vals = [];
+    let i = 1;
+    if (status) { sets.push(`status = $${i++}`); vals.push(status); }
+    if (notes !== undefined) { sets.push(`notes = $${i++}`); vals.push(notes); }
+    if (title) { sets.push(`title = $${i++}`); vals.push(title); }
+    if (priority) { sets.push(`priority = $${i++}`); vals.push(priority); }
+    if (status === 'done') sets.push('completed_at = NOW()');
+    vals.push(req.params.id);
+    const { rows } = await pool.query(
+      `UPDATE ai_agent_todos SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals
+    );
+    res.json(rows[0] || { error: 'Not found' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/ai-agent/todos/:id', async (req, res) => {
+  try {
+    await req.app.locals.pool.query('DELETE FROM ai_agent_todos WHERE id = $1', [req.params.id]);
+    res.json({ deleted: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Bot Activity Log (recent conversations with tool usage) ──
+
+router.get('/ai-agent/activity', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query(
+      `SELECT c.*, u.name as user_name
+       FROM ai_agent_conversations c
+       LEFT JOIN ai_agent_users u ON c.user_id = u.id
+       WHERE c.tool_calls IS NOT NULL
+       ORDER BY c.created_at DESC LIMIT 50`
+    );
+    res.json({ activity: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── AI Provider Management ──────────────────────────────────
+
+const aiProvider = require('../services/aiProviderService');
+
+// List all providers with status
+router.get('/ai-providers', async (req, res) => {
+  try {
+    const providers = await aiProvider.getAvailableProviders(req.app.locals.pool);
+    const defaultId = await aiProvider.getDefaultProvider(req.app.locals.pool);
+    res.json({ providers, default: defaultId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Set default provider
+router.put('/ai-providers/default', async (req, res) => {
+  try {
+    const { provider } = req.body;
+    await aiProvider.setDefaultProvider(req.app.locals.pool, provider);
+    res.json({ success: true, default: provider });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Set provider config (API key + model)
+router.put('/ai-providers/:id', async (req, res) => {
+  try {
+    const { apiKey, model } = req.body;
+    await aiProvider.setProviderConfig(req.app.locals.pool, req.params.id, { apiKey, model });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Test provider connection
+router.post('/ai-providers/:id/test', async (req, res) => {
+  try {
+    const result = await aiProvider.testProvider(req.app.locals.pool, req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ollama status
+router.get('/ollama/status', async (req, res) => {
+  try {
+    const status = await aiProvider.getOllamaStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Ollama models
+router.get('/ollama/models', async (req, res) => {
+  try {
+    const status = await aiProvider.getOllamaStatus();
+    res.json({ models: status.models });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pull Ollama model
+router.post('/ollama/pull', async (req, res) => {
+  try {
+    const { model } = req.body;
+    if (!model) return res.status(400).json({ error: 'Model name required' });
+    const result = await aiProvider.pullOllamaModel(model);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete Ollama model
+router.delete('/ollama/models/:name', async (req, res) => {
+  try {
+    const result = await aiProvider.deleteOllamaModel(req.params.name);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Export decrypt for telegramService
