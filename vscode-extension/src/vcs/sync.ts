@@ -441,7 +441,12 @@ export function getSyncStatus(root: string): { ahead: number; behind: number; br
   const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
   const remoteHash = refs.resolveRef(root, `refs/remotes/origin/${branch}`);
 
-  if (!localHash || !remoteHash) { return { ahead: 0, behind: 0, branch }; }
+  if (!localHash) { return { ahead: 0, behind: 0, branch }; }
+  if (!remoteHash) {
+    // No remote tracking ref — count all local commits as ahead
+    const ahead = countCommitsBetween(root, '', localHash);
+    return { ahead: ahead || 1, behind: 0, branch };
+  }
   if (localHash === remoteHash) { return { ahead: 0, behind: 0, branch }; }
 
   const ahead = countCommitsBetween(root, remoteHash, localHash);

@@ -305,10 +305,14 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
       try { await vcsCore.syncCommitsToDb(pool, req.repoInfo.id, req.repoPath, hash); } catch { /* table may not exist */ }
     }
 
-    // Update repo size and timestamp
-    const { updateRepoSize } = require('../services/vpshubGitService');
-    await updateRepoSize(pool, req.repoInfo.id, req.repoInfo.owner_username, req.repoInfo.slug);
-    await pool.query('UPDATE vpshub_repositories SET updated_at = NOW() WHERE id = $1', [req.repoInfo.id]);
+    // Update repo size and timestamp (non-critical — don't fail the push)
+    try {
+      const { updateRepoSize } = require('../services/vpshubGitService');
+      await updateRepoSize(pool, req.repoInfo.id, req.repoInfo.owner_username, req.repoInfo.slug);
+      await pool.query('UPDATE vpshub_repositories SET updated_at = NOW() WHERE id = $1', [req.repoInfo.id]);
+    } catch (err) {
+      console.error('[VPC VCS] post-push metadata update error:', err.message);
+    }
 
     // Auto-deploy hooks
     try {
