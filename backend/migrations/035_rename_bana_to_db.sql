@@ -16,5 +16,8 @@ ALTER INDEX IF EXISTS idx_bana_api_keys_hash RENAME TO idx_db_api_keys_hash;
 -- Update allowed_commands category
 UPDATE allowed_commands SET category = 'db' WHERE category = 'banadb';
 
--- Update permission references in vpc_admins if stored as JSON
--- (permissions column may reference 'banadb' which should become 'db')
+-- Update permission references in vpc_admins (JSON column)
+-- Replace 'banadb' permission key with 'db' so existing admins keep access
+UPDATE vpc_admins
+SET permissions = (permissions::text)::jsonb - 'banadb' || '{"db": true}'::jsonb
+WHERE permissions::text LIKE '%banadb%';
