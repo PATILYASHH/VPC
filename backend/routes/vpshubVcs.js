@@ -223,7 +223,7 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
 
     for (const [refName, update] of Object.entries(refUpdates)) {
       // Validate refName to prevent path traversal
-      if (!/^refs\/[a-zA-Z0-9_\-\/.]+$/.test(refName)) {
+      if (!/^refs\/[a-zA-Z0-9_\-\/.]+$/.test(refName) || refName.includes('..')) {
         return res.status(400).json({ error: `Invalid ref name: ${refName}` });
       }
 
@@ -269,19 +269,23 @@ router.post('/:owner/:repo/push', resolveRepo, authenticateVcs, async (req, res)
             console.log(`[VPC VCS] Push accepted with ${conflictPaths.length} conflict(s). Triggering AI auto-resolve...`);
 
             // Fire-and-forget: resolve conflicts in background
-            const autoResolve = require('../services/autoResolveService');
-            autoResolve.resolveInBackground(pool, {
-              repoId: req.repoInfo.id,
-              repoPath: req.repoPath,
-              owner: req.repoInfo.owner_username,
-              slug: req.repoInfo.slug,
-              branchName,
-              refName,
-              mergeCommitHash: mergeResult.commitHash,
-              conflicts: mergeResult.conflicts,
-              username,
-              authorId: req.vcsUser?.userId || req.repoInfo.owner_id,
-            }).catch(err => console.error('[VPC VCS] Background auto-resolve error:', err.message));
+            try {
+              const autoResolve = require('../services/autoResolveService');
+              autoResolve.resolveInBackground(pool, {
+                repoId: req.repoInfo.id,
+                repoPath: req.repoPath,
+                owner: req.repoInfo.owner_username,
+                slug: req.repoInfo.slug,
+                branchName,
+                refName,
+                mergeCommitHash: mergeResult.commitHash,
+                conflicts: mergeResult.conflicts,
+                username,
+                authorId: req.vcsUser?.userId || req.repoInfo.owner_id,
+              }).catch(err => console.error('[VPC VCS] Background auto-resolve error:', err.message));
+            } catch (err) {
+              console.error('[VPC VCS] Auto-resolve service unavailable:', err.message);
+            }
 
             // Track conflict info for response (but push still succeeds)
             if (!autoMergeNotifications) autoMergeNotifications = [];
