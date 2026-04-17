@@ -103,6 +103,23 @@ router.post('/projects/:id/redeploy', async (req, res) => {
   }
 });
 
+// POST /projects/:id/fix-with-ai — use AI to fix build errors and redeploy
+router.post('/projects/:id/fix-with-ai', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (project.status !== 'error') return res.status(400).json({ error: 'Project is not in error state' });
+
+    const result = await webHostingService.fixWithAI(pool, req.params.id);
+    webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /projects/:id/scan — auto-detect project structure (Bug #10)
 router.post('/projects/:id/scan', async (req, res) => {
   try {

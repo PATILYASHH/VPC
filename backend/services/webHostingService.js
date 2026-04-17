@@ -174,7 +174,9 @@ function runCommand(cmd, cwd, env = {}) {
     const mergedEnv = { ...process.env, ...env, PATH: newPath };
     exec(cmd, { cwd, timeout: 300000, maxBuffer: 10 * 1024 * 1024, env: mergedEnv }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(`${err.message}\n${stderr || ''}`));
+        // Include stdout in error — build tools (Next.js, tsc) often write errors to stdout
+        const output = [stdout, stderr].filter(Boolean).join('\n');
+        reject(new Error(`${err.message}\n${output}`));
       } else {
         resolve((stdout || '') + (stderr || ''));
       }
@@ -989,9 +991,395 @@ async function getProjectByDomain(pool, domain) {
   return rows[0] || null;
 }
 
+// --- Fix with AI ---
+
+/**
+ * Parse the deploy error log to extract the error details and file path.
+ */
+function parseDeployError(deployLog) {
+  if (!deployLog) return null;
+
+  // Strip ANSI escape codes
+  const clean = deployLog.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+
+  // Look for ERROR: marker but also accept logs without it (e.g. raw build output)
+  const errorIdx = clean.lastIndexOf('ERROR:');
+
+  // Use the section from ERROR: onward if found, but also keep the full log
+  // Build errors (file paths, type errors) often appear BEFORE the ERROR: marker
+  const errorSection = errorIdx !== -1 ? clean.slice(errorIdx) : null;
+
+  // Search the FULL log for file path + error patterns (not just after ERROR:)
+  // Pattern: ./path/to/file.tsx:line:col\nType error: ...
+  // or:      path/to/file.tsx(line,col): error ...
+  const fileMatch = clean.match(/\.?\/?([^\s:]+\.(tsx?|jsx?|mjs|mts)):(\d+):(\d+)\s*\n\s*(Type error|Error|SyntaxError):\s*(.+?)(?:\n\n|\n\s*\n|\n\s*(?:>|\d))/s);
+
+  // Also try common compiler error formats: file(line,col): error TS...
+  const tsMatch = !fileMatch ? clean.match(/([^\s(]+\.(tsx?|jsx?|mjs|mts))\((\d+),(\d+)\)\s*:\s*(error)\s+TS\d+:\s*(.+?)(?:\n|$)/m) : null;
+
+  // Also try Vite/esbuild format: file:line:col: error: message
+  const viteMatch = !fileMatch && !tsMatch ? clean.match(/([^\s:]+\.(tsx?|jsx?|mjs|mts|css|scss)):(\d+):(\d+):\s*(error):\s*(.+?)(?:\n|$)/m) : null;
+
+  const match = fileMatch || tsMatch || viteMatch;
+
+  // Build the raw error: prefer ERROR: section, fall back to last 2000 chars of log
+  let rawError;
+  if (errorSection) {
+    rawError = errorSection.slice(0, 2000);
+  } else {
+    // No ERROR: marker — take the tail of the log which likely has the error
+    rawError = clean.slice(-2000);
+  }
+
+  // If neither ERROR: section nor any file match found, still return with raw log tail
+  if (!errorSection && !match) {
+    // Accept any log that looks like it has an error
+    const hasError = /error|fail|Error|FAIL/i.test(clean);
+    if (!hasError) return null;
+  }
+
+  const result = {
+    rawError,
+    filePath: null,
+    line: null,
+    col: null,
+    errorType: null,
+    errorMessage: null,
+  };
+
+  if (match) {
+    result.filePath = match[1];
+    result.line = parseInt(match[3]);
+    result.col = parseInt(match[4]);
+    result.errorType = match[5];
+    result.errorMessage = match[6].trim();
+  }
+
+  return result;
+}
+
+/**
+ * Read the erroring file and surrounding context for AI analysis.
+ */
+function readErrorContext(deployPath, relativeFilePath, errorLine) {
+  const fullPath = path.join(deployPath, relativeFilePath);
+  if (!fs.existsSync(fullPath)) return null;
+
+  const content = fs.readFileSync(fullPath, 'utf8');
+  const lines = content.split('\n');
+
+  // Get a window around the error line
+  const start = Math.max(0, (errorLine || 1) - 15);
+  const end = Math.min(lines.length, (errorLine || lines.length) + 15);
+
+  return {
+    fullContent: content,
+    fullPath,
+    relativePath: relativeFilePath,
+    snippet: lines.slice(start, end).map((l, i) => `${start + i + 1}: ${l}`).join('\n'),
+    totalLines: lines.length,
+    errorLine,
+  };
+}
+
+/**
+ * Find all files with similar errors (e.g. same pattern across multiple chart components).
+ */
+function findSimilarErrorFiles(deployPath, errorMessage, errorFilePath) {
+  if (!errorMessage) return [];
+
+  // Extract the core pattern from the error (e.g. a type name or function pattern)
+  const corePatterns = [];
+
+  // For TypeScript formatter errors, look for the same formatter pattern
+  if (errorMessage.includes('Formatter')) {
+    corePatterns.push(/formatter\s*=\s*\{?\s*\(\s*value\s*:\s*number/);
+  }
+  // For other common patterns
+  if (errorMessage.includes("is not assignable to type")) {
+    const typeMatch = errorMessage.match(/type '([^']+)'/i);
+    if (typeMatch) corePatterns.push(new RegExp(typeMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&').slice(0, 40)));
+  }
+
+  if (corePatterns.length === 0) return [];
+
+  const allFiles = findSourceFiles(deployPath);
+  const similar = [];
+
+  for (const filePath of allFiles) {
+    if (filePath === path.join(deployPath, errorFilePath)) continue;
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      for (const pattern of corePatterns) {
+        if (pattern.test(content)) {
+          const rel = path.relative(deployPath, filePath);
+          similar.push({ relativePath: rel, fullPath: filePath, content });
+          break;
+        }
+      }
+    } catch {}
+  }
+
+  return similar.slice(0, 10); // Cap at 10 files
+}
+
+/**
+ * Use AI to analyze deploy errors, fix the code, and redeploy.
+ */
+async function fixWithAI(pool, projectId) {
+  const aiProvider = require('./aiProviderService');
+
+  const project = await getProject(pool, projectId);
+  if (!project) throw new Error('Project not found');
+  if (!project.last_deploy_log) throw new Error('No deploy log available. Deploy the project first.');
+
+  const deployPath = project.deploy_path;
+  if (!deployPath || !fs.existsSync(deployPath)) {
+    throw new Error('Deploy path not found. Deploy the project first.');
+  }
+
+  // Parse the error from deploy log
+  const parsed = parseDeployError(project.last_deploy_log);
+  if (!parsed) throw new Error('Could not parse any errors from the deploy log. The log may not contain a build error.');
+
+  let fixLog = '--- AI Fix ---\n';
+
+  // Read the erroring file
+  let errorContext = null;
+  if (parsed.filePath) {
+    errorContext = readErrorContext(deployPath, parsed.filePath, parsed.line);
+  }
+
+  // Find similar files that might have the same issue
+  const similarFiles = parsed.filePath ? findSimilarErrorFiles(deployPath, parsed.errorMessage, parsed.filePath) : [];
+
+  // Build AI prompt
+  const systemPrompt = `You are a code fixer for web projects. You receive build errors and must return exact fixes.
+
+RULES:
+- Return ONLY a JSON array of fixes. No explanation, no markdown fences, no extra text.
+- Each fix: { "file": "relative/path.tsx", "old": "exact string to find", "new": "replacement string" }
+- The "old" field must be an EXACT substring of the current file content (including whitespace/indentation).
+- Fix ALL files that have the same pattern, not just the one that errored.
+- Keep fixes minimal — only change what's needed to resolve the error.
+- For TypeScript type errors in callback props, prefer removing explicit type annotations and letting TypeScript infer types, or use permissive types.
+- Never add @ts-ignore or any type suppression comments.`;
+
+  let userPrompt = `A web project deployment failed with this build error:\n\n${parsed.rawError}\n\n`;
+
+  if (errorContext) {
+    userPrompt += `The erroring file (${errorContext.relativePath}):\n\`\`\`\n${errorContext.fullContent}\n\`\`\`\n\n`;
+  }
+
+  if (similarFiles.length > 0) {
+    userPrompt += `These files have similar patterns and likely need the same fix:\n`;
+    for (const sf of similarFiles) {
+      userPrompt += `\n--- ${sf.relativePath} ---\n\`\`\`\n${sf.content}\n\`\`\`\n`;
+    }
+    userPrompt += '\n';
+  }
+
+  userPrompt += `Return a JSON array of fixes for ALL affected files. Each fix: { "file": "relative/path", "old": "exact old string", "new": "new string" }`;
+
+  fixLog += `> Analyzing error in ${parsed.filePath || 'unknown file'}...\n`;
+  if (similarFiles.length > 0) {
+    fixLog += `> Found ${similarFiles.length} file(s) with similar patterns\n`;
+  }
+
+  // Call AI
+  fixLog += '> Calling AI for fix suggestions...\n';
+  let aiResult;
+  try {
+    aiResult = await aiProvider.chat(userPrompt, {
+      pool,
+      system: systemPrompt,
+      maxTokens: 8192,
+      timeout: 120000,
+    });
+  } catch (err) {
+    throw new Error(`AI provider error: ${err.message}. Make sure an AI provider is configured in Settings > AI Providers.`);
+  }
+
+  // Parse AI response
+  let fixes;
+  try {
+    // Extract JSON from response (handle markdown fences if AI adds them)
+    let jsonStr = aiResult.text.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+    fixes = JSON.parse(jsonStr);
+    if (!Array.isArray(fixes)) throw new Error('Response is not an array');
+  } catch (err) {
+    throw new Error(`Failed to parse AI response: ${err.message}\nRaw response: ${aiResult.text.slice(0, 500)}`);
+  }
+
+  if (fixes.length === 0) {
+    throw new Error('AI could not determine a fix for this error.');
+  }
+
+  // Apply fixes
+  let appliedCount = 0;
+  const failedFixes = [];
+
+  for (const fix of fixes) {
+    if (!fix.file || !fix.old || typeof fix.new !== 'string') {
+      failedFixes.push({ file: fix.file || 'unknown', reason: 'Invalid fix format' });
+      continue;
+    }
+
+    const fullPath = path.join(deployPath, fix.file);
+
+    // Security: prevent path traversal
+    const realDeployPath = fs.realpathSync(deployPath);
+    let realFixPath;
+    try {
+      // For new files the path won't resolve, check parent
+      realFixPath = fs.existsSync(fullPath) ? fs.realpathSync(fullPath) : fs.realpathSync(path.dirname(fullPath));
+    } catch {
+      failedFixes.push({ file: fix.file, reason: 'Path not found' });
+      continue;
+    }
+    if (!realFixPath.startsWith(realDeployPath)) {
+      failedFixes.push({ file: fix.file, reason: 'Path traversal blocked' });
+      continue;
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      failedFixes.push({ file: fix.file, reason: 'File not found' });
+      continue;
+    }
+
+    let content = fs.readFileSync(fullPath, 'utf8');
+    if (!content.includes(fix.old)) {
+      failedFixes.push({ file: fix.file, reason: 'Old string not found in file' });
+      continue;
+    }
+
+    content = content.replace(fix.old, fix.new);
+    fs.writeFileSync(fullPath, content, 'utf8');
+    appliedCount++;
+    fixLog += `> Fixed: ${fix.file}\n`;
+  }
+
+  if (failedFixes.length > 0) {
+    for (const f of failedFixes) {
+      fixLog += `> Warning: Could not fix ${f.file} — ${f.reason}\n`;
+    }
+  }
+
+  if (appliedCount === 0) {
+    throw new Error(`AI suggested ${fixes.length} fix(es) but none could be applied:\n${failedFixes.map(f => `  ${f.file}: ${f.reason}`).join('\n')}`);
+  }
+
+  fixLog += `> Applied ${appliedCount} fix(es). Redeploying...\n`;
+
+  // Update log so user can see progress
+  await pool.query(
+    `UPDATE web_hosting_projects SET last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
+    [project.last_deploy_log + '\n' + fixLog, project.id]
+  );
+
+  // Redeploy — skip git pull since we just patched the local files
+  // Run install + build + start (same steps as deploy minus git clone/pull)
+  let buildLog = '';
+  try {
+    // Write .env file so build can access env vars
+    const envVars = project.env_vars || {};
+    writeEnvFile(deployPath, envVars);
+
+    // Re-run install command (dependencies may need refresh after patching)
+    if (project.install_command) {
+      buildLog += `> ${project.install_command}\n`;
+      const installOut = await runCommand(project.install_command, deployPath, { NODE_ENV: 'development' });
+      buildLog += installOut + '\n';
+      chmodBinDirs(deployPath);
+    }
+
+    // Remove stale Next.js lock files before building
+    if (project.build_command) {
+      const nextLock = path.join(deployPath, '.next', 'lock');
+      const frontendDir = project.build_command.match(/^cd\s+(\S+)\s*&&/);
+      if (frontendDir) {
+        const fLock = path.join(deployPath, frontendDir[1], '.next', 'lock');
+        if (fs.existsSync(fLock)) fs.unlinkSync(fLock);
+      }
+      if (fs.existsSync(nextLock)) fs.unlinkSync(nextLock);
+
+      buildLog += `> ${project.build_command}\n`;
+      const buildOut = await runCommand(project.build_command, deployPath);
+      buildLog += buildOut + '\n';
+    }
+
+    // Start Node backend if needed
+    if (project.project_type === 'node' || project.project_type === 'fullstack') {
+      let port = project.node_port;
+      if (!port) {
+        port = await getNextPort(pool);
+      }
+      const pm2Name = project.pm2_name || `wh-${project.slug}`;
+
+      // Stop existing process
+      try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
+
+      const detected = detectProjectStructure(deployPath, project.slug);
+      const isNextJs = detected.framework === 'next' || project.node_entry_point === '__nextjs__';
+      const pm2Env = { ...(project.env_vars || {}), PORT: String(port) };
+
+      let ecosystemPath;
+      if (isNextJs) {
+        const nextDir = detected.frontendDir ? path.join(deployPath, detected.frontendDir) : deployPath;
+        const nextBin = path.join(nextDir, 'node_modules', '.bin', 'next');
+        if (!fs.existsSync(nextBin)) {
+          throw new Error(`Next.js binary not found at ${nextBin}`);
+        }
+        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, null, pm2Env, nextDir, {
+          script: nextBin,
+          args: `start -p ${port}`,
+        });
+        buildLog += `> Starting Next.js on port ${port}\n`;
+      } else {
+        const entryPoint = project.node_entry_point || 'index.js';
+        const entryPath = path.join(deployPath, entryPoint);
+        if (!fs.existsSync(entryPath)) {
+          throw new Error(`Entry point "${entryPoint}" not found`);
+        }
+        const entryDir = path.dirname(entryPath);
+        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
+        buildLog += `> Starting Node.js on port ${port}\n`;
+      }
+
+      const startOut = await runCommand(`pm2 start "${ecosystemPath}"`, deployPath);
+      buildLog += startOut + '\n';
+      await runCommand('pm2 save', '/');
+
+      await pool.query(
+        `UPDATE web_hosting_projects SET node_port = $1, pm2_name = $2, status = 'running', last_deploy_at = NOW(), last_deploy_log = $3, updated_at = NOW() WHERE id = $4`,
+        [port, pm2Name, project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE web_hosting_projects SET status = 'running', last_deploy_at = NOW(), last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
+        [project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
+      );
+    }
+
+    await refreshSlugCache(pool);
+    await refreshDomainCache(pool);
+
+    return { success: true, fixesApplied: appliedCount, log: fixLog + buildLog };
+  } catch (err) {
+    buildLog += `\nERROR: ${err.message}\n`;
+    await pool.query(
+      `UPDATE web_hosting_projects SET status = 'error', last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
+      [project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
+    );
+    throw new Error(fixLog + buildLog);
+  }
+}
+
 module.exports = {
   createProject, getProject, getProjectBySlug, listProjects, updateProject, deleteProject,
-  deploy, redeploy, startBackend, stopBackend, restartBackend, getLogs, getStatus, getNextPort,
+  deploy, redeploy, fixWithAI, startBackend, stopBackend, restartBackend, getLogs, getStatus, getNextPort,
   refreshSlugCache, getSlugCache, refreshDomainCache, getDomainCache, getProjectByDomain,
   generateDomainVerifyToken, verifyDomain, removeDomain,
   detectProjectStructure, buildCloneUrl,
