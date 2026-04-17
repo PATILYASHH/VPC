@@ -1150,6 +1150,17 @@ async function fixWithAI(pool, projectId) {
     errorContext = readErrorContext(deployPath, parsed.filePath, parsed.line);
   }
 
+  // Fallback: if no specific file parsed, try to extract ANY file path from the raw error
+  if (!errorContext && parsed.rawError) {
+    const anyFileMatch = parsed.rawError.match(/\.?\/?([^\s:'"]+\.(tsx?|jsx?|mjs|mts|css|json|vue|svelte))[\s:(\n]/);
+    if (anyFileMatch) {
+      const fallbackPath = anyFileMatch[1];
+      parsed.filePath = fallbackPath;
+      errorContext = readErrorContext(deployPath, fallbackPath, null);
+      if (errorContext) fixLog += `> Found file reference in error: ${fallbackPath}\n`;
+    }
+  }
+
   // Find similar files that might have the same issue
   const similarFiles = parsed.filePath ? findSimilarErrorFiles(deployPath, parsed.errorMessage, parsed.filePath) : [];
 

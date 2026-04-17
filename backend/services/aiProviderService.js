@@ -193,16 +193,30 @@ function buildTextPrompt(system, messages) {
 async function callClaudeCli(system, messages, options = {}) {
   const prompt = buildTextPrompt(system, messages);
   return new Promise((resolve, reject) => {
-    const args = ['-p', prompt, '--output-format', 'text'];
+    // Use stdin for the prompt to avoid OS argument length limits (ARG_MAX)
+    // Large prompts with full file contents can easily exceed 2MB arg limit
+    const args = ['-p', '-', '--output-format', 'text'];
     if (options.model) args.push('--model', options.model);
-    execFile('claude', args, {
+    const { spawn } = require('child_process');
+    const proc = spawn('claude', args, {
       timeout: options.timeout || 180000,
-      maxBuffer: 10 * 1024 * 1024,
       env: { ...process.env },
-    }, (err, stdout, stderr) => {
-      if (err) return reject(new Error(err.message + (stderr || '')));
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', d => { stdout += d; });
+    proc.stderr.on('data', d => { stderr += d; });
+    proc.on('error', err => reject(new Error(`Claude CLI error: ${err.message}`)));
+    proc.on('close', code => {
+      if (code !== 0) {
+        return reject(new Error(`Claude CLI exited with code ${code}: ${stderr || stdout}`));
+      }
       resolve({ text: stdout.trim(), model: options.model || 'claude-cli', provider: 'claude-cli' });
     });
+    // Write prompt to stdin and close it
+    proc.stdin.write(prompt);
+    proc.stdin.end();
   });
 }
 
