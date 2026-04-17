@@ -15,40 +15,88 @@ import api from '@/lib/api';
 
 const CATEGORIES = ['general', 'preference', 'project', 'technical'];
 
+const NAV_ITEMS = [
+  { id: 'providers', label: 'Providers', icon: Cpu, desc: 'AI models & keys' },
+  { id: 'personality', label: 'System Prompt', icon: Brain, desc: 'Bot personality' },
+  { id: 'todos', label: 'Todos', icon: ListTodo, desc: 'Task management' },
+  { id: 'memory', label: 'Memory', icon: BookOpen, desc: 'Knowledge base' },
+  { id: 'activity', label: 'Activity', icon: Activity, desc: 'Usage logs' },
+  { id: 'telegram', label: 'Telegram', icon: MessageCircle, desc: 'Bot integration' },
+  { id: 'users', label: 'Users', icon: User, desc: 'Bot users' },
+];
+
 export default function AgentSettings() {
   const [tab, setTab] = useState('providers');
 
+  const activeNav = NAV_ITEMS.find(n => n.id === tab);
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/20">
-          <Brain className="h-5 w-5 text-white" />
+    <div className="h-full flex flex-col sm:flex-row" style={{ background: 'var(--surface-0)' }}>
+      {/* Sidebar nav */}
+      <div className="sm:w-48 border-b sm:border-b-0 sm:border-r shrink-0 flex sm:flex-col" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
+        {/* Logo header - desktop only */}
+        <div className="hidden sm:flex items-center gap-2.5 px-4 py-3.5 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm">
+            <Brain className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <p className="text-xs font-bold leading-none">AI Agent</p>
+            <p className="text-[9px] text-muted-foreground/60 mt-0.5">Brain & Config</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-lg font-bold">AI Agent</h2>
-          <p className="text-xs text-muted-foreground">Bot brain — providers, memory, tasks, telegram & config</p>
+
+        {/* Nav items */}
+        <div className="flex sm:flex-col gap-0.5 p-1.5 sm:p-2 overflow-x-auto sm:overflow-x-visible">
+          {NAV_ITEMS.map(item => {
+            const Icon = item.icon;
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setTab(item.id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors whitespace-nowrap sm:w-full ${
+                  active
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--surface-hover)]'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Features info - desktop only */}
+        <div className="hidden sm:block mt-auto p-3 border-t" style={{ borderColor: 'var(--surface-border)' }}>
+          <p className="text-[9px] uppercase tracking-wider text-muted-foreground/40 font-semibold mb-2">Capabilities</p>
+          <div className="space-y-1.5 text-[10px] text-muted-foreground/50">
+            <p className="flex items-center gap-1.5"><Zap className="w-3 h-3 text-amber-400/60" /> Code reviews</p>
+            <p className="flex items-center gap-1.5"><MessageSquare className="w-3 h-3 text-blue-400/60" /> Telegram bot</p>
+            <p className="flex items-center gap-1.5"><Terminal className="w-3 h-3 text-emerald-400/60" /> Terminal AI</p>
+            <p className="flex items-center gap-1.5"><BookOpen className="w-3 h-3 text-violet-400/60" /> Long-term memory</p>
+          </div>
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex w-full overflow-x-auto gap-0.5">
-          <TabsTrigger value="providers" className="text-[11px] px-2.5"><Cpu className="w-3 h-3 mr-1" />Providers</TabsTrigger>
-          <TabsTrigger value="personality" className="text-[11px] px-2.5"><Brain className="w-3 h-3 mr-1" />System Prompt</TabsTrigger>
-          <TabsTrigger value="todos" className="text-[11px] px-2.5"><ListTodo className="w-3 h-3 mr-1" />Todos</TabsTrigger>
-          <TabsTrigger value="memory" className="text-[11px] px-2.5"><BookOpen className="w-3 h-3 mr-1" />Memory</TabsTrigger>
-          <TabsTrigger value="activity" className="text-[11px] px-2.5"><Activity className="w-3 h-3 mr-1" />Activity</TabsTrigger>
-          <TabsTrigger value="telegram" className="text-[11px] px-2.5"><MessageCircle className="w-3 h-3 mr-1" />Telegram</TabsTrigger>
-          <TabsTrigger value="users" className="text-[11px] px-2.5"><User className="w-3 h-3 mr-1" />Users</TabsTrigger>
-        </TabsList>
+      {/* Content area */}
+      <div className="flex-1 overflow-auto">
+        {/* Page header */}
+        <div className="px-5 sm:px-6 py-4 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+          <h2 className="text-base font-bold">{activeNav?.label}</h2>
+          <p className="text-xs text-muted-foreground/60 mt-0.5">{activeNav?.desc}</p>
+        </div>
 
-        <TabsContent value="providers"><ProvidersTab /></TabsContent>
-        <TabsContent value="personality"><PersonalityTab /></TabsContent>
-        <TabsContent value="todos"><TodosTab /></TabsContent>
-        <TabsContent value="memory"><MemoryTab /></TabsContent>
-        <TabsContent value="activity"><ActivityTab /></TabsContent>
-        <TabsContent value="telegram"><TelegramTab /></TabsContent>
-        <TabsContent value="users"><UsersTab /></TabsContent>
-      </Tabs>
+        <div className="px-5 sm:px-6 py-5">
+          {tab === 'providers' && <ProvidersTab />}
+          {tab === 'personality' && <PersonalityTab />}
+          {tab === 'todos' && <TodosTab />}
+          {tab === 'memory' && <MemoryTab />}
+          {tab === 'activity' && <ActivityTab />}
+          {tab === 'telegram' && <TelegramTab />}
+          {tab === 'users' && <UsersTab />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -220,7 +268,7 @@ function ChatTab() {
                 onChange={e => setSelectedModel(e.target.value)}
                 className="h-7 rounded-md border border-border bg-background px-2 text-[11px] text-muted-foreground"
               >
-                {p.models.map(m => <option key={m} value={m}>{m}</option>)}
+                {p.models.map(m => <option key={m} value={m}>{MODEL_INFO[m]?.label || m}</option>)}
               </select>
             );
           })()}
@@ -257,6 +305,39 @@ const COST_COLORS = {
   'medium-high': 'text-orange-400 bg-orange-500/10 border-orange-500/20',
 };
 
+const PROVIDER_GRADIENTS = {
+  'claude-cli': 'from-[#d97706] to-[#b45309]',
+  anthropic: 'from-[#d97706] to-[#92400e]',
+  openai: 'from-[#10a37f] to-[#0d8a6a]',
+  gemini: 'from-[#4285f4] to-[#1a73e8]',
+  ollama: 'from-[#52525b] to-[#3f3f46]',
+  groq: 'from-[#f55036] to-[#d63a23]',
+  mistral: 'from-[#ff7000] to-[#e65c00]',
+};
+
+const MODEL_INFO = {
+  'claude-sonnet-4-20250514': { label: 'Claude Sonnet 4', desc: 'Best balance of speed and intelligence. Great for most tasks.' },
+  'claude-haiku-4-5-20251001': { label: 'Claude Haiku 4.5', desc: 'Fastest Claude model. Best for quick responses and simple tasks.' },
+  'claude-opus-4-20250514': { label: 'Claude Opus 4', desc: 'Most powerful Claude. Best for complex reasoning and coding.' },
+  'gpt-4o': { label: 'GPT-4o', desc: 'Flagship OpenAI model. Fast, multimodal, great for coding.' },
+  'gpt-4o-mini': { label: 'GPT-4o Mini', desc: 'Affordable and fast. Good for simple tasks.' },
+  'gpt-4.1': { label: 'GPT-4.1', desc: 'Latest GPT model. Improved coding and instruction following.' },
+  'gpt-4.1-mini': { label: 'GPT-4.1 Mini', desc: 'Compact version of GPT-4.1. Cost-effective.' },
+  'gpt-4.1-nano': { label: 'GPT-4.1 Nano', desc: 'Smallest GPT-4.1 variant. Ultra-fast, lowest cost.' },
+  'o3-mini': { label: 'o3 Mini', desc: 'Reasoning model. Best for math and logic problems.' },
+  'gemini-2.5-flash': { label: 'Gemini 2.5 Flash', desc: 'Fast and capable. Good for general tasks at low cost.' },
+  'gemini-2.5-pro': { label: 'Gemini 2.5 Pro', desc: 'Most capable Gemini. Great for complex analysis.' },
+  'gemini-2.0-flash': { label: 'Gemini 2.0 Flash', desc: 'Previous gen flash model. Very fast responses.' },
+  'llama-3.3-70b-versatile': { label: 'Llama 3.3 70B', desc: 'Meta\'s best open model on Groq. Very capable.' },
+  'llama-3.1-8b-instant': { label: 'Llama 3.1 8B', desc: 'Small and ultra-fast. Good for quick queries.' },
+  'mixtral-8x7b-32768': { label: 'Mixtral 8x7B', desc: 'Mixture of experts model. 32K context window.' },
+  'gemma2-9b-it': { label: 'Gemma 2 9B', desc: 'Google\'s open model. Efficient and capable.' },
+  'mistral-large-latest': { label: 'Mistral Large', desc: 'Most capable Mistral. Strong at reasoning.' },
+  'mistral-medium-latest': { label: 'Mistral Medium', desc: 'Balanced performance and cost.' },
+  'mistral-small-latest': { label: 'Mistral Small', desc: 'Fast and affordable for simple tasks.' },
+  'codestral-latest': { label: 'Codestral', desc: 'Specialized for code generation and analysis.' },
+};
+
 function ProvidersTab() {
   const [providers, setProviders] = useState([]);
   const [defaultId, setDefaultId] = useState('');
@@ -265,6 +346,10 @@ function ProvidersTab() {
   const [showKeys, setShowKeys] = useState({});
   const [testing, setTesting] = useState({});
   const [testResults, setTestResults] = useState({});
+  const [cliStatus, setCliStatus] = useState(null);
+  const [cliChecking, setCliChecking] = useState(false);
+  const [expanded, setExpanded] = useState({});
+  const [savingKey, setSavingKey] = useState({});
 
   function load() {
     setLoading(true);
@@ -274,17 +359,27 @@ function ProvidersTab() {
     }).catch(() => {}).finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  function checkCli() {
+    setCliChecking(true);
+    api.get('/admin/settings/ai-providers/claude-cli/status')
+      .then(({ data }) => setCliStatus(data))
+      .catch(() => setCliStatus({ installed: false }))
+      .finally(() => setCliChecking(false));
+  }
+
+  useEffect(() => { load(); checkCli(); }, []);
 
   async function handleSetKey(id) {
     const key = keyInputs[id]?.trim();
     if (!key) return;
+    setSavingKey(prev => ({ ...prev, [id]: true }));
     try {
       await api.put(`/admin/settings/ai-providers/${id}`, { apiKey: key });
       setKeyInputs(prev => ({ ...prev, [id]: '' }));
       toast.success(`${id} API key saved`);
       load();
     } catch (err) { toast.error(err.response?.data?.error || 'Failed to save key'); }
+    finally { setSavingKey(prev => ({ ...prev, [id]: false })); }
   }
 
   async function handleSetModel(id, model) {
@@ -318,103 +413,375 @@ function ProvidersTab() {
 
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
 
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Configure AI providers for Bot, code reviews, and terminal AI commands. Set API keys and choose your default.
-      </p>
+  const cliProvider = providers.find(p => p.id === 'claude-cli');
+  const ollamaProvider = providers.find(p => p.id === 'ollama');
+  const apiProviders = providers.filter(p => p.id !== 'claude-cli' && p.id !== 'ollama');
 
-      {providers.map(p => (
-        <div key={p.id} className={`rounded-xl border ${p.id === defaultId ? 'border-primary/40 bg-primary/5' : 'border-border bg-card'} p-3 space-y-2`}>
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${p.available ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
-              <span className="text-sm font-medium">{p.name}</span>
-              {p.id === defaultId && <Badge variant="default" className="text-[10px]">default</Badge>}
-              <Badge variant="outline" className={`text-[10px] border ${COST_COLORS[p.costTier] || 'text-muted-foreground'}`}>
-                {p.costTier}
-              </Badge>
+  return (
+    <div className="space-y-6 max-w-4xl">
+
+      {/* ═══════ AI Agent Features Banner ═══════ */}
+      <div className="rounded-xl p-4" style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(59,130,246,0.05) 100%)', border: '1px solid rgba(139,92,246,0.12)' }}>
+        <h3 className="text-sm font-semibold mb-3">What can AI Agent do?</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            { icon: MessageSquare, label: 'Chat Bot', desc: 'Telegram & web chat', color: 'text-blue-400' },
+            { icon: Zap, label: 'Code Reviews', desc: 'PR analysis & feedback', color: 'text-amber-400' },
+            { icon: Terminal, label: 'Terminal AI', desc: 'SQL gen, log analysis', color: 'text-emerald-400' },
+            { icon: BookOpen, label: 'Memory', desc: 'Learns your context', color: 'text-violet-400' },
+          ].map(f => (
+            <div key={f.label} className="rounded-lg p-2.5" style={{ background: 'var(--surface-0)' }}>
+              <f.icon className={`w-4 h-4 ${f.color} mb-1.5`} />
+              <p className="text-[11px] font-medium">{f.label}</p>
+              <p className="text-[10px] text-muted-foreground/50">{f.desc}</p>
             </div>
-            <div className="flex gap-1">
-              {p.id !== defaultId && (
-                <Button variant="ghost" size="sm" onClick={() => handleSetDefault(p.id)} className="h-7 text-[10px] px-2">
-                  <CircleDot className="w-3 h-3 mr-1" />Set Default
-                </Button>
-              )}
-              <Button
-                variant="outline" size="sm"
-                onClick={() => handleTest(p.id)}
-                disabled={testing[p.id] || !p.available}
-                className="h-7 text-[10px] px-2"
-              >
-                {testing[p.id] ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
-                Test
-              </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══════ Claude CLI — Hero Card ═══════ */}
+      {cliProvider && (() => {
+        const p = cliProvider;
+        const isDefault = p.id === defaultId;
+        const isAuth = cliStatus?.authenticated;
+        const isInstalled = cliStatus?.installed;
+        return (
+          <div className={`rounded-2xl overflow-hidden ${isDefault ? 'ring-1 ring-primary/50' : ''}`}>
+            {/* Top gradient banner */}
+            <div className="relative px-5 py-4" style={{ background: 'linear-gradient(135deg, rgba(217,119,6,0.15) 0%, rgba(180,83,9,0.05) 100%)' }}>
+              <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0)', backgroundSize: '20px 20px' }} />
+              <div className="relative flex items-start gap-4">
+                {/* Icon */}
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#d97706] to-[#92400e] flex items-center justify-center shadow-lg shadow-amber-900/30 shrink-0">
+                  <span className="text-white text-xl font-bold">C</span>
+                </div>
+                {/* Info */}
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-bold">Claude Code</h3>
+                    {isDefault && <Badge variant="default" className="text-[9px]">default</Badge>}
+                    <Badge className="text-[9px] bg-amber-500/15 text-amber-400 border-amber-500/25">subscription</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Uses your Claude Pro, Max, or Team subscription directly — no API key or per-token costs.
+                  </p>
+                </div>
+                {/* Actions */}
+                <div className="flex items-center gap-1.5 shrink-0 pt-1">
+                  {!isDefault && (
+                    <Button variant="secondary" size="sm" onClick={() => handleSetDefault(p.id)} className="h-8 text-xs">
+                      Set Default
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={() => handleTest(p.id)} disabled={testing[p.id] || !p.available} className="h-8 text-xs bg-amber-600 hover:bg-amber-500 text-white">
+                    {testing[p.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                    Test
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="border border-t-0 rounded-b-2xl" style={{ borderColor: 'var(--surface-border)' }}>
+              {/* Status row */}
+              <div className="px-5 py-3 flex items-center gap-2.5 flex-wrap border-b" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+                {cliChecking ? (
+                  <span className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking...</span>
+                ) : cliStatus ? (
+                  <>
+                    <StatusPill ok={isInstalled} label={isInstalled ? 'Installed' : 'Not Installed'} />
+                    {isInstalled && <StatusPill ok={isAuth} label={isAuth ? 'Authenticated' : 'Not Logged In'} warn={!isAuth} />}
+                    {cliStatus.version && <span className="text-[10px] text-muted-foreground/60 font-mono">{cliStatus.version}</span>}
+                    <button onClick={checkCli} className="ml-auto p-1 rounded hover:bg-white/[0.06] text-muted-foreground hover:text-foreground transition-colors" title="Refresh status">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Status unavailable</span>
+                )}
+              </div>
+
+              <div className="px-5 py-3.5 space-y-3" style={{ background: 'var(--surface-0)' }}>
+                {/* Login CTA */}
+                {cliStatus && isInstalled && !isAuth && (
+                  <div className="rounded-xl p-4 space-y-3" style={{ background: 'rgba(217,119,6,0.06)', border: '1px solid rgba(217,119,6,0.15)' }}>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-semibold text-amber-400">Login Required</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Run the following command on the server to authenticate with your Claude subscription:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-sm font-mono px-4 py-2.5 rounded-lg text-amber-300 select-all" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                        claude login
+                      </code>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/60">
+                      Supports Claude Pro, Max, and Team plans. After login, click the refresh button above.
+                    </p>
+                  </div>
+                )}
+
+                {cliStatus && !isInstalled && (
+                  <div className="rounded-xl p-4 space-y-3 bg-red-500/5 border border-red-500/15">
+                    <div className="flex items-center gap-2">
+                      <XCircle className="w-4 h-4 text-red-400" />
+                      <span className="text-xs font-semibold text-red-400">Claude CLI Not Found</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">Install it on the server:</p>
+                    <code className="block text-sm font-mono px-4 py-2.5 rounded-lg text-red-300 select-all" style={{ background: 'rgba(0,0,0,0.3)' }}>
+                      npm install -g @anthropic-ai/claude-code
+                    </code>
+                  </div>
+                )}
+
+                {/* Model */}
+                {p.models.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-muted-foreground shrink-0">Model</label>
+                      <select
+                        value={p.currentModel || ''}
+                        onChange={e => handleSetModel(p.id, e.target.value)}
+                        className="h-8 rounded-lg border px-3 text-xs flex-1" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}
+                      >
+                        {p.models.map(m => <option key={m} value={m}>{MODEL_INFO[m]?.label || m}</option>)}
+                      </select>
+                    </div>
+                    {MODEL_INFO[p.currentModel] && (
+                      <p className="text-[10px] text-muted-foreground/50 pl-12">{MODEL_INFO[p.currentModel].desc}</p>
+                    )}
+                  </div>
+                )}
+
+                {testResults[p.id] && <TestResultBanner result={testResults[p.id]} />}
+              </div>
             </div>
           </div>
+        );
+      })()}
 
-          <p className="text-[11px] text-muted-foreground">{p.description}</p>
-
-          {/* API Key input (for providers that need keys) */}
-          {p.requiresKey && (
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  type={showKeys[p.id] ? 'text' : 'password'}
-                  value={keyInputs[p.id] || ''}
-                  onChange={e => setKeyInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
-                  placeholder={p.available ? 'Key saved (enter new to replace)' : 'Enter API key...'}
-                  className="h-8 text-xs font-mono pr-8"
-                />
-                <button
-                  onClick={() => setShowKeys(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showKeys[p.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <Button size="sm" onClick={() => handleSetKey(p.id)} disabled={!keyInputs[p.id]?.trim()} className="h-8 text-xs">
-                <Key className="w-3 h-3 mr-1" />Save
-              </Button>
-            </div>
-          )}
-
-          {/* Model selector */}
-          {p.models.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-muted-foreground w-12">Model:</span>
-              <select
-                value={p.currentModel || ''}
-                onChange={e => handleSetModel(p.id, e.target.value)}
-                className="h-7 rounded-md border border-border bg-background px-2 text-[11px] flex-1"
-              >
-                {p.models.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-          )}
-
-          {/* Test result */}
-          {testResults[p.id] && (
-            <div className={`flex items-start gap-2 p-2 rounded-lg text-[11px] ${testResults[p.id].ok ? 'bg-emerald-500/5 border border-emerald-500/20' : 'bg-red-500/5 border border-red-500/20'}`}>
-              {testResults[p.id].ok
-                ? <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" /><div><span className="text-emerald-400">{testResults[p.id].latency}ms</span><span className="text-muted-foreground ml-2">{testResults[p.id].response}</span></div></>
-                : <><XCircle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" /><span className="text-red-400">{testResults[p.id].error}</span></>
-              }
-            </div>
-          )}
+      {/* ═══════ API Providers ═══════ */}
+      <div>
+        <div className="flex items-center gap-2 mb-3 px-1">
+          <Key className="w-3.5 h-3.5 text-muted-foreground/50" />
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-semibold">API Providers</span>
+          <div className="flex-1 h-px" style={{ background: 'var(--surface-border)' }} />
         </div>
-      ))}
 
-      {/* Terminal commands info */}
-      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground space-y-1">
-        <p className="font-medium text-blue-400">Terminal AI Commands</p>
-        <p><code className="text-[10px] bg-black/20 px-1 rounded">vpc ai ask &lt;question&gt;</code> — Quick AI query</p>
-        <p><code className="text-[10px] bg-black/20 px-1 rounded">vpc ai sql &lt;description&gt;</code> — Natural language to SQL</p>
-        <p><code className="text-[10px] bg-black/20 px-1 rounded">vpc ai providers</code> — List all providers</p>
-        <p><code className="text-[10px] bg-black/20 px-1 rounded">vpc ai use &lt;provider&gt;</code> — Switch default provider</p>
-        <p><code className="text-[10px] bg-black/20 px-1 rounded">vpc ai summarize logs</code> — AI log summary</p>
+        <div className="grid grid-cols-1 gap-2">
+          {apiProviders.map(p => {
+            const isDefault = p.id === defaultId;
+            const isOpen = expanded[p.id];
+            const grad = PROVIDER_GRADIENTS[p.id] || 'from-zinc-500 to-zinc-600';
+
+            return (
+              <div key={p.id} className={`rounded-xl border overflow-hidden transition-all ${
+                isDefault ? 'border-primary/30' : ''
+              }`} style={{ borderColor: isDefault ? undefined : 'var(--surface-border)', background: 'var(--surface-0)' }}>
+                {/* Header */}
+                <button
+                  onClick={() => setExpanded(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${grad} flex items-center justify-center text-white text-sm font-bold shrink-0 shadow-sm`}>
+                    {p.name.charAt(0)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">{p.name}</span>
+                      {isDefault && <Badge variant="default" className="text-[9px]">default</Badge>}
+                      <Badge variant="outline" className={`text-[9px] border ${COST_COLORS[p.costTier] || ''}`}>
+                        {p.costTier}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/70 mt-0.5 truncate">{p.description}</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className={`w-2 h-2 rounded-full ${p.available ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-zinc-600'}`} />
+                    <ChevronDown className={`w-4 h-4 text-muted-foreground/40 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                  </div>
+                </button>
+
+                {/* Expanded panel */}
+                {isOpen && (
+                  <div className="px-4 pb-4 pt-1 space-y-3 border-t" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+                    {/* Actions row */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {!isDefault && (
+                        <Button variant="outline" size="sm" onClick={() => handleSetDefault(p.id)} className="h-7 text-[11px]">
+                          <CircleDot className="w-3 h-3 mr-1.5" />Set Default
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" onClick={() => handleTest(p.id)} disabled={testing[p.id] || !p.available} className="h-7 text-[11px]">
+                        {testing[p.id] ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Play className="w-3 h-3 mr-1.5" />}
+                        Test Connection
+                      </Button>
+                    </div>
+
+                    {/* API Key */}
+                    {p.requiresKey && (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-muted-foreground font-medium">API Key</label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              type={showKeys[p.id] ? 'text' : 'password'}
+                              value={keyInputs[p.id] || ''}
+                              onChange={e => setKeyInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
+                              placeholder={p.available ? 'Key saved — enter new to replace' : 'Paste your API key here...'}
+                              className="h-9 text-xs font-mono pr-9"
+                            />
+                            <button
+                              onClick={() => setShowKeys(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-foreground transition-colors"
+                            >
+                              {showKeys[p.id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                          <Button onClick={() => handleSetKey(p.id)} disabled={!keyInputs[p.id]?.trim() || savingKey[p.id]} className="h-9 text-xs px-4">
+                            {savingKey[p.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Save className="w-3.5 h-3.5 mr-1.5" />Save</>}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Model */}
+                    {p.models.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-muted-foreground font-medium">Model</label>
+                        <select
+                          value={p.currentModel || ''}
+                          onChange={e => handleSetModel(p.id, e.target.value)}
+                          className="w-full h-9 rounded-lg border px-3 text-xs" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-0)' }}
+                        >
+                          {p.models.map(m => <option key={m} value={m}>{MODEL_INFO[m]?.label || m}</option>)}
+                        </select>
+                      </div>
+                    )}
+
+                    {testResults[p.id] && <TestResultBanner result={testResults[p.id]} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {/* ═══════ Ollama ═══════ */}
+      {ollamaProvider && (() => {
+        const p = ollamaProvider;
+        const isDefault = p.id === defaultId;
+        return (
+          <div>
+            <div className="flex items-center gap-2 mb-3 px-1">
+              <Cpu className="w-3.5 h-3.5 text-muted-foreground/50" />
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-semibold">Local Models</span>
+              <div className="flex-1 h-px" style={{ background: 'var(--surface-border)' }} />
+            </div>
+
+            <div className={`rounded-xl border p-4 space-y-3 ${isDefault ? 'border-primary/30' : ''}`} style={{ borderColor: isDefault ? undefined : 'var(--surface-border)', background: 'var(--surface-0)' }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-zinc-500 to-zinc-700 flex items-center justify-center text-white text-sm font-bold shadow-sm">O</div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">Ollama</span>
+                      {isDefault && <Badge variant="default" className="text-[9px]">default</Badge>}
+                      <Badge className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">free</Badge>
+                      <div className={`w-2 h-2 rounded-full ${p.available ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-zinc-600'}`} />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/70 mt-0.5">Run open-source LLMs locally — Llama, Mistral, Phi, etc.</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {!isDefault && (
+                    <Button variant="outline" size="sm" onClick={() => handleSetDefault(p.id)} className="h-8 text-xs">
+                      Set Default
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => handleTest(p.id)} disabled={testing[p.id] || !p.available} className="h-8 text-xs">
+                    {testing[p.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Play className="w-3.5 h-3.5 mr-1.5" />}
+                    Test
+                  </Button>
+                </div>
+              </div>
+
+              {p.models.length > 0 && (
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-muted-foreground shrink-0">Model</label>
+                  <select
+                    value={p.currentModel || ''}
+                    onChange={e => handleSetModel(p.id, e.target.value)}
+                    className="h-8 rounded-lg border px-3 text-xs flex-1" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}
+                  >
+                    {p.models.map(m => <option key={m} value={m}>{MODEL_INFO[m]?.label || m}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {testResults[p.id] && <TestResultBanner result={testResults[p.id]} />}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══════ Terminal Commands ═══════ */}
+      <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--surface-1)', border: '1px solid var(--surface-border)' }}>
+        <div className="flex items-center gap-2">
+          <Terminal className="w-4 h-4 text-muted-foreground/60" />
+          <span className="text-xs font-semibold text-muted-foreground/80">Terminal AI Commands</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {[
+            { cmd: 'vpc ai ask <question>', desc: 'Quick AI query' },
+            { cmd: 'vpc ai sql <desc>', desc: 'Natural language to SQL' },
+            { cmd: 'vpc ai providers', desc: 'List all providers' },
+            { cmd: 'vpc ai use <provider>', desc: 'Switch default' },
+          ].map(c => (
+            <div key={c.cmd} className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: 'var(--surface-0)' }}>
+              <code className="text-[10px] font-mono text-primary/70 whitespace-nowrap">{c.cmd}</code>
+              <span className="text-[10px] text-muted-foreground/40 ml-auto">{c.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ ok, label, warn }) {
+  const color = ok ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : warn ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20';
+  const Icon = ok ? CheckCircle2 : warn ? AlertTriangle : XCircle;
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${color}`}>
+      <Icon className="w-3 h-3" />
+      {label}
+    </span>
+  );
+}
+
+function TestResultBanner({ result }) {
+  return (
+    <div className={`flex items-start gap-2.5 p-3 rounded-xl text-xs ${
+      result.ok ? 'bg-emerald-500/5 border border-emerald-500/15' : 'bg-red-500/5 border border-red-500/15'
+    }`}>
+      {result.ok ? (
+        <>
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+          <div>
+            <span className="text-emerald-400 font-semibold">{result.latency}ms</span>
+            <p className="text-muted-foreground/70 text-[11px] mt-0.5">{result.response?.slice(0, 120)}</p>
+          </div>
+        </>
+      ) : (
+        <>
+          <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+          <span className="text-red-400">{result.error}</span>
+        </>
+      )}
     </div>
   );
 }
@@ -926,7 +1293,7 @@ function UsersTab() {
 
       {/* Add user form */}
       <div className="rounded-lg border border-border p-3 space-y-2">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <Label className="text-xs">Name *</Label>
             <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Yash" className="h-8 text-sm" />

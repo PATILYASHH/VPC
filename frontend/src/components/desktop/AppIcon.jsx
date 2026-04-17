@@ -40,21 +40,21 @@ export default function AppIcon({ appId }) {
     <button
       onClick={handleClick}
       onDoubleClick={handleClick}
-      className="flex flex-col items-center gap-1.5 w-20 p-2 rounded-xl transition-all duration-150 group"
+      className="flex flex-col items-center gap-1.5 w-full sm:w-20 p-2 rounded-xl transition-all duration-150 group active:scale-95"
       onMouseEnter={e => e.currentTarget.style.background = 'var(--surface-hover)'}
       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
     >
       <div
-        className="w-12 h-12 rounded-[14px] flex items-center justify-center group-hover:scale-105 transition-transform duration-150"
+        className="w-11 h-11 sm:w-12 sm:h-12 rounded-[14px] flex items-center justify-center group-hover:scale-105 transition-transform duration-150"
         style={{
           background: gradient,
           boxShadow: `0 4px 14px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.1)`,
         }}
       >
-        <Icon className="w-6 h-6 text-white drop-shadow-sm" />
+        <Icon className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-sm" />
       </div>
       <span
-        className="text-[11px] text-center leading-tight truncate w-full font-medium"
+        className="text-[10px] sm:text-[11px] text-center leading-tight truncate w-full font-medium"
         style={{ color: 'var(--text-on-surface)' }}
       >
         {appDef.title}

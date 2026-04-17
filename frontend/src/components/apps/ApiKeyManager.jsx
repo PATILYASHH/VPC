@@ -28,7 +28,13 @@ export default function ApiKeyManager() {
     setCreating(true);
     try {
       let perms = {};
-      try { perms = JSON.parse(permissions); } catch { perms = {}; }
+      try {
+        perms = JSON.parse(permissions);
+      } catch {
+        toast.error('Invalid JSON in permissions field');
+        setCreating(false);
+        return;
+      }
 
       const { data: result } = await api.post('/admin/api-keys', { name, permissions: perms });
       setNewKeyResult(result);
@@ -86,7 +92,7 @@ export default function ApiKeyManager() {
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-muted-foreground">
               <div>
                 <span className="block text-muted-foreground/70">Prefix</span>
                 <span className="font-mono">vpc_{key.key_prefix}...</span>

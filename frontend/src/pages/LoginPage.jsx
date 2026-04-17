@@ -69,7 +69,7 @@ function OtpInput({ value, onChange, autoFocus }) {
           onPaste={handlePaste}
           onFocus={(e) => e.target.select()}
           autoFocus={autoFocus && i === 0}
-          className="w-11 h-13 text-center text-xl font-mono font-semibold rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-all"
+          className="w-10 h-12 sm:w-11 sm:h-13 text-center text-lg sm:text-xl font-mono font-semibold rounded-md border border-input bg-background ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-all"
         />
       ))}
     </div>
@@ -129,7 +129,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-background">
+    <div className="h-screen w-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm mx-auto">
         <div className="flex flex-col items-center mb-8">
           <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">

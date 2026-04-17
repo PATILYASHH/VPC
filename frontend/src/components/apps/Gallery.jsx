@@ -252,7 +252,7 @@ export default function Gallery() {
     <div className="h-full flex flex-col">
       <div className="flex-1 flex min-h-0">
         {/* ── Left Sidebar ─────────────────────────── */}
-        <div className="w-48 border-r bg-card flex flex-col shrink-0 overflow-hidden">
+        <div className="hidden sm:flex w-48 border-r bg-card flex-col shrink-0 overflow-hidden">
           <div className="flex-1 overflow-auto">
             {/* Source Tabs */}
             <div className="flex border-b">
@@ -602,7 +602,7 @@ export default function Gallery() {
 // ── Grid View ─────────────────────────────────────────
 function GridView({ files, source, onPreview, onDelete, onDownload, onRename, previewUrl }) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">
       {files.map((file) => (
         <div
           key={file.id}
@@ -658,7 +658,7 @@ function GridView({ files, source, onPreview, onDelete, onDownload, onRename, pr
 // ── List View ─────────────────────────────────────────
 function ListView({ files, source, onPreview, onDelete, onDownload, onRename, previewUrl }) {
   return (
-    <table className="w-full text-[11px]">
+    <table className="w-full text-[11px] min-w-[500px]">
       <thead>
         <tr className="border-b text-muted-foreground text-left">
           <th className="py-1.5 pl-2 font-medium w-8"></th>

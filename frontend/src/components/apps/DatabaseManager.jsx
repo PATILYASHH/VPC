@@ -61,9 +61,9 @@ export default function DatabaseManager() {
   };
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex flex-col sm:flex-row">
       {/* Left sidebar */}
-      <div className="w-56 border-r flex flex-col bg-card">
+      <div className="sm:w-56 border-b sm:border-b-0 sm:border-r flex flex-row sm:flex-col bg-card overflow-x-auto sm:overflow-x-visible shrink-0">
         <SchemaSelector value={schema} onChange={setSchema} />
         <TableList schema={schema} activeTable={activeTable} onSelect={setActiveTable} />
       </div>

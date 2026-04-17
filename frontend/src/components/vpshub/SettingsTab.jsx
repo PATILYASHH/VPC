@@ -131,7 +131,7 @@ export default function SettingsTab({ project }) {
                 <Download className="w-4 h-4" />
                 Download vpc-sync.vsix
               </a>
-              <Badge variant="outline" className="self-center">v8.0.0</Badge>
+              <Badge variant="outline" className="self-center">v9.0.0</Badge>
             </div>
           </div>
         </div>

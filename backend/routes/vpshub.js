@@ -1162,6 +1162,12 @@ router.get('/system/upgrade-check', async (req, res) => {
     const localMsg = execSync('git log -1 --format=%s', { cwd: rootDir, encoding: 'utf8' }).trim();
     const localBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
 
+    // Validate branch name to prevent shell injection
+    if (!/^[a-zA-Z0-9._\-/]+$/.test(localBranch)) {
+      return res.status(400).json({ error: 'Invalid branch name detected' });
+    }
+    const remoteRef = `origin/${localBranch}`;
+
     // Fetch latest from remote (without merging)
     try {
       execSync('git fetch origin --quiet', { cwd: rootDir, timeout: 15000 });
@@ -1174,7 +1180,8 @@ router.get('/system/upgrade-check', async (req, res) => {
     }
 
     // Compare local vs remote
-    const remoteHash = execSync(`git rev-parse origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
+    const { execFileSync } = require('child_process');
+    const remoteHash = execFileSync('git', ['rev-parse', remoteRef], { cwd: rootDir, encoding: 'utf8' }).trim();
     const updateAvailable = localHash !== remoteHash;
 
     let remoteInfo = {};
@@ -1182,12 +1189,12 @@ router.get('/system/upgrade-check', async (req, res) => {
     let newCommits = [];
 
     if (updateAvailable) {
-      const remoteDate = execSync(`git log -1 --format=%ci origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
-      const remoteMsg = execSync(`git log -1 --format=%s origin/${localBranch}`, { cwd: rootDir, encoding: 'utf8' }).trim();
-      behindCount = parseInt(execSync(`git rev-list HEAD..origin/${localBranch} --count`, { cwd: rootDir, encoding: 'utf8' }).trim()) || 0;
+      const remoteDate = execFileSync('git', ['log', '-1', '--format=%ci', remoteRef], { cwd: rootDir, encoding: 'utf8' }).trim();
+      const remoteMsg = execFileSync('git', ['log', '-1', '--format=%s', remoteRef], { cwd: rootDir, encoding: 'utf8' }).trim();
+      behindCount = parseInt(execFileSync('git', ['rev-list', `HEAD..${remoteRef}`, '--count'], { cwd: rootDir, encoding: 'utf8' }).trim()) || 0;
 
       // Get list of new commits (max 20)
-      const logOutput = execSync(`git log HEAD..origin/${localBranch} --format="%h|%s|%ci|%an" -20`, { cwd: rootDir, encoding: 'utf8' }).trim();
+      const logOutput = execFileSync('git', ['log', `HEAD..${remoteRef}`, '--format=%h|%s|%ci|%an', '-20'], { cwd: rootDir, encoding: 'utf8' }).trim();
       if (logOutput) {
         newCommits = logOutput.split('\n').map(line => {
           const [hash, message, date, author] = line.split('|');

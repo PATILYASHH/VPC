@@ -59,9 +59,9 @@ export default function TableEditor({ project }) {
   };
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex flex-col sm:flex-row">
       {/* Table list sidebar */}
-      <div className="w-48 border-r flex flex-col bg-card/50">
+      <div className="sm:w-48 border-b sm:border-b-0 sm:border-r flex sm:flex-col bg-card/50 shrink-0 max-h-28 sm:max-h-none overflow-auto">
         <div className="px-3 py-2 border-b">
           <h3 className="text-xs font-semibold text-muted-foreground uppercase">Tables</h3>
         </div>

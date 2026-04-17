@@ -13,9 +13,12 @@ function deriveAction(method, path) {
 function sanitizeBody(body) {
   if (!body || typeof body !== 'object') return {};
   const sanitized = { ...body };
-  const sensitiveKeys = ['password', 'token', 'secret', 'key', 'password_hash'];
-  for (const key of sensitiveKeys) {
-    if (sanitized[key]) sanitized[key] = '[REDACTED]';
+  const sensitivePatterns = ['password', 'token', 'secret', 'key', 'credential', 'auth', 'apikey', 'api_key'];
+  for (const field of Object.keys(sanitized)) {
+    const lower = field.toLowerCase();
+    if (sensitivePatterns.some(p => lower.includes(p))) {
+      sanitized[field] = '[REDACTED]';
+    }
   }
   return sanitized;
 }

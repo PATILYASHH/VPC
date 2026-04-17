@@ -4,6 +4,7 @@ import useWindowStore from '@/stores/useWindowStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import WindowTitleBar from './WindowTitleBar';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
+import useIsMobile from '@/hooks/useIsMobile';
 
 export default function Window({ windowId }) {
   const win = useWindowStore((s) => s.windows[windowId]);
@@ -11,6 +12,7 @@ export default function Window({ windowId }) {
   const focusWindow = useWindowStore((s) => s.focusWindow);
   const updatePosition = useWindowStore((s) => s.updatePosition);
   const updateSize = useWindowStore((s) => s.updateSize);
+  const isMobile = useIsMobile();
 
   const [shouldRender, setShouldRender] = useState(!win?.isMinimized);
   const [animatingOut, setAnimatingOut] = useState(false);
@@ -52,6 +54,35 @@ export default function Window({ windowId }) {
   const isActive = activeWindowId === windowId;
   const isAnimating = animatingOut || animatingIn;
 
+  // Mobile: full-screen window, no drag/resize
+  if (isMobile) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: win.zIndex,
+          pointerEvents: 'auto',
+          transition: 'transform 220ms cubic-bezier(0.4,0,0.2,1), opacity 220ms ease',
+        }}
+        className={`flex flex-col h-full ${
+          isAnimating
+            ? 'scale-[0.97] opacity-0 translate-y-6'
+            : 'scale-100 opacity-100 translate-y-0'
+        }`}
+        onClick={() => focusWindow(windowId)}
+      >
+        <WindowTitleBar windowId={windowId} isActive={true} />
+        <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
+          <ErrorBoundary>
+            <AppComponent />
+          </ErrorBoundary>
+        </div>
+      </div>
+    );
+  }
+
+  // Desktop: draggable/resizable window
   return (
     <Rnd
       position={{ x: win.x, y: win.y }}

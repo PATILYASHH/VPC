@@ -235,21 +235,21 @@ export default function VpcAuth() {
                   )}
                 </Badge>
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap">
                 {user.totp_enabled ? (
                   <Button variant="ghost" size="sm" className="text-xs" onClick={() => handleDisableTotp(user)}>
                     Disable 2FA
                   </Button>
                 ) : (
                   <Button variant="ghost" size="sm" className="text-xs" onClick={() => handleSetupTotp(user.id)}>
-                    <QrCode className="w-3.5 h-3.5 mr-1" /> Setup 2FA
+                    <QrCode className="w-3.5 h-3.5 mr-1" /> <span className="hidden sm:inline">Setup</span> 2FA
                   </Button>
                 )}
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => openPerms(user)}>
-                  <Lock className="w-3.5 h-3.5 mr-1" /> Permissions
+                  <Lock className="w-3.5 h-3.5 mr-1" /> <span className="hidden sm:inline">Permissions</span>
                 </Button>
                 <Button variant="ghost" size="sm" className="text-xs" onClick={() => { setResetPwUser(user); setNewPassword(''); setConfirmPassword(''); }}>
-                  <KeyRound className="w-3.5 h-3.5 mr-1" /> Reset Password
+                  <KeyRound className="w-3.5 h-3.5 mr-1" /> <span className="hidden sm:inline">Reset Password</span>
                 </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(user)}>
                   <Pencil className="w-3.5 h-3.5" />
@@ -259,7 +259,7 @@ export default function VpcAuth() {
                 </Button>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-muted-foreground">
               <div>
                 <span className="block text-muted-foreground/70">Email</span>
                 <span>{user.email}</span>
@@ -373,7 +373,7 @@ export default function VpcAuth() {
             {!permForm.all && (
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground font-medium px-1 mb-2">Specific Permissions</p>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {PERMISSION_OPTIONS.map((perm) => (
                     <label
                       key={perm.key}

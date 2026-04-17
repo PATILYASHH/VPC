@@ -701,4 +701,7 @@ module.exports = {
   findProjectByApiKeyHash,
   getStorageSummary,
   checkStorageLimit,
+  generateDbName,
+  generateDbUser,
+  generateDbPassword,
 };

@@ -108,10 +108,17 @@ app.listen(PORT, async () => {
           const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
           for (const file of files) {
             const sql = fs.readFileSync(require('path').join(migrationsDir, file), 'utf8');
-            try { await pool.query(sql); } catch {}
+            try { await pool.query(sql); } catch (migErr) {
+              // Migrations may fail if already applied (duplicate key, etc.) — this is expected
+              if (!migErr.message?.includes('already exists') && !migErr.message?.includes('duplicate')) {
+                console.warn(`[VPC Auto-Upgrade] Migration ${file} warning:`, migErr.message);
+              }
+            }
           }
         }
-      } catch {}
+      } catch (migrationErr) {
+        console.error('[VPC Auto-Upgrade] Migration error:', migrationErr.message);
+      }
 
       // Save pending restart flag — user must restart manually
       await pool.query(
@@ -182,7 +189,9 @@ app.listen(PORT, async () => {
                 const fs = require('fs');
                 if (fs.existsSync(old.file_path)) fs.unlinkSync(old.file_path);
                 await pool.query('DELETE FROM backups WHERE id = $1', [old.id]);
-              } catch {}
+              } catch (cleanupErr) {
+                console.error(`[VPC Auto-Backup] Failed to cleanup old backup ${old.id}:`, cleanupErr.message);
+              }
             }
             if (oldBackups.length > 0) {
               console.log(`[VPC Auto-Backup] Cleaned ${oldBackups.length} old backup(s) for ${project[0].name}`);

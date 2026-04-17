@@ -34,19 +34,25 @@ export default function JarvisChat() {
       setUsers(data.users || []);
       const def = data.users?.find(u => u.is_default) || data.users?.[0];
       if (def) setUserId(def.id);
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error('[JarvisChat] Failed to load users:', err.message);
+    });
     api.get('/admin/settings/ai-providers').then(({ data }) => {
       setProviders(data.providers || []);
       setDefaultProvider(data.default || '');
       setSelectedProvider(data.default || '');
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error('[JarvisChat] Failed to load providers:', err.message);
+    });
   }, []);
 
   const loadHistory = useCallback(() => {
     if (!userId) return;
     api.get(`/admin/settings/ai-agent/conversations/${userId}`).then(({ data }) => {
       setMessages(data.messages || []);
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error('[JarvisChat] Failed to load history:', err.message);
+    });
   }, [userId]);
 
   useEffect(() => { loadHistory(); }, [loadHistory]);

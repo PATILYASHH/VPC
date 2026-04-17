@@ -303,10 +303,13 @@ function BackupDetail({ project, onBack }) {
   async function remove(id) {
     if (!confirm('Delete this backup?')) return;
     try {
-      await api.delete(`/admin/db/projects/${project.id}/backups/${id}`);
+      const url = isSystem
+        ? `/admin/backup/${id}`
+        : `/admin/db/projects/${project.id}/backups/${id}`;
+      await api.delete(url);
       toast.success('Deleted');
       queryClient.invalidateQueries({ queryKey: ['detail-backups'] });
-    } catch { toast.error('Failed'); }
+    } catch { toast.error('Failed to delete backup'); }
   }
 
   const completed = backups.filter(b => b.status === 'completed');

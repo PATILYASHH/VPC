@@ -423,6 +423,52 @@ router.post('/ai-providers/:id/test', async (req, res) => {
   }
 });
 
+// Claude CLI status — check auth, version, subscription info
+router.get('/ai-providers/claude-cli/status', async (req, res) => {
+  try {
+    const { execFile } = require('child_process');
+    const status = { installed: false, version: null, authenticated: false, account: null };
+
+    // Check version
+    await new Promise(resolve => {
+      execFile('claude', ['--version'], { timeout: 5000 }, (err, stdout) => {
+        if (!err && stdout) {
+          status.installed = true;
+          status.version = stdout.trim();
+        }
+        resolve();
+      });
+    });
+
+    if (!status.installed) return res.json(status);
+
+    // Check auth by running a quick non-interactive test
+    await new Promise(resolve => {
+      const { spawn } = require('child_process');
+      const proc = spawn('claude', ['-p', 'say ok', '--output-format', 'text'], {
+        timeout: 15000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', d => { stdout += d; });
+      proc.stderr.on('data', d => { stderr += d; });
+      proc.on('close', code => {
+        status.authenticated = code === 0 && stdout.trim().length > 0;
+        if (stderr.includes('not authenticated') || stderr.includes('login') || stderr.includes('API key')) {
+          status.authenticated = false;
+        }
+        resolve();
+      });
+      proc.on('error', () => resolve());
+    });
+
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Ollama status
 router.get('/ollama/status', async (req, res) => {
   try {

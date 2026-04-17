@@ -306,4 +306,36 @@
 .surface-2 { background-color: var(--surface-2); }
 .surface-3 { background-color: var(--surface-3); }
 
+/* ─── Mobile responsiveness ─── */
+@media (max-width: 767px) {
+  /* Wider touch-friendly scrollbars on mobile */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  /* Prevent text size adjustment on orientation change */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* Safe area insets for notched devices */
+  body {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  /* Prevent pull-to-refresh on mobile browsers */
+  body {
+    overscroll-behavior-y: contain;
+  }
+
+  /* Prevent long-press context menu on mobile */
+  .no-context {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 /* Theme runtime overrides are injected via JS — see useDesktopStore.js */

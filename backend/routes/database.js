@@ -224,8 +224,9 @@ router.get('/export', async (req, res) => {
       selectedColumns = requested;
     }
 
-    const quotedCols = selectedColumns.map((c) => `"${c.replace(/"/g, '""')}"`).join(', ');
-    const { rows } = await pool.query(`SELECT ${quotedCols} FROM "${schema}"."${table}"`);
+    const quoteIdent = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const quotedCols = selectedColumns.map((c) => quoteIdent(c)).join(', ');
+    const { rows } = await pool.query(`SELECT ${quotedCols} FROM ${quoteIdent(schema)}.${quoteIdent(table)}`);
 
     const timestamp = new Date().toISOString().slice(0, 10);
     const filename = `${table}_${timestamp}`;

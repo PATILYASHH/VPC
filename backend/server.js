@@ -94,6 +94,7 @@ adminRouter.use('/sync', require('./routes/sync'));
 adminRouter.use('/web-hosting', require('./routes/webHosting'));
 adminRouter.use('/settings', require('./routes/settings'));
 adminRouter.use('/vpshub', require('./routes/vpshub'));
+adminRouter.use('/pipeline', require('./routes/pipeline'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {

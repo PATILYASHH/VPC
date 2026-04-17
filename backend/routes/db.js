@@ -8,6 +8,8 @@ const dbBrowser = require('../services/dbBrowserService');
 const supabaseImport = require('../services/supabaseImportService');
 const syncService = require('../services/syncService');
 const dbStorage = require('../services/dbStorageService');
+const dbForkService = require('../services/dbForkService');
+const prService = require('../services/prService');
 
 // ─── Projects ──────────────────────────────────────────────
 
@@ -724,6 +726,126 @@ router.post('/projects/:id/backup-schedule', async (req, res) => {
       [`backup_schedule_${req.params.id}`, value]
     );
     res.json({ enabled: !!enabled, interval, keepCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Fork & Promote ──────────────────────────────────────────
+
+// Fork a project into a beta/dev environment
+router.post('/projects/:id/fork', resolveProject, async (req, res) => {
+  try {
+    const { name, slug, copyData, environment } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const validEnvs = ['production', 'beta', 'development', 'staging'];
+    if (environment && !validEnvs.includes(environment)) {
+      return res.status(400).json({ error: `Environment must be one of: ${validEnvs.join(', ')}` });
+    }
+    const project = await dbForkService.forkProject(req.app.locals.pool, req.params.id, {
+      name,
+      slug: slug || dbService.generateSlug(name),
+      copyData: !!copyData,
+      environment: environment || 'beta',
+    });
+    res.status(201).json({ project });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List forks of a project
+router.get('/projects/:id/forks', resolveProject, async (req, res) => {
+  try {
+    const { rows } = await req.app.locals.pool.query(
+      "SELECT * FROM db_projects WHERE forked_from = $1 AND status != 'deleted' ORDER BY created_at DESC",
+      [req.params.id]
+    );
+    res.json({ forks: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Schema diff between two projects (source = prod, target = beta)
+router.get('/projects/:id/diff/:targetId', resolveProject, async (req, res) => {
+  try {
+    const targetProject = await dbService.getProject(req.app.locals.pool, req.params.targetId);
+    if (!targetProject) return res.status(404).json({ error: 'Target project not found' });
+
+    const sourcePool = dbService.getProjectPool(req.dbProject);
+    const targetPool = dbService.getProjectPool(targetProject);
+
+    const [sourceSnapshot, targetSnapshot] = await Promise.all([
+      syncService.getSchemaSnapshot(sourcePool),
+      syncService.getSchemaSnapshot(targetPool),
+    ]);
+
+    const diff = dbForkService.diffSchemas(sourceSnapshot, targetSnapshot);
+    const sql = dbForkService.generatePromoteSQL(diff);
+
+    res.json({
+      diff,
+      sql,
+      source: { id: req.dbProject.id, name: req.dbProject.name, environment: req.dbProject.environment },
+      target: { id: targetProject.id, name: targetProject.name, environment: targetProject.environment },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Promote: create a PR on prod project from beta diff
+router.post('/projects/:id/promote/:targetId', resolveProject, async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const prodProject = req.dbProject; // :id = production target
+    const betaProject = await dbService.getProject(pool, req.params.targetId);
+    if (!betaProject) return res.status(404).json({ error: 'Beta project not found' });
+
+    // Compute diff: what's in beta but not in prod
+    const [prodSnapshot, betaSnapshot] = await Promise.all([
+      syncService.getSchemaSnapshot(dbService.getProjectPool(prodProject)),
+      syncService.getSchemaSnapshot(dbService.getProjectPool(betaProject)),
+    ]);
+
+    const diff = dbForkService.diffSchemas(prodSnapshot, betaSnapshot);
+    const sql = dbForkService.generatePromoteSQL(diff);
+
+    if (!sql.trim()) {
+      return res.json({ message: 'No schema changes to promote', diff });
+    }
+
+    // Create PR on production project using existing PR system
+    const pr = await prService.createPullRequest(pool, {
+      projectId: prodProject.id,
+      title: req.body.title || `Promote from ${betaProject.name}`,
+      description: req.body.description ||
+        `Schema changes from ${betaProject.environment || 'beta'} environment "${betaProject.name}".\n\n` +
+        `New tables: ${diff.summary.newTables}, New columns: ${diff.summary.newColumns}, New indexes: ${diff.summary.newIndexes}`,
+      sqlContent: sql,
+      submittedBy: req.admin?.username || 'fork-promote',
+    });
+
+    res.status(201).json({ pr, diff });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update environment label
+router.patch('/projects/:id/environment', resolveProject, async (req, res) => {
+  try {
+    const { environment } = req.body;
+    const validEnvs = ['production', 'beta', 'development', 'staging'];
+    if (!validEnvs.includes(environment)) {
+      return res.status(400).json({ error: `Environment must be one of: ${validEnvs.join(', ')}` });
+    }
+    await req.app.locals.pool.query(
+      'UPDATE db_projects SET environment = $1, updated_at = NOW() WHERE id = $2',
+      [environment, req.params.id]
+    );
+    res.json({ updated: true, environment });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

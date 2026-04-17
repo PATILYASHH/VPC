@@ -179,7 +179,7 @@ export default function VpcStore() {
     <div className="h-full flex flex-col surface-0">
       {/* Store Header — App Store style */}
       <div className="border-b border-white/[0.06]">
-        <div className="px-6 pt-5 pb-4">
+        <div className="px-4 sm:px-6 pt-5 pb-4">
           <div className="flex items-center justify-between mb-5">
             <div>
               <h1 className="text-2xl font-bold tracking-tight">VPC Store</h1>
@@ -187,7 +187,7 @@ export default function VpcStore() {
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
-                VPC OS v2.1.0
+                VPC OS v3.0.0
               </Badge>
               <Badge variant="outline" className="text-[10px] border-white/[0.08] text-muted-foreground/50">
                 {PRODUCTS.length} apps
@@ -209,7 +209,7 @@ export default function VpcStore() {
         </div>
 
         {/* Category tabs — pill style */}
-        <div className="px-6 pb-3 flex items-center gap-1.5 overflow-x-auto">
+        <div className="px-4 sm:px-6 pb-3 flex items-center gap-1.5 overflow-x-auto">
           {CATEGORIES.map(cat => (
             <button
               key={cat.id}
@@ -232,7 +232,7 @@ export default function VpcStore() {
 
         {/* ── Search Results ── */}
         {searchQuery ? (
-          <div className="px-6 py-5">
+          <div className="px-4 sm:px-6 py-5">
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">
               Results for "{searchQuery}"
             </h2>
@@ -252,7 +252,7 @@ export default function VpcStore() {
         ) : activeCategory === 'all' ? (
           <>
             {/* ── Discover: Featured ── */}
-            <div className="px-6 pt-5">
+            <div className="px-4 sm:px-6 pt-5">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">Featured</h2>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {PRODUCTS.filter(p => p.featured).map(product => (
@@ -262,7 +262,7 @@ export default function VpcStore() {
             </div>
 
             {/* ── Discover: All Apps ── */}
-            <div className="px-6 py-5">
+            <div className="px-4 sm:px-6 py-5">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">All Apps</h2>
               <div className="space-y-2">
                 {PRODUCTS.map(product => (
@@ -274,12 +274,12 @@ export default function VpcStore() {
         ) : activeCategory === 'system' ? (
           <>
             {/* ── System: Software Upgrade ── */}
-            <div className="px-6 pt-5">
+            <div className="px-4 sm:px-6 pt-5">
               <SoftwareUpgrade />
             </div>
 
             {/* ── System: System Apps ── */}
-            <div className="px-6 pt-5">
+            <div className="px-4 sm:px-6 pt-5">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">System Apps</h2>
               {PRODUCTS.filter(p => p.category === 'system-app').length === 0 ? (
                 <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-6 text-center">
@@ -296,7 +296,7 @@ export default function VpcStore() {
             </div>
 
             {/* ── System: 3rd Party ── */}
-            <div className="px-6 py-5">
+            <div className="px-4 sm:px-6 py-5">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">3rd Party</h2>
               {PRODUCTS.filter(p => p.category === 'system-3rdparty').length === 0 ? (
                 <div className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-6 text-center">
@@ -314,7 +314,7 @@ export default function VpcStore() {
         ) : activeCategory === 'external' ? (
           <>
             {/* ── External Apps ── */}
-            <div className="px-6 py-5">
+            <div className="px-4 sm:px-6 py-5">
               <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/30 mb-3">External Apps</h2>
               <p className="text-[11px] text-muted-foreground/30 mb-4">Download and install on your device — VS Code extensions, CLI tools, and desktop apps.</p>
               <div className="space-y-2">
@@ -325,7 +325,7 @@ export default function VpcStore() {
             </div>
           </>
         ) : (
-          <div className="px-6 py-5">
+          <div className="px-4 sm:px-6 py-5">
             <div className="space-y-2">
               {filtered.map(product => (
                 <AppListItem key={product.id} product={product} onSelect={setSelectedProduct} />
@@ -787,7 +787,7 @@ function ProductDetail({ product, onBack }) {
     <div className="h-full flex flex-col surface-0">
       {/* Detail Header */}
       <div className="border-b border-white/[0.06]">
-        <div className="px-6 pt-4 pb-5">
+        <div className="px-4 sm:px-6 pt-4 pb-5">
           <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-muted-foreground/40 hover:text-muted-foreground mb-5 transition-colors">
             <ArrowLeft className="w-3.5 h-3.5" /> Store
           </button>
@@ -842,7 +842,7 @@ function ProductDetail({ product, onBack }) {
         </div>
 
         {/* Tabs */}
-        <div className="px-6 flex items-center gap-0.5">
+        <div className="px-4 sm:px-6 flex items-center gap-0.5">
           {tabs.map(tab => (
             <button
               key={tab.id}

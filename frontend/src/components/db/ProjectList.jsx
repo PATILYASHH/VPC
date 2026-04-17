@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Database, Trash2, HardDrive, Eraser } from 'lucide-react';
+import { Plus, Database, Trash2, HardDrive, Eraser, GitFork } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,9 +11,18 @@ import { Progress } from '@/components/ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import ForkDialog from './ForkDialog';
+
+const ENV_COLORS = {
+  production: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  beta: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  development: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  staging: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+};
 
 export default function ProjectList({ onSelectProject }) {
   const [showCreate, setShowCreate] = useState(false);
+  const [forkSource, setForkSource] = useState(null);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [storageLimitMb, setStorageLimitMb] = useState(500);
@@ -163,11 +172,27 @@ export default function ProjectList({ onSelectProject }) {
                         {project.name}
                       </h3>
                       <span className="text-xs text-muted-foreground font-mono">/{project.slug}</span>
+                      {project.forked_from && (
+                        <span className="flex items-center gap-1 text-[10px] text-blue-400/70 mt-0.5">
+                          <GitFork className="w-2.5 h-2.5" /> forked
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
-                      <Badge variant={project.status === 'active' ? 'success' : 'destructive'} className="text-[10px]">
-                        {project.status}
-                      </Badge>
+                      {project.environment && (
+                        <Badge className={`text-[9px] ${ENV_COLORS[project.environment] || ENV_COLORS.production}`}>
+                          {project.environment}
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        title="Fork project"
+                        onClick={(e) => { e.stopPropagation(); setForkSource(project); }}
+                      >
+                        <GitFork className="w-3 h-3 text-blue-400" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -223,6 +248,17 @@ export default function ProjectList({ onSelectProject }) {
           </div>
         )}
       </div>
+
+      {/* Fork dialog */}
+      <ForkDialog
+        open={!!forkSource}
+        onOpenChange={(open) => !open && setForkSource(null)}
+        sourceProject={forkSource}
+        onSuccess={(project) => {
+          queryClient.invalidateQueries({ queryKey: ['db-projects'] });
+          onSelectProject(project);
+        }}
+      />
 
       {/* Create dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>

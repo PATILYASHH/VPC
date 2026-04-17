@@ -400,6 +400,133 @@ router.post('/:owner/:repo/pull', resolveRepo, authenticateVcs, (req, res) => {
   }
 });
 
+// ─── Entire Push (force replace all files) ─────────────────────
+// Replaces ALL remote content with local. No merge, no conflicts.
+// Used for deploying a fresh copy — like rsync --delete.
+
+router.post('/:owner/:repo/entire-push', resolveRepo, authenticateVcs, async (req, res) => {
+  try {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const contentType = req.headers['content-type'] || '';
+    let objectData, refUpdates;
+
+    if (contentType.includes('application/x-vpc-pack')) {
+      const parsed = parsePack(req.body);
+      objectData = parsed.objects;
+      refUpdates = parsed.refs;
+    } else {
+      objectData = req.body.objects || [];
+      refUpdates = req.body.refs || {};
+    }
+
+    // Store ALL objects (overwrite if needed)
+    for (const obj of objectData) {
+      const objPath = vcsCore.objectPath(req.repoPath, obj.hash);
+      const dir = pathMod.dirname(objPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      if (obj.compressed) {
+        fs.writeFileSync(objPath, Buffer.from(obj.data, 'base64'));
+      } else {
+        const compressed = zlib.deflateSync(Buffer.from(obj.data, 'base64'));
+        fs.writeFileSync(objPath, compressed);
+      }
+    }
+
+    // Force update ALL refs — no fast-forward check, no merge
+    const updatedRefs = {};
+    for (const [refName, update] of Object.entries(refUpdates)) {
+      if (!/^refs\/[a-zA-Z0-9_\-\/.]+$/.test(refName) || refName.includes('..')) {
+        return res.status(400).json({ error: `Invalid ref name: ${refName}` });
+      }
+      const newHash = typeof update === 'string' ? update : update.new;
+      if (!vcsCore.objectExists(req.repoPath, newHash)) {
+        return res.status(400).json({ error: `Object not found: ${newHash}` });
+      }
+      vcsCore.updateRef(req.repoPath, refName, newHash);
+      updatedRefs[refName] = newHash;
+    }
+
+    // Sync to DB
+    const pool = req.app.locals.pool;
+    try { await vcsCore.syncRefsToDb(pool, req.repoInfo.id, req.repoPath); } catch {}
+    for (const [, hash] of Object.entries(updatedRefs)) {
+      try { await vcsCore.syncCommitsToDb(pool, req.repoInfo.id, req.repoPath, hash); } catch {}
+    }
+
+    try {
+      const { updateRepoSize } = require('../services/vpshubGitService');
+      await updateRepoSize(pool, req.repoInfo.id, req.repoInfo.owner_username, req.repoInfo.slug);
+      await pool.query('UPDATE vpshub_repositories SET updated_at = NOW() WHERE id = $1', [req.repoInfo.id]);
+    } catch {}
+
+    // Auto-deploy
+    try {
+      const deployService = require('../services/vpshubDeployService');
+      await deployService.onPush(pool, req.repoInfo.owner_username, req.repoInfo.slug);
+    } catch {}
+
+    res.json({
+      ok: true,
+      updated_refs: updatedRefs,
+      force: true,
+      message: `Force pushed ${objectData.length} objects. Remote fully replaced.`,
+    });
+
+  } catch (err) {
+    console.error('[VPC VCS] entire-push error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Entire Pull (get complete repo snapshot) ──────────────────
+// Returns ALL objects in the repo — no "haves" comparison.
+// Client uses this to do a clean pull that replaces local entirely.
+
+router.post('/:owner/:repo/entire-pull', resolveRepo, authenticateVcs, (req, res) => {
+  try {
+    const branch = req.body.branch || 'main';
+    const refName = `refs/heads/${branch}`;
+    const tipHash = vcsCore.resolveRef(req.repoPath, refName);
+
+    if (!tipHash) {
+      return res.status(404).json({ error: `Branch '${branch}' not found.` });
+    }
+
+    // Collect ALL reachable objects from tip (no exclusions)
+    const allObjects = vcsCore.collectReachableObjects(req.repoPath, tipHash, new Set());
+    const objectsToSend = [];
+
+    for (const hash of allObjects) {
+      try {
+        const rawCompressed = vcsCore.readObjectRaw(req.repoPath, hash);
+        const obj = vcsCore.readObject(req.repoPath, hash);
+        objectsToSend.push({
+          hash,
+          type: obj.type,
+          data: rawCompressed.toString('base64'),
+          compressed: true,
+        });
+      } catch {}
+    }
+
+    // Get all refs
+    const refs = {};
+    const allRefs = vcsCore.listRefs ? vcsCore.listRefs(req.repoPath) : {};
+    refs[refName] = tipHash;
+
+    res.json({
+      refs,
+      objectCount: objectsToSend.length,
+      objects: objectsToSend,
+      force: true,
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Pack Parsing ────────────────────────────────────────────
 
 /**

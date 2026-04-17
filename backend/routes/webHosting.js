@@ -120,6 +120,87 @@ router.post('/projects/:id/fix-with-ai', async (req, res) => {
   }
 });
 
+// POST /projects/:id/smart-deploy — zero-config deploy with auto-fix loop
+// Auto-detects project type, installs deps, builds, starts, and fixes errors automatically
+router.post('/projects/:id/smart-deploy', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const deployPath = project.deploy_path || path.join(webHostingService.HOSTING_DIR, project.slug);
+    const maxRetries = 3;
+    let attempt = 0;
+    let lastError = null;
+    const log = [];
+
+    // Step 1: Auto-detect project structure if build commands are not set
+    if (!project.build_command && !project.install_command) {
+      try {
+        const detected = webHostingService.detectProjectStructure(deployPath, project.slug);
+        if (detected) {
+          await pool.query(
+            `UPDATE web_hosting_projects SET
+              project_type = COALESCE($1, project_type),
+              install_command = COALESCE($2, install_command),
+              build_command = COALESCE($3, build_command),
+              output_dir = COALESCE($4, output_dir),
+              node_entry_point = COALESCE($5, node_entry_point),
+              updated_at = NOW()
+            WHERE id = $6`,
+            [detected.projectType, detected.installCommand, detected.buildCommand, detected.outputDir, detected.nodeEntryPoint, project.id]
+          );
+          log.push(`Auto-detected: ${detected.projectType} (${detected.framework || 'generic'})`);
+        }
+      } catch (detectErr) {
+        log.push(`Detection warning: ${detectErr.message}`);
+      }
+    }
+
+    // Step 2: Deploy with auto-fix retry loop
+    while (attempt < maxRetries) {
+      attempt++;
+      log.push(`--- Deploy attempt ${attempt}/${maxRetries} ---`);
+
+      try {
+        const result = await webHostingService.deploy(pool, project);
+        webHostingService.refreshSlugCache(pool);
+        webHostingService.refreshDomainCache(pool);
+        log.push('Deploy succeeded');
+        return res.json({ success: true, attempts: attempt, log, result });
+      } catch (deployErr) {
+        lastError = deployErr.message;
+        log.push(`Error: ${deployErr.message}`);
+
+        // If we have retries left, try AI fix
+        if (attempt < maxRetries) {
+          log.push('Attempting AI auto-fix...');
+          try {
+            const fixResult = await webHostingService.fixWithAI(pool, project.id);
+            log.push(`AI fix applied: ${fixResult.fixes_applied || 0} fix(es)`);
+            // Reload project in case fixWithAI updated configs
+            const updated = await webHostingService.getProject(pool, project.id);
+            if (updated) Object.assign(project, updated);
+          } catch (fixErr) {
+            log.push(`AI fix failed: ${fixErr.message}`);
+            break; // Stop retrying if AI can't help
+          }
+        }
+      }
+    }
+
+    res.json({
+      success: false,
+      attempts: attempt,
+      error: lastError,
+      log,
+      message: `Deploy failed after ${attempt} attempt(s). Check the log for details.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /projects/:id/scan — auto-detect project structure (Bug #10)
 router.post('/projects/:id/scan', async (req, res) => {
   try {
@@ -138,8 +219,8 @@ router.post('/projects/:id/scan', async (req, res) => {
       }
       const cloneUrl = webHostingService.buildCloneUrl(project.git_url, project.git_token);
       const branch = project.git_branch || 'main';
-      const { execSync } = require('child_process');
-      execSync(`git clone --depth 1 -b "${branch}" "${cloneUrl}" "${deployPath}"`, {
+      const { execFileSync } = require('child_process');
+      execFileSync('git', ['clone', '--depth', '1', '-b', branch, cloneUrl, deployPath], {
         cwd: webHostingService.HOSTING_DIR,
         timeout: 60000,
         stdio: 'pipe',

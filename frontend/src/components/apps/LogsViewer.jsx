@@ -18,7 +18,7 @@ export default function LogsViewer() {
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
 
-  const { data, isLoading, refetch } = useApiQuery(
+  const { data, isLoading, isError, error, refetch } = useApiQuery(
     ['logs', source, search],
     `/admin/logs?source=${source}&search=${encodeURIComponent(search)}&pageSize=200`
   );
@@ -65,8 +65,16 @@ export default function LogsViewer() {
       <div className="flex-1 overflow-auto">
         {isLoading ? (
           <LoadingSpinner />
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+            <p className="text-sm">Failed to load logs</p>
+            <p className="text-xs opacity-60">{error?.message || 'Unknown error'}</p>
+            <Button size="sm" variant="outline" onClick={() => refetch()}>
+              <RefreshCw className="w-3 h-3 mr-1" /> Retry
+            </Button>
+          </div>
         ) : source === 'action_log' ? (
-          <table className="w-full text-xs">
+          <table className="w-full text-xs min-w-[600px]">
             <thead className="sticky top-0 bg-muted">
               <tr>
                 <th className="text-left p-2 font-medium text-muted-foreground">Time</th>

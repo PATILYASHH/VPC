@@ -406,6 +406,99 @@ export function listBranches(root: string): { name: string; hash: string; curren
   }));
 }
 
+// ─── Entire Push (force replace remote) ────────────────────
+
+export async function entirePush(root: string, client: SyncApiClient, branchName?: string): Promise<SyncResult> {
+  if (!acquireLock(root)) {
+    return { success: false, message: 'Another sync operation is in progress.' };
+  }
+
+  try {
+    const remote = getRemoteConfig(root);
+    if (!remote) { return { success: false, message: 'No remote configured.' }; }
+
+    const branch = branchName || refs.getCurrentBranch(root) || 'main';
+    const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
+    if (!localHash) { return { success: false, message: `Branch '${branch}' has no commits.` }; }
+
+    // Collect ALL local objects (no diff — send everything)
+    const allObjects = objects.collectReachableObjects(root, localHash, new Set());
+    const toSend: any[] = [];
+
+    for (const hash of allObjects) {
+      try {
+        const rawCompressed = objects.readObjectRaw(root, hash);
+        const obj = objects.readObject(root, hash);
+        toSend.push({ hash, type: obj.type, data: rawCompressed.toString('base64'), compressed: true });
+      } catch { /* skip */ }
+    }
+
+    const refUpdate: Record<string, any> = {
+      [`refs/heads/${branch}`]: { old: '0'.repeat(64), new: localHash },
+    };
+
+    const result = await client.vcsEntirePush(remote.url, remote.username, remote.token, toSend, refUpdate);
+
+    if (!result.ok) {
+      return { success: false, message: result.error || 'Entire push failed.' };
+    }
+
+    // Update tracking ref
+    refs.updateRef(root, `refs/remotes/origin/${branch}`, localHash);
+
+    return {
+      success: true,
+      message: `Force pushed ${toSend.length} objects to ${branch}. Remote fully replaced.`,
+      objectCount: toSend.length,
+      newHash: localHash,
+    };
+  } finally {
+    releaseLock(root);
+  }
+}
+
+// ─── Entire Pull (force replace local) ─────────────────────
+
+export async function entirePull(root: string, client: SyncApiClient, branchName?: string): Promise<SyncResult> {
+  if (!acquireLock(root)) {
+    return { success: false, message: 'Another sync operation is in progress.' };
+  }
+
+  try {
+    const remote = getRemoteConfig(root);
+    if (!remote) { return { success: false, message: 'No remote configured.' }; }
+
+    const branch = branchName || refs.getCurrentBranch(root) || 'main';
+
+    // Get ALL objects from remote (no haves — full download)
+    const result = await client.vcsEntirePull(remote.url, remote.username, remote.token, branch);
+
+    const remoteHash = result.refs?.[`refs/heads/${branch}`];
+    if (!remoteHash) {
+      return { success: false, message: `Branch '${branch}' not found on remote.` };
+    }
+
+    // Store all received objects
+    storeReceivedObjects(root, result.objects || []);
+
+    // Force update all refs
+    refs.updateRef(root, `refs/remotes/origin/${branch}`, remoteHash);
+    refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
+
+    // Force checkout — replaces all local files
+    checkoutTree(root, remoteHash);
+
+    return {
+      success: true,
+      message: `Force pulled ${result.objects?.length || 0} objects. Local fully replaced with remote.`,
+      objectCount: result.objects?.length || 0,
+      newHash: remoteHash,
+    };
+  } finally {
+    releaseLock(root);
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function storeReceivedObjects(root: string, objs: any[]): void {

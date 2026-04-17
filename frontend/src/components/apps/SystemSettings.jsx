@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Palette, Monitor, Sun, Moon, Sunset, Mountain, Snowflake, Check, Power, RefreshCw, Loader2, Server, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -48,6 +48,18 @@ export default function SystemSettings() {
   const setTheme = useDesktopStore((s) => s.setTheme);
   const [activeSection, setActiveSection] = useState('appearance');
   const [restarting, setRestarting] = useState(false);
+  const pollRef = useRef(null);
+  const timeoutRef = useRef(null);
+  const delayRef = useRef(null);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (delayRef.current) clearTimeout(delayRef.current);
+    };
+  }, []);
 
   function applyTheme(themeId) {
     setTheme(themeId);
@@ -60,15 +72,15 @@ export default function SystemSettings() {
       await api.post('/admin/vpshub/system/restart');
     } catch { /* server already restarting */ }
     toast.success('Restarting VPC server...');
-    setTimeout(() => {
-      const poll = setInterval(async () => {
+    delayRef.current = setTimeout(() => {
+      pollRef.current = setInterval(async () => {
         try {
           await fetch('/health');
-          clearInterval(poll);
+          clearInterval(pollRef.current);
           window.location.reload();
         } catch {}
       }, 2000);
-      setTimeout(() => { clearInterval(poll); setRestarting(false); }, 120000);
+      timeoutRef.current = setTimeout(() => { clearInterval(pollRef.current); setRestarting(false); }, 120000);
     }, 3000);
   }
 
@@ -79,30 +91,32 @@ export default function SystemSettings() {
   ];
 
   return (
-    <div className="h-full flex" style={{ background: 'var(--surface-0)' }}>
-      {/* Sidebar */}
-      <div className="w-56 border-r flex flex-col py-3 shrink-0" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
-        <div className="px-4 mb-4">
+    <div className="h-full flex flex-col sm:flex-row" style={{ background: 'var(--surface-0)' }}>
+      {/* Sidebar - horizontal tabs on mobile, vertical sidebar on desktop */}
+      <div className="sm:w-56 border-b sm:border-b-0 sm:border-r flex sm:flex-col py-2 sm:py-3 shrink-0 overflow-x-auto sm:overflow-x-visible" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
+        <div className="px-4 mb-2 sm:mb-4 hidden sm:block">
           <h2 className="text-sm font-semibold" style={{ color: 'var(--text-on-surface)' }}>Settings</h2>
         </div>
-        {sections.map(s => (
-          <button
-            key={s.id}
-            onClick={() => setActiveSection(s.id)}
-            className={`flex items-center gap-2.5 px-4 py-2 text-xs font-medium transition-colors mx-2 rounded-lg ${
-              activeSection === s.id
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-[var(--surface-hover)]'
-            }`}
-          >
-            <s.icon className="w-4 h-4" />
-            {s.label}
-          </button>
-        ))}
+        <div className="flex sm:flex-col gap-0.5 px-2 sm:px-0">
+          {sections.map(s => (
+            <button
+              key={s.id}
+              onClick={() => setActiveSection(s.id)}
+              className={`flex items-center gap-2 sm:gap-2.5 px-3 sm:px-4 py-2 text-xs font-medium transition-colors sm:mx-2 rounded-lg whitespace-nowrap ${
+                activeSection === s.id
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:bg-[var(--surface-hover)]'
+              }`}
+            >
+              <s.icon className="w-4 h-4" />
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto p-4 sm:p-6">
         {activeSection === 'appearance' && (
           <div className="max-w-2xl">
             <h3 className="text-lg font-semibold mb-1">Appearance</h3>
@@ -110,7 +124,7 @@ export default function SystemSettings() {
 
             <div className="mb-8">
               <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground/50 mb-4">Theme</h4>
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {THEMES.map(t => {
                   const isActive = theme === t.id;
                   return (
@@ -284,11 +298,11 @@ export default function SystemSettings() {
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">VPC OS Version</span>
-                    <span className="font-mono font-medium">v2.1.0</span>
+                    <span className="font-mono font-medium">v3.0.0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">VPC Sync Extension</span>
-                    <span className="font-mono font-medium">v8.0.0</span>
+                    <span className="font-mono font-medium">v9.0.0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Node.js</span>

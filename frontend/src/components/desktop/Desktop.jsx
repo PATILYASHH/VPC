@@ -7,6 +7,7 @@ import WindowManager from './WindowManager';
 import Taskbar from './Taskbar';
 import AppLauncher from './AppLauncher';
 import AppIcon from './AppIcon';
+import useIsMobile from '@/hooks/useIsMobile';
 import {
   RefreshCw, Settings, Monitor, LayoutGrid, Palette,
   FolderOpen, Terminal, Info, LogOut, Maximize2,
@@ -19,6 +20,7 @@ export default function Desktop() {
   const openWindow = useWindowStore((s) => s.openWindow);
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const logout = useAuthStore((s) => s.logout);
+  const isMobile = useIsMobile();
   const [ctxMenu, setCtxMenu] = useState(null);
 
   const allAppIds = Object.keys(APP_REGISTRY);
@@ -60,11 +62,15 @@ export default function Desktop() {
     }
   };
 
+  // Check if any non-minimized windows are open (for mobile: hide icons when app is open)
+  const windows = useWindowStore((s) => s.windows);
+  const hasVisibleWindow = isMobile && Object.values(windows).some((w) => !w.isMinimized);
+
   return (
     <div
       className="h-screen w-screen overflow-hidden relative"
       style={{ background: 'var(--desktop-bg)' }}
-      onContextMenu={handleContextMenu}
+      onContextMenu={!isMobile ? handleContextMenu : undefined}
       onClick={ctxMenu ? closeCtx : undefined}
     >
       {/* Gradient background */}
@@ -78,16 +84,28 @@ export default function Desktop() {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full blur-[120px]" style={{ background: 'var(--glow-color)' }} />
 
       {/* Desktop icon grid */}
-      <div className="absolute inset-0 bottom-12 p-6 z-10">
-        <div className="flex flex-col flex-wrap gap-2 h-full content-start">
-          {appIds.map((appId) => (
-            <AppIcon key={appId} appId={appId} />
-          ))}
+      {!hasVisibleWindow && (
+        <div className="absolute inset-0 bottom-12 p-3 sm:p-6 z-10 overflow-y-auto">
+          {isMobile ? (
+            // Mobile: horizontal grid that wraps
+            <div className="grid grid-cols-4 gap-1 content-start">
+              {appIds.map((appId) => (
+                <AppIcon key={appId} appId={appId} />
+              ))}
+            </div>
+          ) : (
+            // Desktop: vertical columns wrapping
+            <div className="flex flex-col flex-wrap gap-2 h-full content-start">
+              {appIds.map((appId) => (
+                <AppIcon key={appId} appId={appId} />
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Window layer */}
-      <div className="absolute inset-0 bottom-12 pointer-events-none z-20">
+      <div className={`absolute inset-0 bottom-12 z-20 ${isMobile ? '' : 'pointer-events-none'}`}>
         <WindowManager />
       </div>
 
@@ -97,8 +115,8 @@ export default function Desktop() {
       {/* App launcher */}
       {launcherOpen && <AppLauncher />}
 
-      {/* Right-click context menu */}
-      {ctxMenu && (
+      {/* Right-click context menu (desktop only) */}
+      {!isMobile && ctxMenu && (
         <DesktopContextMenu x={ctxMenu.x} y={ctxMenu.y} onAction={ctxAction} onClose={closeCtx} />
       )}
     </div>

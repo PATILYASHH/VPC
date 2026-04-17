@@ -115,7 +115,7 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
               <Badge variant="outline" className="text-[10px]">{project?.project_type}</Badge>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
                 <span className="text-muted-foreground block">URL</span>
                 <div className="flex items-center gap-1 mt-0.5">

@@ -1,4 +1,4 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot, LayoutDashboard } from 'lucide-react';
 import ServerManager from '@/components/apps/ServerManager';
 import DatabaseManager from '@/components/apps/DatabaseManager';
 import ApiKeyManager from '@/components/apps/ApiKeyManager';
@@ -15,8 +15,23 @@ import AgentSettings from '@/components/apps/AgentSettings';
 import JarvisChat from '@/components/apps/JarvisChat';
 import VpcStore from '@/components/apps/VpcStore';
 import SystemSettings from '@/components/apps/SystemSettings';
+import Pipeline from '@/components/apps/Pipeline';
 
 const APP_REGISTRY = {
+  'pipeline': {
+    id: 'pipeline',
+    title: 'Pipeline',
+    description: 'Grouped Resources',
+    icon: LayoutDashboard,
+    iconColor: 'text-rose-400',
+    iconBg: 'bg-rose-500/15',
+    category: 'development',
+    component: Pipeline,
+    defaultWidth: 1200,
+    defaultHeight: 750,
+    minWidth: 900,
+    minHeight: 550,
+  },
   'vpshub': {
     id: 'vpshub',
     title: 'VPSHub',
@@ -191,10 +206,10 @@ const APP_REGISTRY = {
     category: 'system',
     component: IntegrationMonitor,
     permission: 'integrations',
-    defaultWidth: 900,
-    defaultHeight: 550,
-    minWidth: 500,
-    minHeight: 350,
+    defaultWidth: 1100,
+    defaultHeight: 700,
+    minWidth: 800,
+    minHeight: 500,
   },
   'vpc-bot': {
     id: 'vpc-bot',

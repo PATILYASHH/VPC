@@ -313,6 +313,34 @@ export class SyncApiClient {
   }
 
   /**
+   * Entire Push — force replace remote with all local objects
+   */
+  async vcsEntirePush(vcsUrl: string, username: string, token: string, objects: any[], refs: Record<string, any>): Promise<any> {
+    return request(`${vcsUrl}/entire-push`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ objects, refs }),
+    });
+  }
+
+  /**
+   * Entire Pull — get complete repo snapshot (all objects, no diff)
+   */
+  async vcsEntirePull(vcsUrl: string, username: string, token: string, branch: string = 'main'): Promise<any> {
+    return request(`${vcsUrl}/entire-pull`, {
+      method: 'POST',
+      headers: {
+        Authorization: this.vcsBasicAuth(username, token),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ branch }),
+    });
+  }
+
+  /**
    * Negotiate object transfer via VPC VCS protocol
    */
   async vcsNegotiate(vcsUrl: string, username: string, token: string, body: any): Promise<any> {
