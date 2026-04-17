@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   Play, Square, RotateCcw, Rocket, GitBranch, Globe, Terminal, Settings, ExternalLink,
   Loader2, Copy, ChevronDown, Plus, Trash2, Save, RefreshCw, Link, CheckCircle2, AlertCircle,
-  Shield, Pencil
+  Shield, Pencil, Sparkles
 } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
   const queryClient = useQueryClient();
   const [deploying, setDeploying] = useState(false);
   const [actionLoading, setActionLoading] = useState(null);
+  const [fixing, setFixing] = useState(false);
 
   const { data: project, refetch } = useApiQuery(
     ['wh-project', initialProject.id],
@@ -53,6 +54,21 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
       toast.error(err.response?.data?.error || `Failed to ${action}`);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleFixWithAI = async () => {
+    setFixing(true);
+    try {
+      const { data: result } = await api.post(`/admin/web-hosting/projects/${project.id}/fix-with-ai`);
+      toast.success(`AI fixed ${result.fixesApplied} file(s) and redeployed successfully!`, { duration: 6000 });
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['wh-projects'] });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI fix failed');
+      refetch();
+    } finally {
+      setFixing(false);
     }
   };
 
@@ -161,6 +177,30 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
               </a>
             </Button>
           </div>
+
+          {/* Fix with AI — shown when project is in error state */}
+          {project?.status === 'error' && project?.last_deploy_log && (
+            <div className="flex items-start gap-3 p-4 rounded-lg border border-red-500/30 bg-red-500/5">
+              <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-red-500 mb-1">Deployment Failed</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  The last deployment encountered build errors. AI can analyze the error, fix the code, and redeploy automatically.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={handleFixWithAI}
+                  disabled={fixing}
+                  className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white border-0"
+                >
+                  {fixing
+                    ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Fixing &amp; Redeploying...</>
+                    : <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Fix with AI</>
+                  }
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Git Info */}
           {project?.git_url && (

@@ -3,7 +3,7 @@ module.exports = {
     {
       name: 'vpc',
       script: 'app.js',
-      cwd: '/var/www/vpc',
+      cwd: '/root/projects/VPC',
       env: {
         NODE_ENV: 'production',
         PORT: 8001,

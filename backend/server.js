@@ -59,9 +59,13 @@ app.get('/health', async (req, res) => {
 
 // DB External REST API (API key auth, no JWT)
 app.use('/api/db/v1', require('./routes/dbApi'));
+// Legacy alias so existing hosted apps using /api/bana/v1 keep working
+app.use('/api/bana/v1', require('./routes/dbApi'));
 // DB Pull API (pull key auth, no JWT)
 app.use('/api/db/v1', require('./routes/pull'));
+app.use('/api/bana/v1', require('./routes/pull'));
 app.use('/api/db/v1', require('./routes/syncApi'));
+app.use('/api/bana/v1', require('./routes/syncApi'));
 
 // Admin API routes
 const adminRouter = express.Router();
