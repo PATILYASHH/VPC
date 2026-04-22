@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Globe, Trash2, GitBranch, Play, Square, AlertCircle, Loader2, Search } from 'lucide-react';
+import { Plus, Globe, Trash2, GitBranch, Play, Square, AlertCircle, Loader2, Search, Github, Lock, X, ExternalLink } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import useWindowStore from '@/stores/useWindowStore';
 
 const PROJECT_TYPES = [
   { value: 'static', label: 'Static Site', desc: 'HTML, CSS, JS — served as static files' },
@@ -21,9 +22,10 @@ export default function ProjectList({ onSelectProject }) {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
-    name: '', slug: '', projectType: 'static', gitUrl: '', gitToken: '', gitBranch: 'main',
+    name: '', slug: '', projectType: 'static', gitUrl: '', gitBranch: 'main',
     buildCommand: '', installCommand: 'npm install', outputDir: '', nodeEntryPoint: 'index.js',
   });
+  const [showRepoPicker, setShowRepoPicker] = useState(false);
   const queryClient = useQueryClient();
   const { data, isLoading } = useApiQuery('wh-projects', '/admin/web-hosting/projects');
 
@@ -54,9 +56,21 @@ export default function ProjectList({ onSelectProject }) {
   };
 
   const resetForm = () => setForm({
-    name: '', slug: '', projectType: 'static', gitUrl: '', gitToken: '', gitBranch: 'main',
+    name: '', slug: '', projectType: 'static', gitUrl: '', gitBranch: 'main',
     buildCommand: '', installCommand: 'npm install', outputDir: '', nodeEntryPoint: 'index.js',
   });
+
+  const pickRepo = (repo) => {
+    // repo is a GitHub API response — fill Name, Slug, Git URL, Branch
+    setForm(prev => ({
+      ...prev,
+      name: prev.name || repo.name,
+      slug: prev.slug || generateSlug(repo.name),
+      gitUrl: repo.clone_url || `${repo.html_url}.git`,
+      gitBranch: repo.default_branch || 'main',
+    }));
+    setShowRepoPicker(false);
+  };
 
   const handleCreate = async () => {
     if (!form.name || !form.gitUrl) return;
@@ -207,6 +221,14 @@ export default function ProjectList({ onSelectProject }) {
         )}
       </div>
 
+      {/* GitHub repo picker */}
+      {showRepoPicker && (
+        <GitHubRepoPicker
+          onPick={pickRepo}
+          onClose={() => setShowRepoPicker(false)}
+        />
+      )}
+
       {/* Create Dialog */}
       <Dialog open={showCreate} onOpenChange={(open) => { setShowCreate(open); if (!open) resetForm(); }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
@@ -241,20 +263,33 @@ export default function ProjectList({ onSelectProject }) {
               </div>
             </div>
 
-            {/* Git */}
+            {/* Git — pick from GitHub or paste URL */}
             <div className="space-y-1">
-              <Label className="text-xs">Git Repository URL</Label>
-              <Input value={form.gitUrl} onChange={e => setField('gitUrl', e.target.value)} placeholder="https://github.com/user/repo.git" className="text-sm font-mono" />
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Git Repository</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowRepoPicker(true)}
+                  className="h-6 px-2 text-[10px] gap-1"
+                >
+                  <Github className="w-3 h-3" /> Import from GitHub
+                </Button>
+              </div>
+              <Input
+                value={form.gitUrl}
+                onChange={e => setField('gitUrl', e.target.value)}
+                placeholder="https://github.com/user/repo.git"
+                className="text-sm font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Private repos use your saved GitHub connection automatically — no token needed here.
+              </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Access Token <span className="text-muted-foreground">(for private repos)</span></Label>
-                <Input type="password" value={form.gitToken} onChange={e => setField('gitToken', e.target.value)} placeholder="ghp_xxxx" className="text-sm font-mono" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Branch</Label>
-                <Input value={form.gitBranch} onChange={e => setField('gitBranch', e.target.value)} className="text-sm font-mono" />
-              </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Branch</Label>
+              <Input value={form.gitBranch} onChange={e => setField('gitBranch', e.target.value)} className="text-sm font-mono" />
             </div>
 
             {/* Build — Bug #12: show placeholder for fullstack, hide entry point for static */}
@@ -312,6 +347,144 @@ export default function ProjectList({ onSelectProject }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ─── GitHub repo picker ─────────────────────────────────────
+// Lists the authenticated user's repos via the saved GitHub integration.
+// If no GitHub connection exists, prompts the user to open Connections.
+
+function GitHubRepoPicker({ onPick, onClose }) {
+  const [repos, setRepos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [needsConnection, setNeedsConnection] = useState(false);
+  const [err, setErr] = useState(null);
+  const openWindow = useWindowStore((s) => s.openWindow);
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/admin/integrations/proxy/github/repos?app=web-hosting')
+      .then(({ data }) => {
+        if (!alive) return;
+        setRepos(data.repos || []);
+      })
+      .catch((e) => {
+        if (!alive) return;
+        const code = e.response?.data?.code || e.response?.status;
+        if (code === 'INTEGRATION_MISSING' || e.response?.status === 412 || e.response?.status === 404) {
+          setNeedsConnection(true);
+        } else {
+          setErr(e.response?.data?.error || e.message);
+        }
+      })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const filtered = repos.filter(r =>
+    !search || r.full_name?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-md rounded-2xl border bg-card shadow-2xl mx-4 max-h-[80vh] flex flex-col"
+        style={{ borderColor: 'var(--surface-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+              <Github className="w-4 h-4 text-violet-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">Import from GitHub</h3>
+              <p className="text-[10px] text-muted-foreground">Pick a repo — no token paste.</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-accent">
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="p-4 overflow-auto flex-1">
+          {loading ? (
+            <div className="text-center py-6 text-xs text-muted-foreground">
+              <Loader2 className="w-5 h-5 mx-auto mb-2 animate-spin" />
+              Loading repositories…
+            </div>
+          ) : needsConnection ? (
+            <div className="border border-dashed rounded-xl p-4 text-center" style={{ borderColor: 'var(--surface-border)' }}>
+              <Lock className="w-6 h-6 mx-auto mb-2 text-amber-400" />
+              <p className="text-xs font-medium">GitHub is not connected yet</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5 mb-3">
+                Connect GitHub once in the Connections app, then come back here.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { openWindow?.({ appId: 'connections' }); onClose(); }}
+                className="text-xs"
+              >
+                <ExternalLink className="w-3 h-3 mr-1.5" /> Open Connections
+              </Button>
+            </div>
+          ) : err ? (
+            <div className="text-center py-6 text-xs text-rose-400">
+              <AlertCircle className="w-5 h-5 mx-auto mb-1" />
+              {err}
+            </div>
+          ) : repos.length === 0 ? (
+            <div className="text-center py-6 text-xs text-muted-foreground">No repositories found.</div>
+          ) : (
+            <>
+              <div className="relative mb-3">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 opacity-50" />
+                <Input
+                  autoFocus
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search repos…"
+                  className="pl-7 h-8 text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                {filtered.slice(0, 60).map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => onPick(r)}
+                    className="w-full text-left px-3 py-2 rounded-lg border hover:bg-white/[0.03] transition-colors"
+                    style={{ borderColor: 'var(--surface-border)' }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-xs font-semibold truncate">{r.full_name}</span>
+                      {r.private && <Lock className="w-2.5 h-2.5 text-amber-400" />}
+                      {r.fork && <Badge variant="outline" className="text-[8px]">fork</Badge>}
+                    </div>
+                    {r.description && (
+                      <div className="text-[10px] text-muted-foreground truncate mt-0.5">{r.description}</div>
+                    )}
+                    <div className="text-[9px] text-muted-foreground/60 mt-0.5">
+                      {r.default_branch || 'main'} · {r.language || 'unknown'} · updated {r.pushed_at?.slice(0, 10)}
+                    </div>
+                  </button>
+                ))}
+                {filtered.length > 60 && (
+                  <div className="text-center text-[10px] text-muted-foreground py-2">
+                    Showing 60 of {filtered.length} — refine search to see more.
+                  </div>
+                )}
+                {filtered.length === 0 && (
+                  <div className="text-center text-[10px] text-muted-foreground py-4">No matches.</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

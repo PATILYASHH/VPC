@@ -679,7 +679,18 @@ async function deploy(pool, project) {
   try {
     await pool.query(`UPDATE web_hosting_projects SET status = 'deploying', updated_at = NOW() WHERE id = $1`, [project.id]);
 
-    const cloneUrl = buildCloneUrl(project.git_url, project.git_token);
+    // Auto-resolve GitHub token from the saved integration when the project
+    // doesn't have one stored — no more per-project token paste.
+    let effectiveToken = project.git_token;
+    if (!effectiveToken && /github\.com/.test(project.git_url || '')) {
+      try {
+        const credResolver = require('./credentialResolver');
+        const resolved = await credResolver.resolve(pool, 'github', { app: 'web-hosting', resource: project.id });
+        if (resolved?.credentials?.token) effectiveToken = resolved.credentials.token;
+      } catch { /* fall through — public repos clone without a token */ }
+    }
+
+    const cloneUrl = buildCloneUrl(project.git_url, effectiveToken);
     const deployPath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
     const branch = project.git_branch || 'main';
 
