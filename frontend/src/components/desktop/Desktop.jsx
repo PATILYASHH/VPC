@@ -13,6 +13,7 @@ import NotificationCenter from './NotificationCenter';
 import JobQueue from './JobQueue';
 import StatusBar from './StatusBar';
 import KeyboardShortcutsOverlay from './KeyboardShortcutsOverlay';
+import UpgradeBanner from './UpgradeBanner';
 import useIsMobile from '@/hooks/useIsMobile';
 import useGlobalKeyboard from '@/hooks/useGlobalKeyboard';
 import {
@@ -84,6 +85,8 @@ export default function Desktop() {
       onContextMenu={!isMobile ? handleContextMenu : undefined}
       onClick={ctxMenu ? closeCtx : undefined}
     >
+      <UpgradeBanner />
+
       {/* Gradient background */}
       <div className="absolute inset-0" style={{ background: `linear-gradient(to bottom right, var(--desktop-gradient-from), var(--desktop-gradient-via), var(--desktop-gradient-to))` }} />
       {/* Subtle dot pattern */}

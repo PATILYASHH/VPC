@@ -44,9 +44,10 @@ app.use((req, res, next) => {
   express.urlencoded({ extended: true, limit: '500mb' })(req, res, next);
 });
 
-// Attach database pool + central logger
+// Attach database pool + central logger + capture boot commit
 app.locals.pool = pool;
 require('./utils/logger').setPool(pool);
+require('./services/upgradeService').captureBoot();
 
 // Health check
 app.get('/health', async (req, res) => {
@@ -100,6 +101,7 @@ adminRouter.use('/settings', require('./routes/settings'));
 adminRouter.use('/vpshub', require('./routes/vpshub'));
 adminRouter.use('/pipeline', require('./routes/pipeline'));
 adminRouter.use('/realtime', require('./routes/realtime'));
+adminRouter.use('/upgrade', require('./routes/upgrade'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {

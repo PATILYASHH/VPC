@@ -18,6 +18,7 @@ const ROUTE_PERMISSION_MAP = {
   '/vpshub': 'vpshub',
   '/pipeline': 'pipeline',
   '/realtime': 'realtime',
+  '/upgrade': 'settings',
 };
 
 async function authenticateAdmin(req, res, next) {

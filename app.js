@@ -91,8 +91,30 @@ app.listen(PORT, async () => {
         });
       });
 
-      await run(`git pull origin ${branch}`);
-      console.log('[VPC Auto-Upgrade] git pull done');
+      // Try a fast-forward pull first; fall back to reset --hard if the tree
+      // is dirty or diverged — the upgrader is authoritative over the remote.
+      let pullErr = null;
+      try {
+        await run(`git pull --ff-only origin ${branch}`);
+      } catch (err) {
+        pullErr = err;
+        console.warn('[VPC Auto-Upgrade] ff-only pull failed, forcing reset to remote:', err.message);
+        try {
+          await run(`git reset --hard origin/${branch}`);
+        } catch (resetErr) {
+          throw new Error(`Both pull and reset failed. Pull: ${pullErr.message}. Reset: ${resetErr.message}`);
+        }
+      }
+
+      // Verify HEAD actually moved — catches silent failures
+      const newHash = execSync('git rev-parse HEAD', { cwd: rootDir, encoding: 'utf8' }).trim();
+      if (newHash === localHash) {
+        throw new Error(`Upgrade reported success but HEAD did not move (still at ${localHash.slice(0, 7)}).`);
+      }
+      if (newHash !== remoteHash) {
+        console.warn(`[VPC Auto-Upgrade] HEAD (${newHash.slice(0, 7)}) does not match remote (${remoteHash.slice(0, 7)}) — partial update?`);
+      }
+      console.log(`[VPC Auto-Upgrade] git advanced: ${localHash.slice(0, 7)} → ${newHash.slice(0, 7)}`);
       await run('cd backend && npm install --production');
       console.log('[VPC Auto-Upgrade] backend deps done');
       await run('cd frontend && npm install');
@@ -120,14 +142,31 @@ app.listen(PORT, async () => {
         console.error('[VPC Auto-Upgrade] Migration error:', migrationErr.message);
       }
 
-      // Save pending restart flag — user must restart manually
+      // Save pending restart flag with BOTH the commit we booted from AND the new one,
+      // so the status endpoint can tell the user exactly what changed.
+      const { BOOT_COMMIT } = require('./backend/services/upgradeService');
+      const pendingPayload = {
+        upgraded_at: new Date().toISOString(),
+        branch,
+        auto: true,
+        commits: behindCount,
+        from_commit: BOOT_COMMIT || localHash,
+        to_commit: newHash,
+      };
       await pool.query(
         `INSERT INTO vpc_settings (key, value) VALUES ('upgrade_pending_restart', $1)
          ON CONFLICT (key) DO UPDATE SET value = $1`,
-        [JSON.stringify({ upgraded_at: new Date().toISOString(), branch, auto: true, commits: behindCount })]
+        [JSON.stringify(pendingPayload)]
       ).catch(() => {});
 
-      console.log(`[VPC Auto-Upgrade] Complete! ${behindCount} commits applied. Waiting for manual restart.`);
+      console.log(`[VPC Auto-Upgrade] Complete! ${behindCount} commits applied. Boot=${(BOOT_COMMIT||'?').slice(0,7)} OnDisk=${newHash.slice(0,7)}. Restart required.`);
+
+      // Notify admins via Telegram / realtime so they know to hit the Restart button
+      try {
+        const bus = require('./backend/services/realtimeBus');
+        bus.publish('upgrade:pending', pendingPayload);
+      } catch {}
+      jarvisTelegram.alertUpgradeAvailable?.(behindCount).catch(() => {});
     } catch (err) {
       console.error('[VPC Auto-Upgrade] Error:', err.message);
     }
