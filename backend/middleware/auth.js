@@ -16,17 +16,25 @@ const ROUTE_PERMISSION_MAP = {
   '/web-hosting': 'web_hosting',
   '/settings': 'ai_agent',
   '/vpshub': 'vpshub',
+  '/pipeline': 'pipeline',
+  '/realtime': 'realtime',
 };
 
 async function authenticateAdmin(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    let token = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.replace('Bearer ', '');
+    } else if (req.query && req.query._t) {
+      // SSE/EventSource fallback — token via query string
+      token = String(req.query._t);
+    }
+    if (!token) {
       return res.status(401).json({ error: 'No authorization token provided' });
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    if (!token || token.length < 20) {
+    if (token.length < 20) {
       return res.status(401).json({ error: 'Invalid token format' });
     }
 

@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { Rnd } from 'react-rnd';
 import useWindowStore from '@/stores/useWindowStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import WindowTitleBar from './WindowTitleBar';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
+import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import useIsMobile from '@/hooks/useIsMobile';
 
 export default function Window({ windowId }) {
@@ -75,7 +76,9 @@ export default function Window({ windowId }) {
         <WindowTitleBar windowId={windowId} isActive={true} />
         <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
           <ErrorBoundary>
-            <AppComponent />
+            <Suspense fallback={<div className="flex items-center justify-center h-full"><LoadingSpinner /></div>}>
+              <AppComponent />
+            </Suspense>
           </ErrorBoundary>
         </div>
       </div>
@@ -121,7 +124,9 @@ export default function Window({ windowId }) {
         <WindowTitleBar windowId={windowId} isActive={isActive} />
         <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
           <ErrorBoundary>
-            <AppComponent />
+            <Suspense fallback={<div className="flex items-center justify-center h-full"><LoadingSpinner /></div>}>
+              <AppComponent />
+            </Suspense>
           </ErrorBoundary>
         </div>
       </div>

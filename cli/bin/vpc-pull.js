@@ -3,6 +3,7 @@ import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
 import { pullCommand } from '../src/commands/pull.js';
 import { statusCommand } from '../src/commands/status.js';
+import { loginCommand } from '../src/commands/login.js';
 
 program
   .name('vpc-pull')
@@ -28,5 +29,11 @@ program
   .command('status')
   .description('Show pull status and pending changes')
   .action(statusCommand);
+
+program
+  .command('login')
+  .description('Sign in to VPC via browser (GitHub-style device flow)')
+  .option('--server <url>', 'VPC server URL', 'http://localhost:8001')
+  .action(loginCommand);
 
 program.parse();

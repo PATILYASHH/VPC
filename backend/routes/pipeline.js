@@ -115,9 +115,13 @@ router.put('/pipelines/:id/resources', async (req, res) => {
 });
 
 // Fork production resources to create beta environment
+// body: { copyData?: bool, autoDeploy?: bool }
 router.post('/pipelines/:id/fork-to-beta', async (req, res) => {
   try {
-    const results = await pipelineService.forkToBeta(req.app.locals.pool, req.params.id);
+    const results = await pipelineService.forkToBeta(req.app.locals.pool, req.params.id, {
+      copyData: req.body?.copyData !== false, // default true — exact fork
+      autoDeploy: req.body?.autoDeploy !== false,
+    });
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -134,10 +138,59 @@ router.get('/available-resources', async (req, res) => {
   }
 });
 
-// Promote beta → production (schema PR + redeploy prod)
-router.post('/pipelines/:id/promote', async (req, res) => {
+// Promote beta → production (schema PR + redeploy prod) — legacy
+router.post('/pipelines/:id/promote-legacy', async (req, res) => {
   try {
     const result = await pipelineService.promoteToProd(req.app.locals.pool, req.params.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Perfect 1-click promote flow ────────────────────────────
+const promoteService = require('../services/pipelinePromoteService');
+
+// Preflight — returns the full plan, makes no changes
+router.get('/pipelines/:id/promote/preflight', async (req, res) => {
+  try {
+    const plan = await promoteService.preflight(req.app.locals.pool, req.params.id);
+    res.json({ plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Execute — applies schema + redeploys prod after confirmations
+// body: { confirmations: { schema: true, deploy: true }, skipBackup?: bool, dryRun?: bool }
+router.post('/pipelines/:id/promote', async (req, res) => {
+  try {
+    const result = await promoteService.promote(req.app.locals.pool, req.params.id, {
+      initiatedBy: req.admin?.id,
+      confirmations: req.body?.confirmations || {},
+      skipBackup: req.body?.skipBackup,
+      dryRun: req.body?.dryRun,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Promotion history
+router.get('/pipelines/:id/promotions', async (req, res) => {
+  try {
+    const runs = await promoteService.listRuns(req.app.locals.pool, req.params.id);
+    res.json({ runs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Rollback a prior promotion (restores pre-promote DB snapshot)
+router.post('/pipelines/:id/promotions/:runId/rollback', async (req, res) => {
+  try {
+    const result = await promoteService.rollback(req.app.locals.pool, req.params.runId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

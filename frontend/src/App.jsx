@@ -5,6 +5,7 @@ import LoginPage from '@/pages/LoginPage';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import Desktop from '@/components/desktop/Desktop';
 import { Toaster } from 'sonner';
+import { start as startRealtime, stop as stopRealtime } from '@/lib/realtime';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,6 +25,13 @@ export default function App() {
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      startRealtime();
+      return () => stopRealtime();
+    }
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return <LoadingSpinner fullScreen />;

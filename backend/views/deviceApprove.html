@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Authorize VS Code · VPC</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card: #141414;
+    --border: #262626;
+    --fg: #f5f5f5;
+    --muted: #888;
+    --accent: #fff;
+    --accent-fg: #000;
+    --danger: #ef4444;
+    --success: #22c55e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .card {
+    width: 100%; max-width: 440px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 32px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+  .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .brand-text { font-size: 13px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+  p.sub { color: var(--muted); font-size: 14px; line-height: 1.5; margin-bottom: 24px; }
+  .code-box {
+    background: #1e1e1e; border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px; text-align: center; margin-bottom: 20px;
+  }
+  .code-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .code-value { font-family: "SF Mono", Menlo, monospace; font-size: 28px; font-weight: 600; letter-spacing: 4px; }
+  .meta-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; }
+  .meta-row .l { color: var(--muted); }
+  .meta-row .v { font-weight: 500; }
+  .actions { display: flex; gap: 10px; margin-top: 24px; }
+  button {
+    flex: 1; padding: 11px; font-size: 14px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer;
+    transition: opacity .15s;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
+  .btn-primary:hover:not(:disabled) { opacity: .85; }
+  .btn-secondary { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  .btn-secondary:hover:not(:disabled) { background: #1e1e1e; }
+  .msg { font-size: 13px; padding: 12px; border-radius: 8px; margin-top: 16px; display: none; }
+  .msg.err { background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); color: var(--danger); display: block; }
+  .msg.ok { background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.3); color: var(--success); display: block; }
+  input[type=text] {
+    width: 100%; padding: 12px; font-size: 16px; font-family: "SF Mono", Menlo, monospace;
+    text-align: center; letter-spacing: 3px; text-transform: uppercase;
+    background: #1e1e1e; color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+    outline: none; margin-bottom: 16px;
+  }
+  input[type=text]:focus { border-color: var(--accent); }
+  .login-prompt { text-align: center; padding: 20px; }
+  .login-prompt a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .login-prompt a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <div class="brand-text">VPC · Authorize Device</div>
+    </div>
+
+    <div id="app"></div>
+  </div>
+
+<script>
+  const app = document.getElementById('app');
+  const token = localStorage.getItem('vpc-token');
+  const params = new URLSearchParams(location.search);
+  let userCode = (params.get('code') || '').toUpperCase();
+
+  function render(html) { app.innerHTML = html; }
+
+  function h(strings, ...values) {
+    return strings.reduce((acc, s, i) => acc + s + (values[i] || ''), '');
+  }
+
+  async function api(method, path, body) {
+    const res = await fetch(path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: 'Bearer ' + token } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  function showNotLoggedIn() {
+    render(h`
+      <h1>Sign in required</h1>
+      <p class="sub">Sign in to VPC in this browser first, then return to this page to authorize your VS Code extension.</p>
+      <div class="actions">
+        <button class="btn-primary" onclick="location.href='/?device=${userCode}'">Sign in to VPC</button>
+      </div>
+    `);
+  }
+
+  function showCodeInput() {
+    render(h`
+      <h1>Enter device code</h1>
+      <p class="sub">Paste the code shown in VS Code to continue.</p>
+      <input type="text" id="codeInput" placeholder="XXXX-XXXX" maxlength="9" autofocus />
+      <div class="actions">
+        <button class="btn-primary" onclick="submitCode()">Continue</button>
+      </div>
+      <div id="msg" class="msg"></div>
+    `);
+    document.getElementById('codeInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitCode();
+    });
+  }
+
+  window.submitCode = function() {
+    const v = document.getElementById('codeInput').value.trim().toUpperCase();
+    if (!v) return;
+    userCode = v;
+    location.search = '?code=' + encodeURIComponent(v);
+  };
+
+  async function loadPending() {
+    const { ok, status, data } = await api('GET', '/api/admin/auth/device/pending?code=' + encodeURIComponent(userCode));
+
+    if (!ok) {
+      if (status === 401) return showNotLoggedIn();
+      return render(h`
+        <h1>Invalid code</h1>
+        <p class="sub">${(data.error || 'Device code not found.')}</p>
+        <div class="actions">
+          <button class="btn-secondary" onclick="location.href='/auth/device'">Try another code</button>
+        </div>
+      `);
+    }
+
+    if (data.status === 'expired') {
+      return render(h`
+        <h1>Code expired</h1>
+        <p class="sub">This device code has expired. Go back to VS Code and restart sign-in.</p>
+      `);
+    }
+    if (data.status === 'approved') {
+      return render(h`
+        <div class="msg ok" style="display:block">Already approved. You can close this window and return to VS Code.</div>
+      `);
+    }
+
+    const exp = new Date(data.expires_at);
+    render(h`
+      <h1>Authorize VS Code?</h1>
+      <p class="sub">An application is requesting access to your VPC account. If you did not start this, click Deny.</p>
+
+      <div class="code-box">
+        <div class="code-label">Device Code</div>
+        <div class="code-value">${data.user_code}</div>
+      </div>
+
+      <div class="meta-row"><span class="l">Application</span><span class="v">${(data.client_name || 'Unknown')}</span></div>
+      <div class="meta-row"><span class="l">Expires</span><span class="v">${exp.toLocaleTimeString()}</span></div>
+
+      <div class="actions">
+        <button class="btn-secondary" onclick="deny()">Deny</button>
+        <button class="btn-primary" id="approveBtn" onclick="approve()">Authorize</button>
+      </div>
+      <div id="msg" class="msg"></div>
+    `);
+  }
+
+  window.approve = async function() {
+    const btn = document.getElementById('approveBtn');
+    btn.disabled = true; btn.textContent = 'Authorizing...';
+    const { ok, data } = await api('POST', '/api/admin/auth/device/confirm', { user_code: userCode });
+    const msg = document.getElementById('msg');
+    if (ok) {
+      msg.className = 'msg ok';
+      msg.textContent = 'Authorized! Return to VS Code — it will sign in automatically. You can close this window.';
+    } else {
+      msg.className = 'msg err';
+      msg.textContent = data.error || 'Authorization failed';
+      btn.disabled = false; btn.textContent = 'Authorize';
+    }
+  };
+
+  window.deny = async function() {
+    await api('POST', '/api/admin/auth/device/deny', { user_code: userCode });
+    render(h`
+      <h1>Denied</h1>
+      <p class="sub">You denied the authorization request. You can close this window.</p>
+    `);
+  };
+
+  // boot
+  if (!token) {
+    showNotLoggedIn();
+  } else if (!userCode) {
+    showCodeInput();
+  } else {
+    loadPending();
+  }
+</script>
+</body>
+</html>

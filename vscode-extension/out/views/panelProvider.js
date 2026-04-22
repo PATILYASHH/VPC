@@ -43,6 +43,7 @@ const objects = __importStar(require("../vcs/objects"));
 const refs = __importStar(require("../vcs/refs"));
 const index = __importStar(require("../vcs/index"));
 const sync = __importStar(require("../vcs/sync"));
+const deviceFlow_1 = require("../auth/deviceFlow");
 class PanelProvider {
     constructor(client, ctx, onConnected) {
         this.client = client;
@@ -55,9 +56,11 @@ class PanelProvider {
         this.render();
         view.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.command) {
-                case 'fetchRepos': return this.fetchRepos(msg);
+                case 'signIn': return this.signIn();
+                case 'fetchRepos': return this.fetchReposForSession();
                 case 'cloneRepo': return this.cloneRepo(msg);
                 case 'disconnect': return this.disconnect();
+                case 'signOut': return this.signOut();
                 case 'commit': return this.doCommit(msg.message);
                 case 'stageAll': return vscode.commands.executeCommand('vpcSync.stageAll');
                 case 'push': return vscode.commands.executeCommand('vpcSync.push');
@@ -70,31 +73,68 @@ class PanelProvider {
                     return;
             }
         });
+        // Re-render when the VPC authentication session changes (sign-in / sign-out elsewhere)
+        vscode.authentication.onDidChangeSessions(e => {
+            if (e.provider.id === deviceFlow_1.VPC_AUTH_PROVIDER_ID) {
+                this.render();
+            }
+        });
     }
-    refresh() { this.render(); }
-    async fetchRepos(msg) {
+    async signIn() {
         try {
-            const result = await this.client.vpshubGetRepos(msg.serverUrl, msg.token);
+            const session = await (0, deviceFlow_1.getVpcSession)(true);
+            if (!session) {
+                return;
+            }
+            this.render();
+            // Auto-load repo list after sign-in
+            this.fetchReposForSession();
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Sign-in failed: ${err.message}`);
+        }
+    }
+    async fetchReposForSession() {
+        const session = await (0, deviceFlow_1.getVpcSession)(false);
+        if (!session) {
+            this._view?.webview.postMessage({ command: 'error', text: 'Not signed in.' });
+            return;
+        }
+        try {
+            const result = await this.client.vpshubGetRepos(session.serverUrl, session.accessToken);
             this._view?.webview.postMessage({ command: 'repos', repos: result.repos || [] });
         }
         catch (err) {
             this._view?.webview.postMessage({ command: 'error', text: err.message });
         }
     }
+    async signOut() {
+        const all = await this.client;
+        void all;
+        await (0, deviceFlow_1.signOut)(this.ctx);
+        await vscode.authentication.getSession(deviceFlow_1.VPC_AUTH_PROVIDER_ID, ['repo', 'sync'], { clearSessionPreference: true, createIfNone: false });
+        vscode.window.showInformationMessage('Signed out of VPC.');
+        this.render();
+    }
+    refresh() { this.render(); }
     async cloneRepo(msg) {
         const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!root) {
             vscode.window.showErrorMessage('Open a folder first.');
             return;
         }
+        const session = await (0, deviceFlow_1.getVpcSession)(false);
+        if (!session) {
+            vscode.window.showErrorMessage('Not signed in.');
+            return;
+        }
         const config = vscode.workspace.getConfiguration('vpcSync');
-        await config.update('serverUrl', msg.serverUrl, vscode.ConfigurationTarget.Workspace);
-        await config.update('token', msg.token, vscode.ConfigurationTarget.Workspace);
-        await config.update('username', msg.username, vscode.ConfigurationTarget.Workspace);
+        await config.update('serverUrl', session.serverUrl, vscode.ConfigurationTarget.Workspace);
+        await config.update('username', session.username, vscode.ConfigurationTarget.Workspace);
         await config.update('repository', `${msg.owner}/${msg.repo}`, vscode.ConfigurationTarget.Workspace);
-        const vcsUrl = `${msg.serverUrl}/vcs/${msg.owner}/${msg.repo}`;
+        const vcsUrl = `${session.serverUrl}/vcs/${msg.owner}/${msg.repo}`;
         if (objects.hasVpcRepo(root)) {
-            sync.setRemoteConfig(root, vcsUrl, msg.username, msg.token);
+            sync.setRemoteConfig(root, vcsUrl, session.username, session.accessToken);
             vscode.window.showInformationMessage(`Connected to ${msg.owner}/${msg.repo}`);
             this.onConnected();
             this.render();
@@ -102,7 +142,7 @@ class PanelProvider {
         }
         this._view?.webview.postMessage({ command: 'status', text: 'Cloning...' });
         try {
-            const result = await sync.cloneRepo(root, this.client, vcsUrl, msg.username, msg.token);
+            const result = await sync.cloneRepo(root, this.client, vcsUrl, session.username, session.accessToken);
             if (result.success) {
                 vscode.window.showInformationMessage(result.message);
                 this.onConnected();
@@ -174,27 +214,33 @@ class PanelProvider {
     }
     async disconnect() {
         const config = vscode.workspace.getConfiguration('vpcSync');
-        await config.update('serverUrl', undefined, vscode.ConfigurationTarget.Workspace);
-        await config.update('token', undefined, vscode.ConfigurationTarget.Workspace);
         await config.update('repository', undefined, vscode.ConfigurationTarget.Workspace);
-        await config.update('username', undefined, vscode.ConfigurationTarget.Workspace);
         vscode.commands.executeCommand('setContext', 'vpc:connected', false);
-        vscode.window.showInformationMessage('Disconnected from VPSHub.');
+        vscode.window.showInformationMessage('Disconnected from repository. Still signed in to VPC.');
         this.render();
     }
     render() {
         if (!this._view)
             return;
         const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        const config = vscode.workspace.getConfiguration('vpcSync');
-        const serverUrl = config.get('serverUrl') || '';
-        const token = config.get('token') || '';
-        const username = config.get('username') || '';
-        const repository = config.get('repository') || '';
         const connected = !!(root && objects.hasVpcRepo(root));
-        this._view.webview.html = connected
-            ? this.connectedHtml(serverUrl, username, repository, root)
-            : this.connectFormHtml(serverUrl, token, username);
+        // Load session asynchronously and re-render with it
+        (0, deviceFlow_1.getVpcSession)(false).then(session => {
+            if (!this._view)
+                return;
+            const config = vscode.workspace.getConfiguration('vpcSync');
+            const repository = config.get('repository') || '';
+            if (connected && session) {
+                this._view.webview.html = this.connectedHtml(session.serverUrl, session.username, repository, root);
+            }
+            else if (session) {
+                // Signed in but no repo connected — show repo picker
+                this._view.webview.html = this.repoPickerHtml(session.serverUrl, session.username, session.account.label);
+            }
+            else {
+                this._view.webview.html = this.signInHtml();
+            }
+        });
     }
     // ─── Connected View ────────────────────────────────────
     connectedHtml(serverUrl, username, repository, root) {
@@ -299,116 +345,108 @@ document.getElementById('commitMsg').addEventListener('keydown',function(e){
 </script>
 </body></html>`;
     }
-    // ─── Connection Form ───────────────────────────────────
-    connectFormHtml(serverUrl, token, username) {
+    // ─── Sign-in Screen (no PAT required) ──────────────────
+    signInHtml() {
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);padding:14px}
+.hero{text-align:center;padding:20px 0 8px}
+.logo{width:42px;height:42px;border-radius:10px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);display:inline-flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;margin-bottom:12px}
+h2{font-size:15px;font-weight:600;margin-bottom:6px}
+.sub{font-size:11px;color:var(--vscode-descriptionForeground);line-height:1.5;margin-bottom:18px;max-width:220px;margin-left:auto;margin-right:auto}
+.btn{width:100%;padding:10px;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer}
+.btn-primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
+.btn-primary:hover{background:var(--vscode-button-hoverBackground)}
+.feat{margin-top:22px;padding:12px;border:1px solid var(--vscode-panel-border);border-radius:6px;font-size:11px;line-height:1.6;color:var(--vscode-descriptionForeground)}
+.feat b{color:var(--vscode-foreground)}
+.feat .dot{display:inline-block;width:3px;height:3px;border-radius:50%;background:var(--vscode-descriptionForeground);margin:0 6px 2px}
+</style></head><body>
+
+<div class="hero">
+  <div class="logo">V</div>
+  <h2>Sign in to VPC</h2>
+  <div class="sub">Connects VPC and VPC Sync in one step — your browser approves, no tokens to paste.</div>
+  <button class="btn btn-primary" onclick="post('signIn')">Sign in with Browser</button>
+</div>
+
+<div class="feat">
+  <b>How it works</b><br>
+  <span class="dot"></span>Click sign in<br>
+  <span class="dot"></span>Approve in your browser<br>
+  <span class="dot"></span>VS Code remembers you — securely
+</div>
+
+<script>
+const vscode=acquireVsCodeApi();
+function post(c){vscode.postMessage({command:c})}
+</script>
+</body></html>`;
+    }
+    // ─── Repo Picker (after sign-in, before clone) ─────────
+    repoPickerHtml(serverUrl, username, displayName) {
         const e = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         return `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);padding:10px}
-h2{font-size:13px;font-weight:600;margin-bottom:4px}
-.sub{font-size:11px;color:var(--vscode-descriptionForeground);margin-bottom:14px}
-label{display:block;font-size:11px;font-weight:500;color:var(--vscode-descriptionForeground);margin:10px 0 3px}
-input{width:100%;padding:6px 8px;font-size:12px;font-family:var(--vscode-editor-font-family);border:1px solid var(--vscode-input-border);background:var(--vscode-input-background);color:var(--vscode-input-foreground);border-radius:4px;outline:none}
-input:focus{border-color:var(--vscode-focusBorder)}
-.btn{width:100%;padding:8px;font-size:12px;font-weight:600;border:none;border-radius:5px;cursor:pointer;margin-top:12px}
-.btn-primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
-.btn-primary:hover{background:var(--vscode-button-hoverBackground)}
-.btn-primary:disabled{opacity:.5;cursor:default}
-.repo-list{margin-top:10px;border:1px solid var(--vscode-panel-border);border-radius:6px;max-height:220px;overflow-y:auto}
+.account{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--vscode-panel-border);border-radius:6px;margin-bottom:10px}
+.account .who{display:flex;align-items:center;gap:8px}
+.avatar{width:24px;height:24px;border-radius:50%;background:var(--vscode-button-background);color:var(--vscode-button-foreground);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.account .name{font-size:11px;font-weight:600}
+.account .host{font-size:10px;color:var(--vscode-descriptionForeground)}
+.signout{font-size:10px;color:var(--vscode-textLink-foreground);cursor:pointer;background:none;border:none}
+.step{font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px}
+.repo-list{border:1px solid var(--vscode-panel-border);border-radius:6px;max-height:260px;overflow-y:auto}
 .repo-item{padding:8px 10px;font-size:11px;cursor:pointer;border-bottom:1px solid var(--vscode-panel-border);display:flex;justify-content:space-between;align-items:center}
 .repo-item:last-child{border-bottom:none}
 .repo-item:hover{background:var(--vscode-list-hoverBackground)}
 .repo-name{font-weight:600;font-family:var(--vscode-editor-font-family)}
 .repo-badge{font-size:9px;padding:1px 5px;border-radius:3px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}
-.hidden{display:none}
 .msg{font-size:11px;color:var(--vscode-descriptionForeground);text-align:center;padding:14px}
 .err{color:var(--vscode-errorForeground)}
-.sep{border-top:1px solid var(--vscode-panel-border);margin:12px 0}
-.step{font-size:10px;font-weight:600;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:.5px;margin-top:14px;margin-bottom:6px}
 </style></head><body>
 
-<h2>VPC Sync</h2>
-<div class="sub">Connect to VPSHub to push, pull, and sync your code.</div>
-
-<div class="step">1. Server Details</div>
-
-<label>Server URL</label>
-<input type="text" id="serverUrl" placeholder="http://your-server:8001" value="${e(serverUrl)}" />
-
-<label>Username</label>
-<input type="text" id="username" placeholder="admin" value="${e(username)}" />
-
-<label>Personal Access Token</label>
-<input type="password" id="token" placeholder="vpshub_..." value="${e(token)}" />
-
-<button class="btn btn-primary" id="connectBtn" onclick="fetchRepos()">Connect</button>
-
-<div id="repoSection" class="hidden">
-  <div class="sep"></div>
-  <div class="step">2. Select Repository</div>
-  <div id="repoList" class="repo-list">
-    <div class="msg">Loading repositories...</div>
+<div class="account">
+  <div class="who">
+    <div class="avatar">${e((displayName || username || '?').charAt(0).toUpperCase())}</div>
+    <div>
+      <div class="name">${e(displayName || username)}</div>
+      <div class="host">${e(serverUrl)}</div>
+    </div>
   </div>
+  <button class="signout" onclick="post('signOut')">Sign out</button>
 </div>
 
-<div id="statusMsg" class="hidden msg"></div>
+<div class="step">Select repository</div>
+<div id="repoList" class="repo-list"><div class="msg">Loading repositories...</div></div>
 
 <script>
-const vscode = acquireVsCodeApi();
-let loadingRepos = false;
-
-function val(id) { return document.getElementById(id).value.trim(); }
-
-function fetchRepos() {
-  const serverUrl = val('serverUrl').replace(/\\/+$/,'');
-  const token = val('token');
-  const username = val('username');
-  if (!serverUrl || !token || !username) return;
-  loadingRepos = true;
-  document.getElementById('connectBtn').disabled = true;
-  document.getElementById('connectBtn').textContent = 'Connecting...';
-  document.getElementById('repoSection').classList.remove('hidden');
-  document.getElementById('repoList').innerHTML = '<div class="msg">Loading repositories...</div>';
-  vscode.postMessage({ command: 'fetchRepos', serverUrl, token, username });
+const vscode=acquireVsCodeApi();
+function post(c){vscode.postMessage({command:c})}
+function selectRepo(owner, slug){
+  vscode.postMessage({ command: 'cloneRepo', owner, repo: slug });
 }
-
-function selectRepo(owner, slug) {
-  const serverUrl = val('serverUrl').replace(/\\/+$/,'');
-  const token = val('token');
-  const username = val('username');
-  document.getElementById('statusMsg').classList.remove('hidden');
-  document.getElementById('statusMsg').textContent = 'Cloning ' + owner + '/' + slug + '...';
-  document.getElementById('statusMsg').className = 'msg';
-  vscode.postMessage({ command: 'cloneRepo', serverUrl, token, username, owner, repo: slug });
-}
-
-window.addEventListener('message', (event) => {
-  const msg = event.data;
-  if (msg.command === 'repos') {
-    document.getElementById('connectBtn').disabled = false;
-    document.getElementById('connectBtn').textContent = 'Connect';
-    const el = document.getElementById('repoList');
-    if (!msg.repos || msg.repos.length === 0) {
-      el.innerHTML = '<div class="msg">No repositories found</div>';
-      return;
-    }
-    el.innerHTML = msg.repos.map(r =>
-      '<div class="repo-item" onclick="selectRepo(\\'' + esc(r.owner_username) + '\\',\\'' + esc(r.slug) + '\\')">' +
-      '<span class="repo-name">' + esc(r.owner_username) + '/' + esc(r.slug) + '</span>' +
-      '<span class="repo-badge">' + esc(r.visibility || 'private') + '</span></div>'
-    ).join('');
-  } else if (msg.command === 'error') {
-    document.getElementById('connectBtn').disabled = false;
-    document.getElementById('connectBtn').textContent = 'Connect';
-    document.getElementById('repoList').innerHTML = '<div class="msg err">' + esc(msg.text) + '</div>';
-  } else if (msg.command === 'status') {
-    document.getElementById('statusMsg').classList.remove('hidden');
-    document.getElementById('statusMsg').textContent = msg.text;
+window.addEventListener('message',(event)=>{
+  const msg=event.data;
+  const el=document.getElementById('repoList');
+  if(msg.command==='repos'){
+    if(!msg.repos||msg.repos.length===0){el.innerHTML='<div class="msg">No repositories found</div>';return;}
+    el.innerHTML = msg.repos.map(function(r){
+      const name = esc(r.owner_username) + '/' + esc(r.slug);
+      return '<div class="repo-item" onclick="selectRepo(\\'' + esc(r.owner_username) + '\\',\\'' + esc(r.slug) + '\\')">' +
+        '<span class="repo-name">' + name + '</span>' +
+        '<span class="repo-badge">' + esc(r.visibility || 'private') + '</span></div>';
+    }).join('');
+  } else if(msg.command==='error'){
+    el.innerHTML='<div class="msg err">'+esc(msg.text)+'</div>';
+  } else if(msg.command==='status'){
+    el.innerHTML='<div class="msg">'+esc(msg.text)+'</div>';
   }
 });
-
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+// Kick off repo load
+post('fetchRepos');
 </script>
 </body></html>`;
     }

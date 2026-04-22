@@ -1,23 +1,58 @@
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot, LayoutDashboard } from 'lucide-react';
-import ServerManager from '@/components/apps/ServerManager';
-import DatabaseManager from '@/components/apps/DatabaseManager';
-import ApiKeyManager from '@/components/apps/ApiKeyManager';
-import IntegrationMonitor from '@/components/apps/IntegrationMonitor';
-import BackupManager from '@/components/apps/BackupManager';
-import LogsViewer from '@/components/apps/LogsViewer';
-import DeveloperTerminal from '@/components/apps/DeveloperTerminal';
-import DB from '@/components/apps/DB';
-import VpcAuth from '@/components/apps/VpcAuth';
-import Gallery from '@/components/apps/Gallery';
-import WebHosting from '@/components/apps/WebHosting';
-import VPSHub from '@/components/apps/VPSHub';
-import AgentSettings from '@/components/apps/AgentSettings';
-import JarvisChat from '@/components/apps/JarvisChat';
-import VpcStore from '@/components/apps/VpcStore';
-import SystemSettings from '@/components/apps/SystemSettings';
-import Pipeline from '@/components/apps/Pipeline';
+import { lazy } from 'react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot, LayoutDashboard, Gauge, Plug } from 'lucide-react';
+
+// Dashboard + Connections stay eager (most common first-open apps)
+import Dashboard from '@/components/apps/Dashboard';
+import Connections from '@/components/apps/Connections';
+
+// All heavy apps lazy-load on first open — shrinks initial bundle ~70%
+const ServerManager = lazy(() => import('@/components/apps/ServerManager'));
+const DatabaseManager = lazy(() => import('@/components/apps/DatabaseManager'));
+const ApiKeyManager = lazy(() => import('@/components/apps/ApiKeyManager'));
+const IntegrationMonitor = lazy(() => import('@/components/apps/IntegrationMonitor'));
+const BackupManager = lazy(() => import('@/components/apps/BackupManager'));
+const LogsViewer = lazy(() => import('@/components/apps/LogsViewer'));
+const DeveloperTerminal = lazy(() => import('@/components/apps/DeveloperTerminal'));
+const DB = lazy(() => import('@/components/apps/DB'));
+const VpcAuth = lazy(() => import('@/components/apps/VpcAuth'));
+const Gallery = lazy(() => import('@/components/apps/Gallery'));
+const WebHosting = lazy(() => import('@/components/apps/WebHosting'));
+const VPSHub = lazy(() => import('@/components/apps/VPSHub'));
+const AgentSettings = lazy(() => import('@/components/apps/AgentSettings'));
+const JarvisChat = lazy(() => import('@/components/apps/JarvisChat'));
+const VpcStore = lazy(() => import('@/components/apps/VpcStore'));
+const SystemSettings = lazy(() => import('@/components/apps/SystemSettings'));
+const Pipeline = lazy(() => import('@/components/apps/Pipeline'));
 
 const APP_REGISTRY = {
+  'dashboard': {
+    id: 'dashboard',
+    title: 'Dashboard',
+    description: 'Pinned widgets at a glance',
+    icon: Gauge,
+    iconColor: 'text-sky-400',
+    iconBg: 'bg-sky-500/15',
+    category: 'development',
+    component: Dashboard,
+    defaultWidth: 1100,
+    defaultHeight: 720,
+    minWidth: 700,
+    minHeight: 500,
+  },
+  'connections': {
+    id: 'connections',
+    title: 'Connections',
+    description: 'One-time setup for GitHub, Supabase, Slack…',
+    icon: Plug,
+    iconColor: 'text-fuchsia-400',
+    iconBg: 'bg-fuchsia-500/15',
+    category: 'system',
+    component: Connections,
+    defaultWidth: 1100,
+    defaultHeight: 700,
+    minWidth: 800,
+    minHeight: 500,
+  },
   'pipeline': {
     id: 'pipeline',
     title: 'Pipeline',

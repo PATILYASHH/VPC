@@ -6,7 +6,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "migrate": "node db/run-migrations.js",
-    "seed": "node db/seed-admin.js"
+    "seed": "node db/seed-admin.js",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

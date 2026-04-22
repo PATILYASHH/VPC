@@ -2,16 +2,23 @@ import { useState, useCallback } from 'react';
 import useDesktopStore from '@/stores/useDesktopStore';
 import useWindowStore from '@/stores/useWindowStore';
 import useAuthStore from '@/stores/useAuthStore';
+import useCommandStore from '@/stores/useCommandStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import WindowManager from './WindowManager';
 import Taskbar from './Taskbar';
 import AppLauncher from './AppLauncher';
 import AppIcon from './AppIcon';
+import CommandPalette from './CommandPalette';
+import NotificationCenter from './NotificationCenter';
+import JobQueue from './JobQueue';
+import StatusBar from './StatusBar';
+import KeyboardShortcutsOverlay from './KeyboardShortcutsOverlay';
 import useIsMobile from '@/hooks/useIsMobile';
+import useGlobalKeyboard from '@/hooks/useGlobalKeyboard';
 import {
   RefreshCw, Settings, Monitor, LayoutGrid, Palette,
   FolderOpen, Terminal, Info, LogOut, Maximize2,
-  Copy, ClipboardPaste, Scissors,
+  Copy, ClipboardPaste, Scissors, Command,
 } from 'lucide-react';
 
 export default function Desktop() {
@@ -21,7 +28,10 @@ export default function Desktop() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const logout = useAuthStore((s) => s.logout);
   const isMobile = useIsMobile();
+  const openPalette = useCommandStore((s) => s.openPalette);
   const [ctxMenu, setCtxMenu] = useState(null);
+
+  useGlobalKeyboard();
 
   const allAppIds = Object.keys(APP_REGISTRY);
   const appIds = allAppIds.filter((id) => {
@@ -51,6 +61,7 @@ export default function Desktop() {
       case 'gallery': openWindow('gallery'); break;
       case 'store': openWindow('vpc-store'); break;
       case 'apps': toggleLauncher(); break;
+      case 'palette': openPalette(); break;
       case 'fullscreen':
         if (document.fullscreenElement) document.exitFullscreen();
         else document.documentElement.requestFullscreen().catch(() => {});
@@ -85,7 +96,7 @@ export default function Desktop() {
 
       {/* Desktop icon grid */}
       {!hasVisibleWindow && (
-        <div className="absolute inset-0 bottom-12 p-3 sm:p-6 z-10 overflow-y-auto">
+        <div className="absolute inset-0 bottom-[68px] p-3 sm:p-6 z-10 overflow-y-auto">
           {isMobile ? (
             // Mobile: horizontal grid that wraps
             <div className="grid grid-cols-4 gap-1 content-start">
@@ -105,15 +116,30 @@ export default function Desktop() {
       )}
 
       {/* Window layer */}
-      <div className={`absolute inset-0 bottom-12 z-20 ${isMobile ? '' : 'pointer-events-none'}`}>
+      <div className={`absolute inset-0 bottom-[68px] z-20 ${isMobile ? '' : 'pointer-events-none'}`}>
         <WindowManager />
       </div>
+
+      {/* Status bar (above taskbar) */}
+      {!isMobile && <StatusBar />}
 
       {/* Taskbar */}
       <Taskbar />
 
       {/* App launcher */}
       {launcherOpen && <AppLauncher />}
+
+      {/* Command Palette */}
+      <CommandPalette />
+
+      {/* Job Queue */}
+      <JobQueue />
+
+      {/* Notification Center */}
+      <NotificationCenter />
+
+      {/* Keyboard shortcuts overlay (Shift+?) */}
+      <KeyboardShortcutsOverlay />
 
       {/* Right-click context menu (desktop only) */}
       {!isMobile && ctxMenu && (
@@ -145,6 +171,9 @@ function DesktopContextMenu({ x, y, onAction, onClose }) {
           boxShadow: '0 12px 40px var(--window-shadow)',
         }}
       >
+        <CtxItem icon={Command} label="Command Palette" shortcut="Ctrl+K" onClick={() => onAction('palette')} />
+        <CtxItem icon={LayoutGrid} label="App Launcher" shortcut="Ctrl+␣" onClick={() => onAction('apps')} />
+        <CtxSep />
         <CtxItem icon={Scissors} label="Cut" shortcut="Ctrl+X" onClick={() => onAction('cut')} />
         <CtxItem icon={Copy} label="Copy" shortcut="Ctrl+C" onClick={() => onAction('copy')} />
         <CtxItem icon={ClipboardPaste} label="Paste" shortcut="Ctrl+V" onClick={() => onAction('paste')} />

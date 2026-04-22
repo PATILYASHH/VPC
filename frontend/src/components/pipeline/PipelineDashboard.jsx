@@ -13,6 +13,7 @@ import { Progress } from '@/components/ui/progress';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import AddResourceDialog from './AddResourceDialog';
 import SchemaDiffViewer from '@/components/db/SchemaDiffViewer';
+import PromoteDialog from './PromoteDialog';
 import useWindowStore from '@/stores/useWindowStore';
 import api from '@/lib/api';
 
@@ -20,7 +21,7 @@ export default function PipelineDashboard({ pipeline }) {
   const [showAdd, setShowAdd] = useState(false);
   const [addEnv, setAddEnv] = useState('production');
   const [forking, setForking] = useState(false);
-  const [promoting, setPromoting] = useState(false);
+  const [showPromote, setShowPromote] = useState(false);
   const [deploying, setDeploying] = useState({});
   const [showDiff, setShowDiff] = useState(false);
   const queryClient = useQueryClient();
@@ -55,31 +56,40 @@ export default function PipelineDashboard({ pipeline }) {
   };
 
   const handleForkToBeta = async () => {
-    if (!confirm('Fork production databases to beta?\nRepos will be shared.')) return;
+    const msg = 'Create EXACT beta copy?\n\n' +
+      '• Databases: schema + ALL DATA copied\n' +
+      '• Hosting sites: cloned and auto-deployed\n' +
+      '• Repos: shared with production\n' +
+      '• Env vars pointing to prod DB will be remapped to beta\n\n' +
+      'Continue?';
+    if (!confirm(msg)) return;
     setForking(true);
     try {
-      const { data: result } = await api.post(`/admin/pipeline/pipelines/${pipeline.id}/fork-to-beta`);
-      if (result.forkedDbs?.length > 0) toast.success(`Forked ${result.forkedDbs.length} DB(s)`);
-      if (result.errors?.length > 0) toast.error(`${result.errors.length} failed`);
+      const { data: result } = await api.post(
+        `/admin/pipeline/pipelines/${pipeline.id}/fork-to-beta`,
+        { copyData: true, autoDeploy: true }
+      );
+      const parts = [];
+      if (result.forkedDbs?.length > 0) parts.push(`${result.forkedDbs.length} DB(s)`);
+      if (result.forkedHosting?.length > 0) parts.push(`${result.forkedHosting.length} site(s)`);
+      if (result.sharedRepos?.length > 0) parts.push(`${result.sharedRepos.length} repo(s)`);
+
+      if (parts.length > 0) toast.success(`Beta created: ${parts.join(', ')}`);
+
+      if (result.errors?.length > 0) {
+        for (const e of result.errors.slice(0, 4)) {
+          toast.error(`${e.type}: ${e.resource} — ${e.error}`, { duration: 10000 });
+        }
+        if (result.errors.length > 4) {
+          toast.error(`+${result.errors.length - 4} more errors — check Recent Activity`);
+        }
+      }
       invalidate();
     } catch (err) { toast.error(err.response?.data?.error || 'Fork failed'); }
     finally { setForking(false); }
   };
 
-  const handlePromote = async () => {
-    if (!confirm('Promote Beta → Production?\n\nThis will:\n• Create a Schema PR for new tables/columns on prod DB\n• Redeploy production hosting sites\n\nContinue?')) return;
-    setPromoting(true);
-    try {
-      const { data: result } = await api.post(`/admin/pipeline/pipelines/${pipeline.id}/promote`);
-      const msgs = [];
-      if (result.schemaPRs?.length > 0) msgs.push(`${result.schemaPRs.length} schema PR(s) created`);
-      if (result.deployedSites?.length > 0) msgs.push(`${result.deployedSites.length} site(s) deployed`);
-      if (result.errors?.length > 0) msgs.push(`${result.errors.length} error(s)`);
-      toast.success(msgs.join(', ') || 'Promote complete');
-      invalidate();
-    } catch (err) { toast.error(err.response?.data?.error || 'Promote failed'); }
-    finally { setPromoting(false); }
-  };
+  const handlePromote = () => setShowPromote(true);
 
   if (isLoading) return <LoadingSpinner />;
 
@@ -136,8 +146,8 @@ export default function PipelineDashboard({ pipeline }) {
         <div className="flex-1 min-w-0">
           <EnvHeader label="Beta" color="blue" count={betaTotal} onAdd={() => { setAddEnv('beta'); setShowAdd(true); }}
             extraAction={betaTotal > 0 && (
-              <Button size="sm" className="h-6 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-500 text-white" onClick={handlePromote} disabled={promoting}>
-                {promoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpRight className="w-3 h-3" />}
+              <Button size="sm" className="h-6 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-500 text-white" onClick={handlePromote}>
+                <Rocket className="w-3 h-3" />
                 Push to Prod
               </Button>
             )}
@@ -179,6 +189,14 @@ export default function PipelineDashboard({ pipeline }) {
 
       <AddResourceDialog open={showAdd} onOpenChange={setShowAdd} pipelineId={pipeline.id} environment={addEnv}
         currentResources={addEnv === 'production' ? prod : beta} onSaved={invalidate} />
+
+      {showPromote && (
+        <PromoteDialog
+          pipeline={pipeline}
+          onClose={() => setShowPromote(false)}
+          onComplete={invalidate}
+        />
+      )}
     </div>
   );
 }

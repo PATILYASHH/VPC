@@ -339,4 +339,78 @@ router.delete('/projects/:id/domain', async (req, res) => {
   }
 });
 
+// GET /projects/:id/git-status — check if remote has newer commits than deployed
+router.get('/projects/:id/git-status', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const deployPath = project.deploy_path || path.join(webHostingService.HOSTING_DIR, project.slug);
+    const result = { hasUpdates: false, localCommit: null, remoteCommit: null, behind: 0, branch: project.git_branch || 'main' };
+
+    if (!fs.existsSync(path.join(deployPath, '.git'))) {
+      return res.json({ ...result, error: 'Not deployed yet' });
+    }
+
+    const { execFileSync } = require('child_process');
+    const opts = { cwd: deployPath, encoding: 'utf8', timeout: 15000 };
+
+    try {
+      // Get local HEAD
+      result.localCommit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], opts).trim();
+      result.localMessage = execFileSync('git', ['log', '-1', '--format=%s'], opts).trim();
+      result.localDate = execFileSync('git', ['log', '-1', '--format=%ci'], opts).trim();
+
+      // Fetch remote
+      execFileSync('git', ['fetch', 'origin', '--quiet'], { ...opts, timeout: 10000 });
+
+      // Get remote HEAD
+      const branch = project.git_branch || 'main';
+      result.remoteCommit = execFileSync('git', ['rev-parse', '--short', `origin/${branch}`], opts).trim();
+      result.remoteMessage = execFileSync('git', ['log', '-1', '--format=%s', `origin/${branch}`], opts).trim();
+      result.remoteDate = execFileSync('git', ['log', '-1', '--format=%ci', `origin/${branch}`], opts).trim();
+
+      // Count commits behind
+      const behindStr = execFileSync('git', ['rev-list', `HEAD..origin/${branch}`, '--count'], opts).trim();
+      result.behind = parseInt(behindStr) || 0;
+      result.hasUpdates = result.behind > 0;
+    } catch (gitErr) {
+      result.error = gitErr.message;
+    }
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /projects/:id/auto-deploy — toggle auto-deploy on git push
+router.put('/projects/:id/auto-deploy', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { enabled } = req.body;
+    await pool.query(
+      `INSERT INTO vpc_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [`wh_auto_deploy_${req.params.id}`, JSON.stringify({ enabled: !!enabled })]
+    );
+    res.json({ enabled: !!enabled });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /projects/:id/auto-deploy — get auto-deploy status
+router.get('/projects/:id/auto-deploy', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { rows } = await pool.query('SELECT value FROM vpc_settings WHERE key = $1', [`wh_auto_deploy_${req.params.id}`]);
+    const val = rows[0]?.value ? JSON.parse(rows[0].value) : { enabled: false };
+    res.json(val);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

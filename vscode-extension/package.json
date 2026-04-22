@@ -3,7 +3,7 @@
   "displayName": "VPC Sync",
   "description": "Version control for VPC — push, pull, commit, branch. Like Git but using VPC VCS.",
   "publisher": "vpc-admin",
-  "version": "9.0.0",
+  "version": "10.0.0",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["SCM Providers"],
   "activationEvents": ["onStartupFinished"],
@@ -29,6 +29,8 @@
     },
     "commands": [
       { "command": "vpcSync.connect", "title": "VPC Sync: Connect to VPSHub", "icon": "$(plug)" },
+      { "command": "vpcSync.signIn", "title": "VPC Sync: Sign In", "icon": "$(sign-in)" },
+      { "command": "vpcSync.signOut", "title": "VPC Sync: Sign Out", "icon": "$(sign-out)" },
       { "command": "vpcSync.push", "title": "VPC Sync: Push", "icon": "$(arrow-up)" },
       { "command": "vpcSync.pull", "title": "VPC Sync: Pull", "icon": "$(arrow-down)" },
       { "command": "vpcSync.entirePush", "title": "VPC Sync: Entire Push (Force Replace Remote)", "icon": "$(cloud-upload)" },

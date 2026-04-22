@@ -259,59 +259,122 @@ async function deployHosting(pool, pipelineId, hostingId, environment) {
 
 // ─── Fork to Beta (clones ALL resources) ─────────────────────
 
-async function forkToBeta(pool, pipelineId) {
+async function forkToBeta(pool, pipelineId, { copyData = true, autoDeploy = true } = {}) {
   const webHostingService = require('./webHostingService');
+  const bus = require('./realtimeBus');
+  const log = require('../utils/logger').forSource('pipeline:fork');
   const resolved = await getResolved(pool, pipelineId);
   if (!resolved) throw new Error('Pipeline not found');
 
+  const channel = `pipeline:fork:${pipelineId}`;
   const results = { forkedDbs: [], forkedHosting: [], sharedRepos: [], errors: [] };
+  const publish = (stage, data = {}) => bus.publish(channel, { stage, ...data });
 
-  // 1. Fork each production DB → beta DB (schema copy)
+  // 1. Fork each production DB → beta DB (schema + data for exact copy)
   for (const db of resolved.production.databases) {
+    const forkName = `${db.name} (Beta)`;
+    const forkSlug = `${db.slug}-beta`;
+    publish('db:start', { source: db.name, target: forkName });
     try {
-      const forkName = `${db.name} (Beta)`;
-      const forkSlug = `${db.slug}-beta`;
+      // Skip if a beta fork already exists for this prod DB (dedupe)
+      const existing = await pool.query(
+        'SELECT id, name FROM db_projects WHERE forked_from = $1 AND environment = $2 AND status = $3 LIMIT 1',
+        [db.id, 'beta', 'active']
+      );
+      if (existing.rows.length > 0) {
+        await addResource(pool, pipelineId, { resourceType: 'db', resourceId: existing.rows[0].id, environment: 'beta' });
+        results.forkedDbs.push(existing.rows[0]);
+        publish('db:exists', { name: existing.rows[0].name });
+        continue;
+      }
+
       const forked = await dbForkService.forkProject(pool, db.id, {
-        name: forkName, slug: forkSlug, copyData: false, environment: 'beta',
+        name: forkName, slug: forkSlug, copyData, environment: 'beta',
       });
       await addResource(pool, pipelineId, { resourceType: 'db', resourceId: forked.id, environment: 'beta' });
       results.forkedDbs.push(forked);
       await logActivity(pool, pipelineId, {
         eventType: 'fork', resourceType: 'db', resourceName: forkName,
-        environment: 'beta', message: `Forked DB: ${db.name} → ${forkName}`,
+        environment: 'beta',
+        message: `Forked DB: ${db.name} → ${forkName} (${copyData ? 'schema + data' : 'schema only'})`,
       });
+      publish('db:success', { name: forkName, copyData });
     } catch (err) {
+      log.error(`DB fork failed: ${db.name}`, { error: err.message });
       results.errors.push({ resource: db.name, type: 'db', error: err.message });
+      await logActivity(pool, pipelineId, {
+        eventType: 'fork_error', resourceType: 'db', resourceName: db.name,
+        environment: 'beta', message: `DB fork failed: ${err.message}`,
+        metadata: { error: err.message },
+      });
+      publish('db:error', { name: db.name, error: err.message });
     }
   }
 
-  // 2. Clone each production hosting site → beta hosting site (separate deploy)
+  // 2. Clone each production hosting site → beta hosting site (full clone)
   for (const site of resolved.production.hosting) {
+    const betaName = `${site.name} (Beta)`;
+    const betaSlug = `${site.slug}-beta`;
+    publish('hosting:start', { source: site.name, target: betaName });
     try {
-      const betaName = `${site.name} (Beta)`;
-      const betaSlug = `${site.slug}-beta`;
-      const cloned = await webHostingService.createProject(pool, {
-        name: betaName,
-        slug: betaSlug,
-        projectType: site.project_type,
-        gitUrl: site.git_url,
-        gitToken: site.git_token,
-        gitBranch: site.git_branch || 'main',
-        buildCommand: site.build_command,
-        installCommand: site.install_command,
-        outputDir: site.output_dir,
-        nodeEntryPoint: site.node_entry_point,
-        envVars: site.env_vars || {},
-        createdBy: site.created_by,
-      });
+      // Dedupe: if a site with this slug already exists, reuse it
+      const existing = await pool.query(
+        'SELECT id, name FROM web_hosting_projects WHERE slug = $1 LIMIT 1',
+        [betaSlug]
+      );
+
+      let cloned;
+      if (existing.rows.length > 0) {
+        cloned = existing.rows[0];
+        publish('hosting:exists', { name: cloned.name });
+      } else {
+        // If the prod DB was forked, point the beta site at the beta DB (remap env vars)
+        const remappedEnv = remapEnvForBeta(site.env_vars || {}, resolved.production.databases, results.forkedDbs);
+
+        cloned = await webHostingService.createProject(pool, {
+          name: betaName,
+          slug: betaSlug,
+          projectType: site.project_type,
+          gitUrl: site.git_url,
+          gitToken: site.git_token,
+          gitBranch: site.git_branch || 'main',
+          buildCommand: site.build_command,
+          installCommand: site.install_command,
+          outputDir: site.output_dir,
+          nodeEntryPoint: site.node_entry_point,
+          envVars: remappedEnv,
+          createdBy: site.created_by,
+        });
+
+        // Exact fork = deploy beta so it's immediately usable
+        if (autoDeploy) {
+          publish('hosting:deploy', { name: betaName });
+          try {
+            await webHostingService.deploy(pool, cloned);
+          } catch (depErr) {
+            log.warn(`Beta deploy failed for ${betaName}`, { error: depErr.message });
+            results.errors.push({ resource: betaName, type: 'hosting-deploy', error: depErr.message });
+          }
+        }
+      }
+
       await addResource(pool, pipelineId, { resourceType: 'hosting', resourceId: cloned.id, environment: 'beta' });
       results.forkedHosting.push(cloned);
       await logActivity(pool, pipelineId, {
         eventType: 'fork', resourceType: 'hosting', resourceName: betaName,
-        environment: 'beta', message: `Cloned hosting: ${site.name} → ${betaName}`,
+        environment: 'beta',
+        message: `Cloned hosting: ${site.name} → ${betaName}${autoDeploy ? ' (deployed)' : ''}`,
       });
+      publish('hosting:success', { name: betaName });
     } catch (err) {
+      log.error(`Hosting fork failed: ${site.name}`, { error: err.message });
       results.errors.push({ resource: site.name, type: 'hosting', error: err.message });
+      await logActivity(pool, pipelineId, {
+        eventType: 'fork_error', resourceType: 'hosting', resourceName: site.name,
+        environment: 'beta', message: `Hosting fork failed: ${err.message}`,
+        metadata: { error: err.message },
+      });
+      publish('hosting:error', { name: site.name, error: err.message });
     }
   }
 
@@ -320,16 +383,52 @@ async function forkToBeta(pool, pipelineId) {
     try {
       await addResource(pool, pipelineId, { resourceType: 'repo', resourceId: repo.id, environment: 'beta' });
       results.sharedRepos.push(repo);
-    } catch {}
+    } catch { /* duplicate — already linked */ }
   }
 
+  // Try linked integrations (pipeline-level) as well — if any exist
+  try {
+    const { rows: settingsRows } = await pool.query(
+      'SELECT settings FROM vpc_pipelines WHERE id = $1', [pipelineId]
+    );
+    const linkedIntegrations = settingsRows[0]?.settings?.integration_ids || [];
+    results.linkedIntegrations = linkedIntegrations;
+  } catch { /* non-fatal */ }
+
+  const summary = `Beta environment created: ${results.forkedDbs.length} DB(s) (${copyData ? 'with data' : 'schema only'}), ${results.forkedHosting.length} site(s), ${results.sharedRepos.length} repo(s)${results.errors.length > 0 ? `, ${results.errors.length} error(s)` : ''}`;
   await logActivity(pool, pipelineId, {
     eventType: 'fork_complete', resourceType: null, resourceName: null,
-    environment: 'beta',
-    message: `Beta environment created: ${results.forkedDbs.length} DB(s), ${results.forkedHosting.length} site(s), ${results.sharedRepos.length} repo(s)`,
+    environment: 'beta', message: summary,
+    metadata: { errors: results.errors },
   });
+  publish('complete', { summary, errors: results.errors });
 
   return results;
+}
+
+// Replace prod DB name references in env vars with the matching beta DB name,
+// so beta sites talk to beta DBs automatically.
+function remapEnvForBeta(envVars, prodDbs, betaDbs) {
+  if (!envVars || typeof envVars !== 'object') return envVars || {};
+  const mapping = new Map();
+  for (let i = 0; i < prodDbs.length; i++) {
+    const prod = prodDbs[i];
+    const beta = betaDbs[i];
+    if (!prod || !beta) continue;
+    if (prod.db_name) mapping.set(prod.db_name, beta.db_name);
+    if (prod.db_user) mapping.set(prod.db_user, beta.db_user);
+    if (prod.slug) mapping.set(prod.slug, `${prod.slug}-beta`);
+  }
+  const out = { ...envVars };
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v !== 'string') continue;
+    let replaced = v;
+    for (const [needle, repl] of mapping) {
+      if (replaced.includes(needle)) replaced = replaced.split(needle).join(repl);
+    }
+    if (replaced !== v) out[k] = replaced;
+  }
+  return out;
 }
 
 // ─── Promote Beta → Production ───────────────────────────────

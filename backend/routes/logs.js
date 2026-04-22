@@ -1,7 +1,39 @@
 const express = require('express');
 const logService = require('../services/logService');
+const logger = require('../utils/logger');
 
 const router = express.Router();
+
+// GET /api/admin/logs/health — aggregate error counts for Dashboard widget
+router.get('/health', async (req, res) => {
+  try {
+    const summary = await logger.healthSummary(req.app.locals.pool);
+    res.json(summary);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/logs/system — recent system-level logs (with level filter)
+router.get('/system', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const level = req.query.level; // debug|info|warn|error|fatal
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const params = [];
+    let where = '';
+    if (level) { where = 'WHERE level = $1'; params.push(level); }
+    params.push(limit);
+    const { rows } = await pool.query(
+      `SELECT id, level, source, message, metadata, created_at
+       FROM vpc_system_logs ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
+      params
+    );
+    res.json({ logs: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/admin/logs?source=all&search=&page=1&pageSize=100
 router.get('/', async (req, res) => {

@@ -45,6 +45,8 @@ exports.createBranch = createBranch;
 exports.switchBranch = switchBranch;
 exports.deleteBranch = deleteBranch;
 exports.listBranches = listBranches;
+exports.entirePush = entirePush;
+exports.entirePull = entirePull;
 exports.getSyncStatus = getSyncStatus;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
@@ -52,6 +54,7 @@ const vscode = __importStar(require("vscode"));
 const objects = __importStar(require("./objects"));
 const refs = __importStar(require("./refs"));
 const index = __importStar(require("./index"));
+const merge = __importStar(require("./merge"));
 // ─── Lock file to prevent concurrent operations ─────────────
 function acquireLock(root) {
     const lockPath = path.join(objects.vpcDir(root), 'LOCK');
@@ -137,6 +140,66 @@ async function push(root, client, branchName) {
         if (remoteHash === localHash) {
             return { success: true, message: 'Already up to date — nothing to push.', objectCount: 0 };
         }
+        // Pre-push conflict detection: if remote exists and diverged, merge locally FIRST
+        // so conflicts surface in the IDE before hitting protected/main branches.
+        let effectiveLocalHash = localHash;
+        if (remoteHash && remoteHash !== localHash) {
+            // Ensure we have the remote commit objects locally so we can compute merge base
+            if (!objects.objectExists(root, remoteHash)) {
+                try {
+                    const pullRes = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [localHash]);
+                    storeReceivedObjects(root, pullRes.objects || []);
+                }
+                catch (err) {
+                    return { success: false, message: `Cannot fetch remote for merge check: ${err.message}` };
+                }
+            }
+            // Fast-forward from our side? (remote is ancestor of local)
+            const remoteIsAncestor = merge.isAncestor(root, remoteHash, localHash);
+            const localIsAncestor = merge.isAncestor(root, localHash, remoteHash);
+            if (!remoteIsAncestor && !localIsAncestor) {
+                // Diverged — run local 3-way merge
+                const outcome = merge.mergeTrees(root, localHash, remoteHash);
+                if (outcome.hasConflicts) {
+                    // Write merged files (with conflict markers) into working tree so the user can fix in VS Code
+                    for (const f of outcome.mergedFiles) {
+                        const absPath = path.resolve(root, f.path);
+                        if (!absPath.startsWith(root)) {
+                            continue;
+                        }
+                        const dir = path.dirname(absPath);
+                        if (!fs.existsSync(dir)) {
+                            fs.mkdirSync(dir, { recursive: true });
+                        }
+                        try {
+                            fs.writeFileSync(absPath, objects.readBlob(root, f.hash));
+                        }
+                        catch { /* skip */ }
+                    }
+                    // Refresh index to reflect the written working tree state
+                    index.buildIndexFromTree(root, outcome.mergedTreeHash);
+                    const conflictList = outcome.conflicts.map(c => `  • ${c.path}${c.type !== 'content' ? ` (${c.type})` : ''}`).join('\n');
+                    return {
+                        success: false,
+                        hasConflicts: true,
+                        conflictFiles: outcome.conflicts.map(c => c.path),
+                        message: `Push blocked — ${outcome.conflicts.length} merge conflict(s) with remote '${branch}':\n${conflictList}\n\nFix the <<<<<<< markers in the listed files, commit the resolution, then push again.`,
+                    };
+                }
+                // Clean merge — create a local merge commit and push that
+                const username = vscode.workspace.getConfiguration('vpcSync').get('username') || 'user';
+                effectiveLocalHash = objects.createCommit(root, {
+                    tree: outcome.mergedTreeHash,
+                    parents: [localHash, remoteHash],
+                    authorName: username,
+                    authorEmail: `${username}@vpc`,
+                    message: `Merge remote '${branch}' into local`,
+                });
+                // Advance local branch & refresh working tree
+                refs.updateRef(root, `refs/heads/${branch}`, effectiveLocalHash);
+                checkoutTree(root, effectiveLocalHash);
+            }
+        }
         // Collect objects to send (only what remote doesn't have)
         const remoteObjects = new Set();
         const trackingHash = refs.resolveRef(root, `refs/remotes/origin/${branch}`);
@@ -146,7 +209,7 @@ async function push(root, client, branchName) {
             }
             catch { /* ignore */ }
         }
-        const localObjects = objects.collectReachableObjects(root, localHash, new Set());
+        const localObjects = objects.collectReachableObjects(root, effectiveLocalHash, new Set());
         const toSend = [];
         for (const hash of localObjects) {
             if (!remoteObjects.has(hash)) {
@@ -160,9 +223,9 @@ async function push(root, client, branchName) {
                 }
             }
         }
-        // Direct push to branch (server handles merging/conflicts with force-push philosophy)
+        // Direct push to branch (local merge already resolved divergence if any)
         const refUpdate = {
-            [`refs/heads/${branch}`]: { old: remoteHash || '0'.repeat(64), new: localHash },
+            [`refs/heads/${branch}`]: { old: remoteHash || '0'.repeat(64), new: effectiveLocalHash },
         };
         let result;
         try {
@@ -175,13 +238,13 @@ async function push(root, client, branchName) {
             return { success: false, message: result.error || result.message || 'Push failed on server.' };
         }
         // Update tracking ref
-        const finalHash = result.updated_refs?.[`refs/heads/${branch}`] || localHash;
+        const finalHash = result.updated_refs?.[`refs/heads/${branch}`] || effectiveLocalHash;
         refs.updateRef(root, `refs/remotes/origin/${branch}`, finalHash);
         // If server merged (our commit was integrated into a merge commit), update local
-        if (result.merged && finalHash !== localHash) {
+        if (result.merged && finalHash !== effectiveLocalHash) {
             // Pull the merge commit objects
             try {
-                const pullResult = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [localHash]);
+                const pullResult = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [effectiveLocalHash]);
                 storeReceivedObjects(root, pullResult.objects || []);
                 refs.updateRef(root, `refs/heads/${branch}`, finalHash);
                 checkoutTree(root, finalHash);
@@ -189,7 +252,9 @@ async function push(root, client, branchName) {
             catch { /* best effort sync-back */ }
         }
         // Build response message
-        let message = `Pushed ${toSend.length} object(s) to ${branch}.`;
+        let message = effectiveLocalHash !== localHash
+            ? `Merged remote changes locally, then pushed ${toSend.length} object(s) to ${branch}.`
+            : `Pushed ${toSend.length} object(s) to ${branch}.`;
         if (result.merged) {
             message = `Pushed and auto-merged into ${branch}.`;
         }
@@ -402,6 +467,87 @@ function listBranches(root) {
         ...b,
         current: b.name === current,
     }));
+}
+// ─── Entire Push (force replace remote) ────────────────────
+async function entirePush(root, client, branchName) {
+    if (!acquireLock(root)) {
+        return { success: false, message: 'Another sync operation is in progress.' };
+    }
+    try {
+        const remote = getRemoteConfig(root);
+        if (!remote) {
+            return { success: false, message: 'No remote configured.' };
+        }
+        const branch = branchName || refs.getCurrentBranch(root) || 'main';
+        const localHash = refs.resolveRef(root, `refs/heads/${branch}`);
+        if (!localHash) {
+            return { success: false, message: `Branch '${branch}' has no commits.` };
+        }
+        // Collect ALL local objects (no diff — send everything)
+        const allObjects = objects.collectReachableObjects(root, localHash, new Set());
+        const toSend = [];
+        for (const hash of allObjects) {
+            try {
+                const rawCompressed = objects.readObjectRaw(root, hash);
+                const obj = objects.readObject(root, hash);
+                toSend.push({ hash, type: obj.type, data: rawCompressed.toString('base64'), compressed: true });
+            }
+            catch { /* skip */ }
+        }
+        const refUpdate = {
+            [`refs/heads/${branch}`]: { old: '0'.repeat(64), new: localHash },
+        };
+        const result = await client.vcsEntirePush(remote.url, remote.username, remote.token, toSend, refUpdate);
+        if (!result.ok) {
+            return { success: false, message: result.error || 'Entire push failed.' };
+        }
+        // Update tracking ref
+        refs.updateRef(root, `refs/remotes/origin/${branch}`, localHash);
+        return {
+            success: true,
+            message: `Force pushed ${toSend.length} objects to ${branch}. Remote fully replaced.`,
+            objectCount: toSend.length,
+            newHash: localHash,
+        };
+    }
+    finally {
+        releaseLock(root);
+    }
+}
+// ─── Entire Pull (force replace local) ─────────────────────
+async function entirePull(root, client, branchName) {
+    if (!acquireLock(root)) {
+        return { success: false, message: 'Another sync operation is in progress.' };
+    }
+    try {
+        const remote = getRemoteConfig(root);
+        if (!remote) {
+            return { success: false, message: 'No remote configured.' };
+        }
+        const branch = branchName || refs.getCurrentBranch(root) || 'main';
+        // Get ALL objects from remote (no haves — full download)
+        const result = await client.vcsEntirePull(remote.url, remote.username, remote.token, branch);
+        const remoteHash = result.refs?.[`refs/heads/${branch}`];
+        if (!remoteHash) {
+            return { success: false, message: `Branch '${branch}' not found on remote.` };
+        }
+        // Store all received objects
+        storeReceivedObjects(root, result.objects || []);
+        // Force update all refs
+        refs.updateRef(root, `refs/remotes/origin/${branch}`, remoteHash);
+        refs.updateRef(root, `refs/heads/${branch}`, remoteHash);
+        // Force checkout — replaces all local files
+        checkoutTree(root, remoteHash);
+        return {
+            success: true,
+            message: `Force pulled ${result.objects?.length || 0} objects. Local fully replaced with remote.`,
+            objectCount: result.objects?.length || 0,
+            newHash: remoteHash,
+        };
+    }
+    finally {
+        releaseLock(root);
+    }
 }
 // ─── Helpers ────────────────────────────────────────────────
 function storeReceivedObjects(root, objs) {

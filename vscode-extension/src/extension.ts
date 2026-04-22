@@ -15,6 +15,7 @@ import * as objects from './vcs/objects';
 import * as refs from './vcs/refs';
 import * as index from './vcs/index';
 import * as sync from './vcs/sync';
+import { registerVpcAuth, getVpcSession, signOut as authSignOut, VPC_AUTH_PROVIDER_ID } from './auth/deviceFlow';
 
 let scmProvider: VpcScmProvider | undefined;
 let client: SyncApiClient;
@@ -25,7 +26,24 @@ let timer: NodeJS.Timeout | undefined;
 
 export function activate(ctx: vscode.ExtensionContext) {
   client = new SyncApiClient();
+  registerVpcAuth(ctx);
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  // Whenever the VPC session changes (sign-in/out), re-sync repo remote config
+  ctx.subscriptions.push(
+    vscode.authentication.onDidChangeSessions(async e => {
+      if (e.provider.id !== VPC_AUTH_PROVIDER_ID) return;
+      const r = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!r || !objects.hasVpcRepo(r)) return;
+      const session = await getVpcSession(false);
+      const repoSetting = vscode.workspace.getConfiguration('vpcSync').get<string>('repository') || '';
+      if (session && repoSetting.includes('/')) {
+        const [owner, repo] = repoSetting.split('/');
+        sync.setRemoteConfig(r, `${session.serverUrl}/vcs/${owner}/${repo}`, session.username, session.accessToken);
+      }
+      updateStatusBar();
+    })
+  );
 
   // Status bar
   branchItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -45,6 +63,23 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.commands.registerCommand('vpcSync.connect', () => {
       vscode.commands.executeCommand('vpcSync.panel.focus');
+    }),
+
+    vscode.commands.registerCommand('vpcSync.signIn', async () => {
+      try {
+        const s = await getVpcSession(true);
+        if (s) { vscode.window.showInformationMessage(`Signed in to VPC as ${s.username}`); }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Sign-in failed: ${err.message}`);
+      }
+      panel.refresh();
+    }),
+
+    vscode.commands.registerCommand('vpcSync.signOut', async () => {
+      await authSignOut(ctx);
+      vscode.window.showInformationMessage('Signed out of VPC.');
+      panel.refresh();
+      updateStatusBar();
     }),
 
     vscode.commands.registerCommand('vpcSync.refresh', () => {

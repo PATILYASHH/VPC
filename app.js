@@ -206,4 +206,12 @@ app.listen(PORT, async () => {
     }
   }, BACKUP_CHECK_INTERVAL);
   console.log('[VPC] Auto-backup scheduler running (checks every hour)');
+
+  // External backup destinations scheduler (Supabase, etc.) — polls every minute
+  try {
+    const backupScheduler = require('./backend/services/backupScheduler');
+    backupScheduler.start(pool);
+  } catch (err) {
+    console.error('[VPC] Backup destination scheduler failed to start:', err.message);
+  }
 });

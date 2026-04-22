@@ -51,6 +51,7 @@ const objects = __importStar(require("./vcs/objects"));
 const refs = __importStar(require("./vcs/refs"));
 const index = __importStar(require("./vcs/index"));
 const sync = __importStar(require("./vcs/sync"));
+const deviceFlow_1 = require("./auth/deviceFlow");
 let scmProvider;
 let client;
 let panel;
@@ -59,7 +60,23 @@ let syncItem;
 let timer;
 function activate(ctx) {
     client = new client_1.SyncApiClient();
+    (0, deviceFlow_1.registerVpcAuth)(ctx);
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // Whenever the VPC session changes (sign-in/out), re-sync repo remote config
+    ctx.subscriptions.push(vscode.authentication.onDidChangeSessions(async (e) => {
+        if (e.provider.id !== deviceFlow_1.VPC_AUTH_PROVIDER_ID)
+            return;
+        const r = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!r || !objects.hasVpcRepo(r))
+            return;
+        const session = await (0, deviceFlow_1.getVpcSession)(false);
+        const repoSetting = vscode.workspace.getConfiguration('vpcSync').get('repository') || '';
+        if (session && repoSetting.includes('/')) {
+            const [owner, repo] = repoSetting.split('/');
+            sync.setRemoteConfig(r, `${session.serverUrl}/vcs/${owner}/${repo}`, session.username, session.accessToken);
+        }
+        updateStatusBar();
+    }));
     // Status bar
     branchItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     branchItem.command = 'vpcSync.switchBranch';
@@ -72,11 +89,27 @@ function activate(ctx) {
     // ─── Commands ──────────────────────────────────────────
     ctx.subscriptions.push(vscode.commands.registerCommand('vpcSync.connect', () => {
         vscode.commands.executeCommand('vpcSync.panel.focus');
+    }), vscode.commands.registerCommand('vpcSync.signIn', async () => {
+        try {
+            const s = await (0, deviceFlow_1.getVpcSession)(true);
+            if (s) {
+                vscode.window.showInformationMessage(`Signed in to VPC as ${s.username}`);
+            }
+        }
+        catch (err) {
+            vscode.window.showErrorMessage(`Sign-in failed: ${err.message}`);
+        }
+        panel.refresh();
+    }), vscode.commands.registerCommand('vpcSync.signOut', async () => {
+        await (0, deviceFlow_1.signOut)(ctx);
+        vscode.window.showInformationMessage('Signed out of VPC.');
+        panel.refresh();
+        updateStatusBar();
     }), vscode.commands.registerCommand('vpcSync.refresh', () => {
         scmProvider?.refresh();
         panel.refresh();
         updateStatusBar();
-    }), vscode.commands.registerCommand('vpcSync.commit', () => doCommit()), vscode.commands.registerCommand('vpcSync.push', () => doPush()), vscode.commands.registerCommand('vpcSync.pull', () => doPull()), 
+    }), vscode.commands.registerCommand('vpcSync.commit', () => doCommit()), vscode.commands.registerCommand('vpcSync.push', () => doPush()), vscode.commands.registerCommand('vpcSync.pull', () => doPull()), vscode.commands.registerCommand('vpcSync.entirePush', () => doEntirePush()), vscode.commands.registerCommand('vpcSync.entirePull', () => doEntirePull()), vscode.commands.registerCommand('vpcSync.syncMenu', () => showSyncMenu()), 
     // Stage file
     vscode.commands.registerCommand('vpcSync.stageFile', (res) => {
         if (!root || !res) {
@@ -396,6 +429,78 @@ async function doPull() {
         }
         catch (e) {
             vscode.window.showErrorMessage(`Pull failed: ${e.message}`);
+        }
+        scmProvider?.refresh();
+        updateStatusBar();
+    });
+}
+// ─── Sync Menu (choose mode) ────────────────────────────
+async function showSyncMenu() {
+    const pick = await vscode.window.showQuickPick([
+        { label: '$(arrow-up) Push', description: 'Smart push — merges with remote changes', id: 'push' },
+        { label: '$(arrow-down) Pull', description: 'Smart pull — merges remote into local', id: 'pull' },
+        { label: '$(cloud-upload) Entire Push', description: 'Force replace remote with local (no merge)', id: 'entirePush' },
+        { label: '$(cloud-download) Entire Pull', description: 'Force replace local with remote (no merge)', id: 'entirePull' },
+    ], { placeHolder: 'Select sync mode' });
+    if (!pick) {
+        return;
+    }
+    switch (pick.id) {
+        case 'push': return doPush();
+        case 'pull': return doPull();
+        case 'entirePush': return doEntirePush();
+        case 'entirePull': return doEntirePull();
+    }
+}
+// ─── Entire Push (force replace remote) ─────────────────
+async function doEntirePush() {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) {
+        return;
+    }
+    const confirm = await vscode.window.showWarningMessage('Entire Push will REPLACE all remote files with your local code. Remote history will be overwritten. Continue?', { modal: true }, 'Yes, Force Push');
+    if (confirm !== 'Yes, Force Push') {
+        return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Entire Push — replacing remote...' }, async () => {
+        try {
+            const r = await sync.entirePush(root, client);
+            if (r.success) {
+                vscode.window.showInformationMessage(r.message);
+            }
+            else {
+                vscode.window.showErrorMessage(r.message);
+            }
+        }
+        catch (e) {
+            vscode.window.showErrorMessage(`Entire Push failed: ${e.message}`);
+        }
+        scmProvider?.refresh();
+        updateStatusBar();
+    });
+}
+// ─── Entire Pull (force replace local) ──────────────────
+async function doEntirePull() {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) {
+        return;
+    }
+    const confirm = await vscode.window.showWarningMessage('Entire Pull will REPLACE all local files with remote code. Your local changes will be lost. Continue?', { modal: true }, 'Yes, Force Pull');
+    if (confirm !== 'Yes, Force Pull') {
+        return;
+    }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Entire Pull — replacing local...' }, async () => {
+        try {
+            const r = await sync.entirePull(root, client);
+            if (r.success) {
+                vscode.window.showInformationMessage(r.message);
+            }
+            else {
+                vscode.window.showErrorMessage(r.message);
+            }
+        }
+        catch (e) {
+            vscode.window.showErrorMessage(`Entire Pull failed: ${e.message}`);
         }
         scmProvider?.refresh();
         updateStatusBar();

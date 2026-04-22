@@ -44,8 +44,9 @@ app.use((req, res, next) => {
   express.urlencoded({ extended: true, limit: '500mb' })(req, res, next);
 });
 
-// Attach database pool
+// Attach database pool + central logger
 app.locals.pool = pool;
+require('./utils/logger').setPool(pool);
 
 // Health check
 app.get('/health', async (req, res) => {
@@ -73,6 +74,9 @@ const adminRouter = express.Router();
 // Auth routes (public - no JWT required)
 adminRouter.use('/auth', require('./routes/auth'));
 
+// Device-flow auth (mixed: /code + /token public, /pending + /confirm JWT-authed internally)
+adminRouter.use('/auth/device', require('./routes/deviceAuth'));
+
 // All routes below require JWT authentication
 adminRouter.use(authenticateAdmin);
 adminRouter.use(ipRestriction);
@@ -95,6 +99,7 @@ adminRouter.use('/web-hosting', require('./routes/webHosting'));
 adminRouter.use('/settings', require('./routes/settings'));
 adminRouter.use('/vpshub', require('./routes/vpshub'));
 adminRouter.use('/pipeline', require('./routes/pipeline'));
+adminRouter.use('/realtime', require('./routes/realtime'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {
@@ -113,6 +118,11 @@ const webHostingPublic = require('./routes/webHostingPublic');
 const webHostingService = require('./services/webHostingService');
 app.use(webHostingPublic);
 
+// Device-flow approval page (VS Code sign-in) — served standalone, reuses SPA's vpc-token
+app.get('/auth/device', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'deviceApprove.html'));
+});
+
 // Serve downloadable files (VS Code extension, etc.)
 app.use('/downloads', express.static(path.join(__dirname, '..', 'downloads')));
 
@@ -127,6 +137,14 @@ app.get('*', (req, res) => {
 
 // Error handling
 app.use((err, req, res, _next) => {
+  // Surface "needs integration" errors with a structured payload the frontend recognises
+  if (err && err.code === 'INTEGRATION_MISSING') {
+    return res.status(412).json({
+      error: err.message,
+      code: 'INTEGRATION_MISSING',
+      integrationType: err.integrationType,
+    });
+  }
   console.error('[Server] Unhandled error:', err.message);
   res.status(500).json({ error: 'Internal server error' });
 });

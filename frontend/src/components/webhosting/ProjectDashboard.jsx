@@ -202,17 +202,8 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
             </div>
           )}
 
-          {/* Git Info */}
-          {project?.git_url && (
-            <div className="border rounded-lg p-3 bg-muted/30">
-              <div className="flex items-center gap-2 mb-2">
-                <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-medium">Repository</span>
-              </div>
-              <p className="text-xs font-mono text-muted-foreground break-all">{project.git_url}</p>
-              {project.git_token && <Badge variant="outline" className="text-[10px] mt-1">Token configured</Badge>}
-            </div>
-          )}
+          {/* Git Status & Version */}
+          {project?.git_url && <GitStatusCard project={project} onDeploy={handleDeploy} deploying={deploying} />}
         </TabsContent>
 
         {/* Deploy Log */}
@@ -780,6 +771,132 @@ function DomainSettings({ project, onSaved }) {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Git Status & Auto-Deploy Card ──────────────────────────
+
+function GitStatusCard({ project, onDeploy, deploying }) {
+  const [gitStatus, setGitStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [autoDeploy, setAutoDeploy] = useState(false);
+  const [autoDeployLoading, setAutoDeployLoading] = useState(false);
+
+  const checkGitStatus = () => {
+    setChecking(true);
+    api.get(`/admin/web-hosting/projects/${project.id}/git-status`)
+      .then(({ data }) => setGitStatus(data))
+      .catch(() => setGitStatus(null))
+      .finally(() => setChecking(false));
+  };
+
+  useEffect(() => {
+    checkGitStatus();
+    api.get(`/admin/web-hosting/projects/${project.id}/auto-deploy`)
+      .then(({ data }) => setAutoDeploy(data.enabled))
+      .catch(() => {});
+  }, [project.id]);
+
+  const toggleAutoDeploy = async () => {
+    setAutoDeployLoading(true);
+    try {
+      const { data } = await api.put(`/admin/web-hosting/projects/${project.id}/auto-deploy`, { enabled: !autoDeploy });
+      setAutoDeploy(data.enabled);
+      toast.success(data.enabled ? 'Auto-deploy enabled' : 'Auto-deploy disabled');
+    } catch { toast.error('Failed'); }
+    finally { setAutoDeployLoading(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Deployment Version Card */}
+      <div className="border rounded-lg overflow-hidden" style={{ borderColor: 'var(--surface-border)' }}>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+          <div className="flex items-center gap-2">
+            <GitBranch className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="text-xs font-semibold">Repository & Version</span>
+          </div>
+          <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={checkGitStatus} disabled={checking}>
+            {checking ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          </Button>
+        </div>
+
+        <div className="p-4 space-y-3" style={{ background: 'var(--surface-0)' }}>
+          {/* Repo URL */}
+          <div>
+            <p className="text-[10px] text-muted-foreground/50 mb-1">Repository</p>
+            <p className="text-xs font-mono text-muted-foreground break-all">{project.git_url}</p>
+          </div>
+
+          {/* Current deployed version */}
+          {gitStatus?.localCommit && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-lg p-3 border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+                <p className="text-[10px] text-muted-foreground/50 mb-1.5">Deployed Version</p>
+                <p className="text-xs font-mono font-medium">{gitStatus.localCommit}</p>
+                <p className="text-[10px] text-muted-foreground/50 mt-1 truncate">{gitStatus.localMessage}</p>
+                {gitStatus.localDate && <p className="text-[9px] text-muted-foreground/30 mt-0.5">{new Date(gitStatus.localDate).toLocaleString()}</p>}
+              </div>
+
+              <div className="rounded-lg p-3 border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+                <p className="text-[10px] text-muted-foreground/50 mb-1.5">Latest on {gitStatus.branch}</p>
+                <p className="text-xs font-mono font-medium">{gitStatus.remoteCommit}</p>
+                <p className="text-[10px] text-muted-foreground/50 mt-1 truncate">{gitStatus.remoteMessage}</p>
+                {gitStatus.remoteDate && <p className="text-[9px] text-muted-foreground/30 mt-0.5">{new Date(gitStatus.remoteDate).toLocaleString()}</p>}
+              </div>
+            </div>
+          )}
+
+          {/* Update available banner */}
+          {gitStatus?.hasUpdates && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-amber-400">Update Available</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {gitStatus.behind} new commit{gitStatus.behind > 1 ? 's' : ''} on <code className="font-mono text-[10px]">{gitStatus.branch}</code> since last deploy.
+                </p>
+              </div>
+              <Button size="sm" className="h-7 text-xs gap-1.5 bg-amber-600 hover:bg-amber-500 text-white" onClick={onDeploy} disabled={deploying}>
+                {deploying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />}
+                Redeploy Now
+              </Button>
+            </div>
+          )}
+
+          {gitStatus && !gitStatus.hasUpdates && gitStatus.localCommit && (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg border border-emerald-500/15 bg-emerald-500/5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[11px] text-emerald-400 font-medium">Up to date — deployed version matches latest on {gitStatus.branch}</span>
+            </div>
+          )}
+
+          {gitStatus?.error && !gitStatus.localCommit && (
+            <p className="text-[11px] text-muted-foreground/40">{gitStatus.error}</p>
+          )}
+        </div>
+      </div>
+
+      {/* Auto-Deploy Toggle */}
+      <div className="border rounded-lg p-4 flex items-center justify-between" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <RefreshCw className="w-4 h-4 text-primary" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold">Auto-Deploy</p>
+            <p className="text-[10px] text-muted-foreground/50 mt-0.5">Automatically redeploy when new commits are pushed to {project.git_branch || 'main'}</p>
+          </div>
+        </div>
+        <button
+          onClick={toggleAutoDeploy}
+          disabled={autoDeployLoading}
+          className={`relative w-10 h-5 rounded-full transition-colors ${autoDeploy ? 'bg-primary' : 'bg-zinc-600'}`}
+        >
+          <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${autoDeploy ? 'left-[22px]' : 'left-0.5'}`} />
+        </button>
       </div>
     </div>
   );

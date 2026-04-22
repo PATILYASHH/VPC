@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { LogOut, LayoutGrid, ChevronUp } from 'lucide-react';
+import { LogOut, LayoutGrid, ChevronUp, Search } from 'lucide-react';
 import useWindowStore from '@/stores/useWindowStore';
 import useDesktopStore from '@/stores/useDesktopStore';
 import useAuthStore from '@/stores/useAuthStore';
+import useCommandStore from '@/stores/useCommandStore';
 import APP_REGISTRY from '@/lib/appRegistry';
 import useIsMobile from '@/hooks/useIsMobile';
+import ContextBreadcrumb from './ContextBreadcrumb';
+import WorkspaceSwitcher from './WorkspaceSwitcher';
 
 export default function Taskbar() {
   const windows = useWindowStore((s) => s.windows);
@@ -13,6 +16,7 @@ export default function Taskbar() {
   const focusWindow = useWindowStore((s) => s.focusWindow);
   const minimizeWindow = useWindowStore((s) => s.minimizeWindow);
   const toggleLauncher = useDesktopStore((s) => s.toggleLauncher);
+  const openPalette = useCommandStore((s) => s.openPalette);
   const admin = useAuthStore((s) => s.admin);
   const logout = useAuthStore((s) => s.logout);
   const isMobile = useIsMobile();
@@ -88,6 +92,20 @@ export default function Taskbar() {
           <span className="hidden sm:inline">VPC</span>
         </button>
 
+        {/* Command Palette trigger */}
+        <button
+          onClick={openPalette}
+          className="hidden sm:flex h-8 px-2.5 rounded-lg items-center gap-2 text-xs text-muted-foreground hover:bg-white/[0.05] border transition-colors shrink-0"
+          style={{ borderColor: 'var(--surface-border)' }}
+          title="Command Palette (Ctrl+K)"
+        >
+          <Search className="w-3.5 h-3.5 opacity-60" />
+          <span className="hidden md:inline opacity-70">Search</span>
+          <kbd className="hidden md:inline-flex items-center font-mono text-[9px] px-1 py-0.5 rounded border opacity-50" style={{ borderColor: 'var(--surface-border-active)' }}>
+            Ctrl K
+          </kbd>
+        </button>
+
         <div className="w-px h-5 mx-1 hidden sm:block" style={{ background: 'var(--surface-border)' }} />
 
         {/* Desktop: open window tabs */}
@@ -143,6 +161,10 @@ export default function Taskbar() {
             )}
           </div>
         )}
+
+        <ContextBreadcrumb />
+
+        <WorkspaceSwitcher />
 
         <div className="w-px h-5 mx-1" style={{ background: 'var(--surface-border)' }} />
 

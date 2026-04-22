@@ -14,8 +14,43 @@ function loadPrefs() {
 
 function savePrefs(state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: state.theme }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: state.theme, accent: state.accent }));
   } catch {}
+}
+
+// ─── Accent presets ────────────────────────────────────────
+// Each entry is HSL "h s% l%" tuned to read well on dark + light
+export const ACCENTS = {
+  blue:    { label: 'Blue',    hsl: '217 91% 60%', swatch: '#3b82f6' },
+  violet:  { label: 'Violet',  hsl: '262 83% 65%', swatch: '#8b5cf6' },
+  rose:    { label: 'Rose',    hsl: '347 89% 60%', swatch: '#f43f5e' },
+  emerald: { label: 'Emerald', hsl: '160 84% 45%', swatch: '#10b981' },
+  amber:   { label: 'Amber',   hsl: '38 92% 55%',  swatch: '#f59e0b' },
+  cyan:    { label: 'Cyan',    hsl: '189 94% 50%', swatch: '#06b6d4' },
+  pink:    { label: 'Pink',    hsl: '329 86% 65%', swatch: '#ec4899' },
+  orange:  { label: 'Orange',  hsl: '24 95% 55%',  swatch: '#f97316' },
+  lime:    { label: 'Lime',    hsl: '83 78% 50%',  swatch: '#84cc16' },
+  teal:    { label: 'Teal',    hsl: '173 80% 42%', swatch: '#14b8a6' },
+  indigo:  { label: 'Indigo',  hsl: '239 84% 65%', swatch: '#6366f1' },
+  slate:   { label: 'Slate',   hsl: '215 20% 65%', swatch: '#64748b' },
+};
+
+const ACCENT_OVERRIDES_ID = 'vpc-accent-overrides';
+
+function applyAccentToDOM(accentId) {
+  const a = ACCENTS[accentId];
+  if (!a) return;
+  let style = document.getElementById(ACCENT_OVERRIDES_ID);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = ACCENT_OVERRIDES_ID;
+    document.head.appendChild(style);
+  }
+  style.textContent = `:root, .dark, [class*="theme-"] {
+    --primary: ${a.hsl} !important;
+    --ring: ${a.hsl} !important;
+    --accent-color: ${a.swatch};
+  }`;
 }
 
 // ─── Theme application ──────────────────────────────────────
@@ -130,12 +165,15 @@ function applyThemeToDOM(themeId) {
 // Apply saved theme on load
 const saved = loadPrefs();
 const initialTheme = saved.theme || 'dark';
+const initialAccent = saved.accent || 'blue';
 if (typeof document !== 'undefined') {
   applyThemeToDOM(initialTheme);
+  applyAccentToDOM(initialAccent);
 }
 
 const useDesktopStore = create((set) => ({
   theme: initialTheme,
+  accent: initialAccent,
   launcherOpen: false,
 
   setTheme: (theme) => {
@@ -143,6 +181,12 @@ const useDesktopStore = create((set) => ({
       applyThemeToDOM(theme);
     }
     set({ theme });
+  },
+  setAccent: (accent) => {
+    if (typeof document !== 'undefined') {
+      applyAccentToDOM(accent);
+    }
+    set({ accent });
   },
   toggleLauncher: () => set((s) => ({ launcherOpen: !s.launcherOpen })),
   closeLauncher: () => set({ launcherOpen: false }),

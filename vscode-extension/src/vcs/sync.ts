@@ -10,6 +10,7 @@ import { SyncApiClient } from '../api/client';
 import * as objects from './objects';
 import * as refs from './refs';
 import * as index from './index';
+import * as merge from './merge';
 
 export interface SyncResult {
   success: boolean;
@@ -106,6 +107,65 @@ export async function push(root: string, client: SyncApiClient, branchName?: str
       return { success: true, message: 'Already up to date — nothing to push.', objectCount: 0 };
     }
 
+    // Pre-push conflict detection: if remote exists and diverged, merge locally FIRST
+    // so conflicts surface in the IDE before hitting protected/main branches.
+    let effectiveLocalHash = localHash;
+    if (remoteHash && remoteHash !== localHash) {
+      // Ensure we have the remote commit objects locally so we can compute merge base
+      if (!objects.objectExists(root, remoteHash)) {
+        try {
+          const pullRes = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [localHash]);
+          storeReceivedObjects(root, pullRes.objects || []);
+        } catch (err: any) {
+          return { success: false, message: `Cannot fetch remote for merge check: ${err.message}` };
+        }
+      }
+
+      // Fast-forward from our side? (remote is ancestor of local)
+      const remoteIsAncestor = merge.isAncestor(root, remoteHash, localHash);
+      const localIsAncestor = merge.isAncestor(root, localHash, remoteHash);
+
+      if (!remoteIsAncestor && !localIsAncestor) {
+        // Diverged — run local 3-way merge
+        const outcome = merge.mergeTrees(root, localHash, remoteHash);
+
+        if (outcome.hasConflicts) {
+          // Write merged files (with conflict markers) into working tree so the user can fix in VS Code
+          for (const f of outcome.mergedFiles) {
+            const absPath = path.resolve(root, f.path);
+            if (!absPath.startsWith(root)) { continue; }
+            const dir = path.dirname(absPath);
+            if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+            try { fs.writeFileSync(absPath, objects.readBlob(root, f.hash)); } catch { /* skip */ }
+          }
+          // Refresh index to reflect the written working tree state
+          index.buildIndexFromTree(root, outcome.mergedTreeHash);
+
+          const conflictList = outcome.conflicts.map(c => `  • ${c.path}${c.type !== 'content' ? ` (${c.type})` : ''}`).join('\n');
+          return {
+            success: false,
+            hasConflicts: true,
+            conflictFiles: outcome.conflicts.map(c => c.path),
+            message: `Push blocked — ${outcome.conflicts.length} merge conflict(s) with remote '${branch}':\n${conflictList}\n\nFix the <<<<<<< markers in the listed files, commit the resolution, then push again.`,
+          };
+        }
+
+        // Clean merge — create a local merge commit and push that
+        const username = vscode.workspace.getConfiguration('vpcSync').get<string>('username') || 'user';
+        effectiveLocalHash = objects.createCommit(root, {
+          tree: outcome.mergedTreeHash,
+          parents: [localHash, remoteHash],
+          authorName: username,
+          authorEmail: `${username}@vpc`,
+          message: `Merge remote '${branch}' into local`,
+        });
+
+        // Advance local branch & refresh working tree
+        refs.updateRef(root, `refs/heads/${branch}`, effectiveLocalHash);
+        checkoutTree(root, effectiveLocalHash);
+      }
+    }
+
     // Collect objects to send (only what remote doesn't have)
     const remoteObjects = new Set<string>();
     const trackingHash = refs.resolveRef(root, `refs/remotes/origin/${branch}`);
@@ -114,7 +174,7 @@ export async function push(root: string, client: SyncApiClient, branchName?: str
       catch { /* ignore */ }
     }
 
-    const localObjects = objects.collectReachableObjects(root, localHash, new Set());
+    const localObjects = objects.collectReachableObjects(root, effectiveLocalHash, new Set());
     const toSend: any[] = [];
 
     for (const hash of localObjects) {
@@ -129,9 +189,9 @@ export async function push(root: string, client: SyncApiClient, branchName?: str
       }
     }
 
-    // Direct push to branch (server handles merging/conflicts with force-push philosophy)
+    // Direct push to branch (local merge already resolved divergence if any)
     const refUpdate: Record<string, any> = {
-      [`refs/heads/${branch}`]: { old: remoteHash || '0'.repeat(64), new: localHash },
+      [`refs/heads/${branch}`]: { old: remoteHash || '0'.repeat(64), new: effectiveLocalHash },
     };
 
     let result: any;
@@ -146,14 +206,14 @@ export async function push(root: string, client: SyncApiClient, branchName?: str
     }
 
     // Update tracking ref
-    const finalHash = result.updated_refs?.[`refs/heads/${branch}`] || localHash;
+    const finalHash = result.updated_refs?.[`refs/heads/${branch}`] || effectiveLocalHash;
     refs.updateRef(root, `refs/remotes/origin/${branch}`, finalHash);
 
     // If server merged (our commit was integrated into a merge commit), update local
-    if (result.merged && finalHash !== localHash) {
+    if (result.merged && finalHash !== effectiveLocalHash) {
       // Pull the merge commit objects
       try {
-        const pullResult = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [localHash]);
+        const pullResult = await client.vcsPull(remote.url, remote.username, remote.token, [`refs/heads/${branch}`], [effectiveLocalHash]);
         storeReceivedObjects(root, pullResult.objects || []);
         refs.updateRef(root, `refs/heads/${branch}`, finalHash);
         checkoutTree(root, finalHash);
@@ -161,7 +221,9 @@ export async function push(root: string, client: SyncApiClient, branchName?: str
     }
 
     // Build response message
-    let message = `Pushed ${toSend.length} object(s) to ${branch}.`;
+    let message = effectiveLocalHash !== localHash
+      ? `Merged remote changes locally, then pushed ${toSend.length} object(s) to ${branch}.`
+      : `Pushed ${toSend.length} object(s) to ${branch}.`;
     if (result.merged) { message = `Pushed and auto-merged into ${branch}.`; }
 
     return {

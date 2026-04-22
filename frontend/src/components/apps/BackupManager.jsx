@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import BackupDestinations from './BackupDestinations';
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -121,6 +122,9 @@ export default function BackupManager() {
             </div>
           </div>
         </div>
+
+        {/* ─── Cloud Destinations (Supabase, etc.) ─── */}
+        <BackupDestinations />
 
         {/* ─── Project Databases ─── */}
         <div>
