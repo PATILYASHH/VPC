@@ -34,13 +34,18 @@ app.use('/api/db', cors());
 // Fallback CORS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
-// Body parsing — skip /vcs routes (binary VPC VCS protocol data has its own parser)
+// PR preview webhook — must come BEFORE global json parser so we can capture
+// the raw body for HMAC verification (the webhook router mounts its own json
+// parser with a verify callback).
+app.use('/api/webhooks/github', require('./routes/webHostingWebhook'));
+
+// Body parsing — skip /vcs and /api/webhooks routes (they handle their own parsing)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/vcs/')) return next();
+  if (req.path.startsWith('/vcs/') || req.path.startsWith('/api/webhooks/')) return next();
   express.json({ limit: '500mb' })(req, res, next);
 });
 app.use((req, res, next) => {
-  if (req.path.startsWith('/vcs/')) return next();
+  if (req.path.startsWith('/vcs/') || req.path.startsWith('/api/webhooks/')) return next();
   express.urlencoded({ extended: true, limit: '500mb' })(req, res, next);
 });
 
@@ -58,6 +63,9 @@ app.get('/health', async (req, res) => {
     res.status(503).json({ status: 'error', error: err.message });
   }
 });
+
+// DB Public OAuth flow (browser-facing, no apikey — verified via signed state token)
+app.use('/api/db/auth/v1', require('./routes/dbAuthOAuth'));
 
 // DB External REST API (API key auth, no JWT)
 app.use('/api/db/v1', require('./routes/dbApi'));

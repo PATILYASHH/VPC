@@ -2,12 +2,56 @@ const express = require('express');
 const router = express.Router();
 const integrationService = require('../services/integrationService');
 
-// List all integrations visible to the current admin
-// (shared ones + ones they own privately)
+// List all integrations visible to the current admin (shared + own).
+// Each row is augmented with a `usage` summary so the frontend can show
+// "used by X apps · last used Y ago" without a second request.
 router.get('/', async (req, res) => {
   try {
-    const integrations = await integrationService.getAll(req.app.locals.pool, { forUserId: req.admin?.id });
-    res.json({ integrations });
+    const pool = req.app.locals.pool;
+    const integrations = await integrationService.getAll(pool, { forUserId: req.admin?.id });
+
+    // Grab all usage rows in one query then group client-side (cheap; rows are small)
+    const { rows: useRows } = await pool.query(
+      `SELECT integration_id, app_id, resource_kind, resource_id, last_used_at, created_at
+         FROM vpc_integration_uses
+        ORDER BY last_used_at DESC`
+    );
+    const byIntegration = new Map();
+    for (const u of useRows) {
+      const list = byIntegration.get(u.integration_id) || [];
+      list.push(u);
+      byIntegration.set(u.integration_id, list);
+    }
+
+    const enriched = integrations.map((int) => {
+      const uses = byIntegration.get(int.id) || [];
+      const apps = new Map(); // appId → { count, lastUsedAt }
+      for (const u of uses) {
+        const cur = apps.get(u.app_id) || { app_id: u.app_id, count: 0, last_used_at: null };
+        cur.count += 1;
+        if (!cur.last_used_at || new Date(u.last_used_at) > new Date(cur.last_used_at)) {
+          cur.last_used_at = u.last_used_at;
+        }
+        apps.set(u.app_id, cur);
+      }
+      const appList = Array.from(apps.values()).sort((a, b) =>
+        new Date(b.last_used_at || 0) - new Date(a.last_used_at || 0)
+      );
+      const lastUsedAt = appList.reduce((acc, a) =>
+        !acc || new Date(a.last_used_at || 0) > new Date(acc) ? a.last_used_at : acc, null);
+
+      return {
+        ...int,
+        usage: {
+          total_uses: uses.length,
+          unique_apps: appList.length,
+          last_used_at: lastUsedAt,
+          apps: appList, // [{ app_id, count, last_used_at }]
+        },
+      };
+    });
+
+    res.json({ integrations: enriched });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

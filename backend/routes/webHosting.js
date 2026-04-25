@@ -109,7 +109,6 @@ router.post('/projects/:id/fix-with-ai', async (req, res) => {
     const pool = req.app.locals.pool;
     const project = await webHostingService.getProject(pool, req.params.id);
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    if (project.status !== 'error') return res.status(400).json({ error: 'Project is not in error state' });
 
     const result = await webHostingService.fixWithAI(pool, req.params.id);
     webHostingService.refreshSlugCache(pool);
@@ -177,7 +176,7 @@ router.post('/projects/:id/smart-deploy', async (req, res) => {
           log.push('Attempting AI auto-fix...');
           try {
             const fixResult = await webHostingService.fixWithAI(pool, project.id);
-            log.push(`AI fix applied: ${fixResult.fixes_applied || 0} fix(es)`);
+            log.push(`AI fix applied: ${fixResult.fixesApplied || 0} fix(es)`);
             // Reload project in case fixWithAI updated configs
             const updated = await webHostingService.getProject(pool, project.id);
             if (updated) Object.assign(project, updated);
@@ -380,6 +379,107 @@ router.get('/projects/:id/git-status', async (req, res) => {
     }
 
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /projects/:id/versions — list rollback-available versions (last 3)
+router.get('/projects/:id/versions', async (req, res) => {
+  try {
+    const versions = await webHostingService.listVersions(req.app.locals.pool, req.params.id);
+    res.json({ versions, max: webHostingService.MAX_VERSIONS });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /projects/:id/rollback/:versionId — instantly restore an archived version
+router.post('/projects/:id/rollback/:versionId', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const result = await webHostingService.rollback(pool, req.params.id, req.params.versionId);
+    webHostingService.refreshSlugCache(pool);
+    webHostingService.refreshDomainCache(pool);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── PR Previews ───────────────────────────────────────────────
+
+const previewService = require('../services/webHostingPreviewService');
+
+function getPublicHost(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  const hostHeader = (req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  return `${proto}://${hostHeader}`;
+}
+
+// GET /projects/:id/preview-settings — webhook URL + secret + enabled flag
+router.get('/projects/:id/preview-settings', async (req, res) => {
+  try {
+    const settings = await previewService.getSettings(req.app.locals.pool, req.params.id);
+    res.json({
+      enabled: settings.enabled,
+      secret: settings.secret,
+      webhook_url: `${getPublicHost(req)}/api/webhooks/github/wh/${req.params.id}`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /projects/:id/preview-settings — toggle previews on/off, optionally regenerate secret
+router.put('/projects/:id/preview-settings', async (req, res) => {
+  try {
+    const { enabled, regenerateSecret } = req.body;
+    const result = await previewService.setEnabled(
+      req.app.locals.pool, req.params.id, enabled, !!regenerateSecret
+    );
+    res.json({
+      enabled: result.enabled,
+      secret: result.secret,
+      webhook_url: `${getPublicHost(req)}/api/webhooks/github/wh/${req.params.id}`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /projects/:id/previews — list all open previews
+router.get('/projects/:id/previews', async (req, res) => {
+  try {
+    const previews = await previewService.listPreviews(req.app.locals.pool, req.params.id);
+    res.json({ previews });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /projects/:id/previews/:previewId/rebuild — manually rebuild a preview
+router.post('/projects/:id/previews/:previewId/rebuild', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const project = await webHostingService.getProject(pool, req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Build asynchronously so the request returns quickly
+    previewService.rebuildPreview(pool, project, req.params.previewId, getPublicHost(req))
+      .catch((err) => console.error('[preview rebuild] failed:', err.message));
+    res.json({ ok: true, message: 'Rebuild started' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /projects/:id/previews/:previewId — manually close a preview
+router.delete('/projects/:id/previews/:previewId', async (req, res) => {
+  try {
+    await previewService.closePreview(req.app.locals.pool, req.params.previewId);
+    webHostingService.refreshSlugCache(req.app.locals.pool);
+    res.json({ closed: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

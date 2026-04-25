@@ -276,6 +276,47 @@ router.delete('/projects/:id/auth/users/:userId', resolveProject, async (req, re
   }
 });
 
+// ─── Auth Provider Config (Google, etc.) ────────────────────
+
+router.get('/projects/:id/auth/providers', resolveProject, async (req, res) => {
+  try {
+    const providers = await dbService.getAuthProviders(req.dbPool);
+    // Build the public callback URL the user must register with their OAuth provider
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+    const host = (req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const callbackBase = `${proto}://${host}/api/db/auth/v1/${encodeURIComponent(req.dbProject.slug)}/callback`;
+    res.json({
+      providers,
+      callback_base_url: callbackBase,
+      authorize_base_url: `${proto}://${host}/api/db/auth/v1/${encodeURIComponent(req.dbProject.slug)}/authorize`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/projects/:id/auth/providers/:provider', resolveProject, async (req, res) => {
+  try {
+    const provider = req.params.provider;
+    if (!['google', 'github'].includes(provider)) {
+      return res.status(400).json({ error: `Unsupported provider: ${provider}` });
+    }
+    const { enabled, clientId, clientSecret, config } = req.body;
+    if (enabled && (!clientId || (!clientSecret && req.body.clientSecret !== undefined && clientSecret === ''))) {
+      return res.status(400).json({ error: 'clientId and clientSecret are required to enable a provider' });
+    }
+    const result = await dbService.setAuthProvider(req.dbPool, provider, {
+      enabled,
+      clientId,
+      clientSecret,
+      config,
+    });
+    res.json({ provider: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.put('/projects/:id/auth/users/:userId/password', resolveProject, async (req, res) => {
   try {
     const { password } = req.body;

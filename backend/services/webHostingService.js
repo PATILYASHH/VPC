@@ -2,6 +2,7 @@ const { execFile, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const crypto = require('crypto');
 const dns = require('dns').promises;
 const vcsCore = require('./vpcVcsCore');
@@ -9,11 +10,120 @@ const vcsCore = require('./vpcVcsCore');
 const HOSTING_DIR = path.join(os.homedir(), 'web-hosting');
 const RESERVED_SLUGS = ['api', 'admin', 'storage', 'uploads', 'downloads', 'health', 'web-hosting', 'sites'];
 const PORT_START = 4001;
+const MAX_VERSIONS = 3;
+const STAGING_SUFFIX = '__staging';
+const VERSIONS_SUFFIX = '__versions';
 
 function ensureHostingDir() {
   if (!fs.existsSync(HOSTING_DIR)) {
     fs.mkdirSync(HOSTING_DIR, { recursive: true });
   }
+}
+
+function ensureDirSync(p) {
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+}
+
+function stagingPathFor(livePath) { return livePath + STAGING_SUFFIX; }
+function versionsRootFor(livePath) { return livePath + VERSIONS_SUFFIX; }
+
+// Self-healing migration for the versions table (rollback history)
+let _versionsSchemaDone = false;
+async function ensureVersionsSchema(pool) {
+  if (_versionsSchemaDone) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS web_hosting_versions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL,
+        version_dir TEXT NOT NULL,
+        commit_hash VARCHAR(64),
+        commit_message TEXT,
+        status VARCHAR(32) NOT NULL DEFAULT 'archived',
+        deployed_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_wh_versions_project ON web_hosting_versions(project_id, deployed_at DESC)`);
+    _versionsSchemaDone = true;
+  } catch (err) {
+    // pgcrypto for gen_random_uuid is on the master DB already; fall through if it fails
+    console.error('[web-hosting] ensureVersionsSchema failed:', err.message);
+  }
+}
+
+async function listVersions(pool, projectId) {
+  await ensureVersionsSchema(pool);
+  const { rows } = await pool.query(
+    `SELECT id, version_dir, commit_hash, commit_message, status, deployed_at
+     FROM web_hosting_versions WHERE project_id = $1 ORDER BY deployed_at DESC LIMIT 10`,
+    [projectId]
+  );
+  // Mark rows whose folder no longer exists on disk so the UI can grey them out
+  return rows.map((r) => ({ ...r, available: !!(r.version_dir && fs.existsSync(r.version_dir)) }));
+}
+
+async function recordVersion(pool, projectId, versionDir, meta = {}) {
+  await ensureVersionsSchema(pool);
+  await pool.query(
+    `INSERT INTO web_hosting_versions (project_id, version_dir, commit_hash, commit_message, status)
+     VALUES ($1, $2, $3, $4, 'archived')`,
+    [projectId, versionDir, meta.commitHash || null, meta.commitMessage || null]
+  );
+}
+
+async function trimOldVersions(pool, projectId) {
+  await ensureVersionsSchema(pool);
+  const { rows } = await pool.query(
+    `SELECT id, version_dir FROM web_hosting_versions WHERE project_id = $1 ORDER BY deployed_at DESC`,
+    [projectId]
+  );
+  for (const v of rows.slice(MAX_VERSIONS)) {
+    try { if (v.version_dir && fs.existsSync(v.version_dir)) fs.rmSync(v.version_dir, { recursive: true, force: true }); } catch {}
+    await pool.query(`DELETE FROM web_hosting_versions WHERE id = $1`, [v.id]).catch(() => {});
+  }
+}
+
+// Probe the staging Node server: poll up to timeoutMs; success = any non-5xx response
+function probeHttp(host, port, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tryOnce = () => {
+      const req = http.request({ host, port, path: '/', method: 'GET', timeout: 2500 }, (res) => {
+        res.resume();
+        if (res.statusCode && res.statusCode < 500) return resolve(true);
+        if (Date.now() - start > timeoutMs) return resolve(false);
+        setTimeout(tryOnce, 700);
+      });
+      req.on('error', () => {
+        if (Date.now() - start > timeoutMs) resolve(false);
+        else setTimeout(tryOnce, 700);
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        if (Date.now() - start > timeoutMs) resolve(false);
+        else setTimeout(tryOnce, 700);
+      });
+      req.end();
+    };
+    setTimeout(tryOnce, 1500); // give the server a moment to bind
+  });
+}
+
+// Read the head commit of a staged checkout (works for git or .vpc repos)
+async function readStagingCommit(stagingPath, gitUrl) {
+  let commitHash = null, commitMessage = null;
+  if (isVpcRepo(gitUrl)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(stagingPath, '.vpc-deploy'), 'utf8'));
+      commitHash = meta.commitHash || null;
+    } catch {}
+  } else {
+    try {
+      commitHash = (await runCommand('git rev-parse HEAD', stagingPath)).trim() || null;
+      commitMessage = (await runCommand('git log -1 --format=%s', stagingPath)).trim() || null;
+    } catch {}
+  }
+  return { commitHash, commitMessage };
 }
 
 /**
@@ -607,10 +717,22 @@ async function deleteProject(pool, id) {
     try { await runCommand(`pm2 delete ${project.pm2_name}`, '/'); } catch {}
   }
 
-  // Remove files
+  // Remove files (live, staging, archived versions)
   if (project.deploy_path && fs.existsSync(project.deploy_path)) {
     fs.rmSync(project.deploy_path, { recursive: true, force: true });
   }
+  if (project.deploy_path) {
+    const stagingDir = stagingPathFor(project.deploy_path);
+    if (fs.existsSync(stagingDir)) {
+      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {}
+    }
+    const versionsDir = versionsRootFor(project.deploy_path);
+    if (fs.existsSync(versionsDir)) {
+      try { fs.rmSync(versionsDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+  // Drop version rows (FK isn't enforced — clean up by hand)
+  await pool.query('DELETE FROM web_hosting_versions WHERE project_id = $1', [id]).catch(() => {});
 
   await pool.query('DELETE FROM web_hosting_projects WHERE id = $1', [id]);
   return project;
@@ -672,72 +794,21 @@ async function getNextPort(pool) {
 
 // --- Deploy ---
 
-async function deploy(pool, project) {
-  ensureHostingDir();
-  let log = '';
+// Shared build/healthcheck/swap pipeline used by both `deploy()` (after a
+// fresh clone) and `fixWithAI()` (after applying patches to staging).
+// On success: staging is promoted to live, previous live is archived, last 3
+// versions kept. On failure: throws with `keepStaging` semantics — caller
+// decides what to do with the staging dir. The pipeline NEVER deletes staging
+// itself; the failure log notes whether the live version was touched.
+async function runBuildAndPromote(pool, project, stagingPath, log) {
+  const livePath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
+  const versionsRoot = versionsRootFor(livePath);
+  const stagingPm2 = `wh-${project.slug}-staging`;
+  let swapStarted = false;
 
   try {
-    await pool.query(`UPDATE web_hosting_projects SET status = 'deploying', updated_at = NOW() WHERE id = $1`, [project.id]);
-
-    // Auto-resolve GitHub token from the saved integration when the project
-    // doesn't have one stored — no more per-project token paste.
-    let effectiveToken = project.git_token;
-    if (!effectiveToken && /github\.com/.test(project.git_url || '')) {
-      try {
-        const credResolver = require('./credentialResolver');
-        const resolved = await credResolver.resolve(pool, 'github', { app: 'web-hosting', resource: project.id });
-        if (resolved?.credentials?.token) effectiveToken = resolved.credentials.token;
-      } catch { /* fall through — public repos clone without a token */ }
-    }
-
-    const cloneUrl = buildCloneUrl(project.git_url, effectiveToken);
-    const deployPath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
-    const branch = project.git_branch || 'main';
-
-    // Clone or pull — use VPC VCS checkout for .vpc repos, git for everything else
-    if (isVpcRepo(project.git_url)) {
-      // VPC VCS repo: read objects directly instead of git clone
-      if (fs.existsSync(path.join(deployPath, '.vpc-deploy'))) {
-        log += `> vpc-vcs pull (branch: ${branch})\n`;
-        const result = pullVpcRepo(project.git_url, deployPath, branch);
-        if (result.upToDate) {
-          log += `Already up to date at ${result.commitHash.slice(0, 12)}\n`;
-        } else {
-          log += `Updated to ${result.commitHash.slice(0, 12)} (${result.fileCount} files)\n`;
-        }
-      } else {
-        if (fs.existsSync(deployPath)) {
-          fs.rmSync(deployPath, { recursive: true, force: true });
-        }
-        log += `> vpc-vcs checkout (branch: ${branch})\n`;
-        const result = checkoutVpcRepo(project.git_url, deployPath, branch);
-        log += `Checked out ${result.commitHash.slice(0, 12)} (${result.fileCount} files)\n`;
-      }
-    } else if (fs.existsSync(path.join(deployPath, '.git'))) {
-      // Bug #1: Reset tracked files before pull to avoid "local changes would be overwritten"
-      // Preserve .env and ecosystem.wh.config.js (our generated files)
-      log += '> git checkout -- . && git clean -fd -e .env -e ecosystem.wh.config.js\n';
-      try {
-        await runCommand('git checkout -- .', deployPath);
-        await runCommand('git clean -fd -e .env -e ecosystem.wh.config.js', deployPath);
-      } catch (cleanErr) {
-        log += `Warning: git clean failed: ${cleanErr.message}\n`;
-      }
-
-      log += `> git pull origin ${branch}\n`;
-      const pullOut = await runCommand(`git pull origin ${branch}`, deployPath);
-      log += pullOut + '\n';
-    } else {
-      if (fs.existsSync(deployPath)) {
-        fs.rmSync(deployPath, { recursive: true, force: true });
-      }
-      log += `> git clone -b ${branch}\n`;
-      const cloneOut = await runCommand(`git clone -b ${branch} "${cloneUrl}" "${deployPath}"`, HOSTING_DIR);
-      log += cloneOut + '\n';
-    }
-
-    // Bug #6: Auto-detect project structure and fill empty fields
-    const detected = detectProjectStructure(deployPath, project.slug);
+    // ── 1. Detect project structure & persist learned defaults ───────
+    const detected = detectProjectStructure(stagingPath, project.slug);
     log += `> Auto-detected: framework=${detected.framework || 'none'}, frontendDir=${detected.frontendDir || 'none'}, backendDir=${detected.backendDir || 'none'}, type=${detected.projectType}\n`;
 
     const updates = {};
@@ -761,8 +832,6 @@ async function deploy(pool, project) {
       updates.project_type = detected.projectType;
       log += `> Auto-set project type: ${detected.projectType}\n`;
     }
-
-    // Persist auto-detected values to DB
     if (Object.keys(updates).length > 0) {
       const setClauses = [];
       const vals = [];
@@ -775,102 +844,131 @@ async function deploy(pool, project) {
       setClauses.push('updated_at = NOW()');
       vals.push(project.id);
       await pool.query(`UPDATE web_hosting_projects SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`, vals);
-
-      // Merge updates into project for remainder of deploy
       Object.assign(project, updates);
     }
 
-    // Bug #4: Write .env file(s) before install/build
+    // ── 2. Env, install, frontend patches, build ─────────────────────
     const envVars = project.env_vars || {};
-    writeEnvFile(deployPath, envVars);
-    if (Object.keys(envVars).length > 0) {
-      log += `> Wrote .env file (${Object.keys(envVars).length} vars)\n`;
-    }
+    writeEnvFile(stagingPath, envVars);
+    if (Object.keys(envVars).length > 0) log += `> Wrote .env file (${Object.keys(envVars).length} vars)\n`;
 
-    // Install dependencies
-    // Bug #2: Always run install command if set — don't gate on root package.json
     if (project.install_command) {
       log += `> ${project.install_command}\n`;
-      const installOut = await runCommand(project.install_command, deployPath, { NODE_ENV: 'development' });
+      const installOut = await runCommand(project.install_command, stagingPath, { NODE_ENV: 'development' });
       log += installOut + '\n';
-
-      // Bug #3: chmod +x node_modules/.bin after install
-      chmodBinDirs(deployPath);
+      chmodBinDirs(stagingPath);
     }
 
-    // Auto-patch frontend code for slug-based hosting
-    // Apps in repos assume they run at "/", but VPC hosts them at "/{slug}/"
-    // Patch common patterns so SPA routing and API calls work correctly
     if (detected.frontendDir || detected.framework) {
-      const patchCount = patchFrontendForSlug(deployPath, project.slug, detected);
-      if (patchCount > 0) {
-        log += `> Auto-patched ${patchCount} frontend file(s) for /${project.slug}/ hosting\n`;
-      }
+      const patchCount = patchFrontendForSlug(stagingPath, project.slug, detected);
+      if (patchCount > 0) log += `> Auto-patched ${patchCount} frontend file(s) for /${project.slug}/ hosting\n`;
     }
 
-    // Build — remove stale Next.js lock files before building
     if (project.build_command) {
-      const nextLock = path.join(deployPath, '.next', 'lock');
+      const nextLock = path.join(stagingPath, '.next', 'lock');
       const frontendDir = project.build_command.match(/^cd\s+(\S+)\s*&&/);
       if (frontendDir) {
-        const fLock = path.join(deployPath, frontendDir[1], '.next', 'lock');
+        const fLock = path.join(stagingPath, frontendDir[1], '.next', 'lock');
         if (fs.existsSync(fLock)) fs.unlinkSync(fLock);
       }
       if (fs.existsSync(nextLock)) fs.unlinkSync(nextLock);
 
       log += `> ${project.build_command}\n`;
-      const buildOut = await runCommand(project.build_command, deployPath);
+      const buildOut = await runCommand(project.build_command, stagingPath);
       log += buildOut + '\n';
     }
 
-    // Start Node backend if needed
-    if (project.project_type === 'node' || project.project_type === 'fullstack') {
-      let port = project.node_port;
-      if (!port) {
-        port = await getNextPort(pool);
+    // Capture commit info for the version record
+    const { commitHash, commitMessage } = await readStagingCommit(stagingPath, project.git_url);
+
+    // ── 3. Healthcheck ───────────────────────────────────────────────
+    const isNodeApp = project.project_type === 'node' || project.project_type === 'fullstack';
+    const isNextJs = detected.framework === 'next' || project.node_entry_point === '__nextjs__';
+
+    if (project.project_type === 'static' || project.project_type === 'fullstack') {
+      const checkBase = project.output_dir ? path.join(stagingPath, project.output_dir) : stagingPath;
+      if (!fs.existsSync(checkBase)) throw new Error(`Healthcheck failed: output dir not found (${project.output_dir || '.'})`);
+      const indexPath = path.join(checkBase, 'index.html');
+      if (project.project_type === 'static' && !fs.existsSync(indexPath)) {
+        const hasHtml = fs.readdirSync(checkBase).some((f) => f.endsWith('.html'));
+        if (!hasHtml) throw new Error('Healthcheck failed: no HTML output produced');
       }
-      const pm2Name = `wh-${project.slug}`;
-      const pm2Env = { ...(project.env_vars || {}), PORT: String(port) };
+    }
 
-      // Stop existing process
-      try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
+    if (isNodeApp) {
+      const stagingPort = await getNextPort(pool);
+      const stagingEnv = { ...envVars, PORT: String(stagingPort) };
+      let stagingEcosystem;
 
-      // Detect if this is a Next.js project (sentinel from detectProjectStructure or next.config exists)
-      const isNextJs = detected.framework === 'next' || project.node_entry_point === '__nextjs__';
-
-      let ecosystemPath;
       if (isNextJs) {
-        // Next.js: run `next start -p PORT` via PM2
-        const nextDir = detected.frontendDir ? path.join(deployPath, detected.frontendDir) : deployPath;
+        const nextDir = detected.frontendDir ? path.join(stagingPath, detected.frontendDir) : stagingPath;
         const nextBin = path.join(nextDir, 'node_modules', '.bin', 'next');
-        if (!fs.existsSync(nextBin)) {
-          throw new Error(`Next.js binary not found at ${nextBin}. Make sure dependencies are installed.`);
-        }
-        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, null, pm2Env, nextDir, {
-          script: nextBin,
-          args: `start -p ${port}`,
+        if (!fs.existsSync(nextBin)) throw new Error(`Next.js binary not found at ${nextBin}`);
+        stagingEcosystem = writeEcosystemConfig(stagingPath, stagingPm2, null, stagingEnv, nextDir, {
+          script: nextBin, args: `start -p ${stagingPort}`,
         });
-        log += `> Generated PM2 ecosystem config (Next.js: next start -p ${port})\n`;
-        log += `> Starting Next.js on port ${port}\n`;
       } else {
         const entryPoint = project.node_entry_point || 'index.js';
-        const entryPath = path.join(deployPath, entryPoint);
-
-        if (!fs.existsSync(entryPath)) {
-          throw new Error(`Entry point "${entryPoint}" not found at ${entryPath}`);
-        }
-
-        // Bug #5: Use ecosystem config file instead of fragile shell env prefix
-        const entryDir = path.dirname(entryPath);
-        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
-        log += `> Generated PM2 ecosystem config\n`;
-        log += `> Starting Node.js on port ${port}\n`;
+        const entryPath = path.join(stagingPath, entryPoint);
+        if (!fs.existsSync(entryPath)) throw new Error(`Entry point "${entryPoint}" not found at ${entryPath}`);
+        stagingEcosystem = writeEcosystemConfig(stagingPath, stagingPm2, entryPath, stagingEnv, path.dirname(entryPath));
       }
 
-      const startCmd = `pm2 start "${ecosystemPath}"`;
-      const startOut = await runCommand(startCmd, deployPath);
-      log += startOut + '\n';
+      log += `> Healthcheck: starting staging on port ${stagingPort}\n`;
+      try { await runCommand(`pm2 delete ${stagingPm2}`, '/'); } catch {}
+      await runCommand(`pm2 start "${stagingEcosystem}"`, stagingPath);
 
+      const ok = await probeHttp('127.0.0.1', stagingPort, 12000);
+      try { await runCommand(`pm2 delete ${stagingPm2}`, '/'); } catch {}
+      if (!ok) throw new Error(`Healthcheck failed: staging server on port ${stagingPort} did not respond`);
+      log += `> Healthcheck OK\n`;
+    }
+
+    // ── 4. Atomic swap: archive live, promote staging ────────────────
+    log += '> Swap: archiving previous build and promoting staging → live\n';
+    swapStarted = true;
+
+    if (isNodeApp && project.pm2_name) {
+      try { await runCommand(`pm2 delete ${project.pm2_name}`, '/'); } catch {}
+    }
+
+    if (fs.existsSync(livePath)) {
+      ensureDirSync(versionsRoot);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const archiveDir = path.join(versionsRoot, `v_${stamp}_${(commitHash || 'prev').slice(0, 8)}`);
+      try {
+        fs.renameSync(livePath, archiveDir);
+        await recordVersion(pool, project.id, archiveDir, { commitHash: null, commitMessage: null });
+      } catch (renameErr) {
+        await new Promise((r) => setTimeout(r, 800));
+        fs.renameSync(livePath, archiveDir);
+        await recordVersion(pool, project.id, archiveDir, { commitHash: null, commitMessage: null });
+      }
+    }
+
+    fs.renameSync(stagingPath, livePath);
+
+    // ── 5. Start production PM2 (if node app) ────────────────────────
+    if (isNodeApp) {
+      let port = project.node_port;
+      if (!port) port = await getNextPort(pool);
+      const pm2Name = `wh-${project.slug}`;
+      const pm2Env = { ...envVars, PORT: String(port) };
+      let ecosystemPath;
+      if (isNextJs) {
+        const nextDir = detected.frontendDir ? path.join(livePath, detected.frontendDir) : livePath;
+        const nextBin = path.join(nextDir, 'node_modules', '.bin', 'next');
+        ecosystemPath = writeEcosystemConfig(livePath, pm2Name, null, pm2Env, nextDir, {
+          script: nextBin, args: `start -p ${port}`,
+        });
+      } else {
+        const entryPoint = project.node_entry_point || 'index.js';
+        const entryPath = path.join(livePath, entryPoint);
+        ecosystemPath = writeEcosystemConfig(livePath, pm2Name, entryPath, pm2Env, path.dirname(entryPath));
+      }
+      try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
+      const startOut = await runCommand(`pm2 start "${ecosystemPath}"`, livePath);
+      log += startOut + '\n';
       await runCommand('pm2 save', '/');
 
       await pool.query(
@@ -884,19 +982,173 @@ async function deploy(pool, project) {
       );
     }
 
-    // Bug #7: Refresh slug cache inside deploy() so it's not stale
+    await trimOldVersions(pool, project.id);
     await refreshSlugCache(pool);
     await refreshDomainCache(pool);
 
-    return { success: true, log };
+    return { log, commit: commitHash };
   } catch (err) {
     log += `\nERROR: ${err.message}\n`;
+    try { await runCommand(`pm2 delete ${stagingPm2}`, '/'); } catch {}
+
+    if (swapStarted && (project.project_type === 'node' || project.project_type === 'fullstack')) {
+      try {
+        const liveEcosystem = path.join(livePath, 'ecosystem.wh.config.js');
+        if (fs.existsSync(liveEcosystem) && project.pm2_name) {
+          await runCommand(`pm2 start "${liveEcosystem}"`, livePath);
+          log += `> Restored live ${project.pm2_name} after failed swap\n`;
+        }
+      } catch (restoreErr) {
+        log += `> Failed to restore live process: ${restoreErr.message}\n`;
+      }
+    } else if (!swapStarted) {
+      log += '> Live version untouched — staging build never reached the swap step\n';
+    }
+
     await pool.query(
       `UPDATE web_hosting_projects SET status = 'error', last_deploy_at = NOW(), last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
       [log, project.id]
     );
-    throw new Error(log);
+
+    const e = new Error(log);
+    e.swapStarted = swapStarted;
+    throw e;
   }
+}
+
+// Resolve the GitHub token from a per-project value or saved integration
+async function resolveGitToken(pool, project) {
+  if (project.git_token) return project.git_token;
+  if (!/github\.com/.test(project.git_url || '')) return null;
+  try {
+    const credResolver = require('./credentialResolver');
+    const resolved = await credResolver.resolve(pool, 'github', { app: 'web-hosting', resource: project.id });
+    return resolved?.credentials?.token || null;
+  } catch { return null; }
+}
+
+// Clone the repo's HEAD branch into stagingPath. Cleans the staging dir first.
+async function cloneIntoStaging(pool, project, stagingPath, log) {
+  if (fs.existsSync(stagingPath)) {
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }); } catch {}
+  }
+  const branch = project.git_branch || 'main';
+
+  if (isVpcRepo(project.git_url)) {
+    log += `> vpc-vcs checkout (branch: ${branch}) → staging\n`;
+    const result = checkoutVpcRepo(project.git_url, stagingPath, branch);
+    log += `Checked out ${result.commitHash.slice(0, 12)} (${result.fileCount} files)\n`;
+  } else {
+    const token = await resolveGitToken(pool, project);
+    const cloneUrl = buildCloneUrl(project.git_url, token);
+    log += `> git clone -b ${branch} → staging\n`;
+    const cloneOut = await runCommand(`git clone -b ${branch} "${cloneUrl}" "${stagingPath}"`, HOSTING_DIR);
+    log += cloneOut + '\n';
+  }
+  return log;
+}
+
+// Staged deploy: build into <slug>__staging, healthcheck, then atomically swap.
+// Previous build is archived to <slug>__versions/v_<ts>_<sha> (last 3 kept).
+// On any failure the live version is left untouched and the broken staging
+// dir is preserved on disk so AI Fix can analyse and patch it.
+async function deploy(pool, project) {
+  ensureHostingDir();
+  await ensureVersionsSchema(pool);
+
+  const livePath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
+  const stagingPath = stagingPathFor(livePath);
+  const stagingPm2 = `wh-${project.slug}-staging`;
+  let log = '';
+
+  // Fresh deploy — discard any leftover staging from a prior aborted run
+  try { await runCommand(`pm2 delete ${stagingPm2}`, '/'); } catch {}
+  if (fs.existsSync(stagingPath)) {
+    try { fs.rmSync(stagingPath, { recursive: true, force: true }); } catch {}
+  }
+
+  await pool.query(
+    `UPDATE web_hosting_projects SET status = 'deploying', updated_at = NOW() WHERE id = $1`,
+    [project.id]
+  );
+
+  try {
+    log += '> Staging build — live version stays online\n';
+    log = await cloneIntoStaging(pool, project, stagingPath, log);
+    const result = await runBuildAndPromote(pool, project, stagingPath, log);
+    return { success: true, log: result.log, commit: result.commit };
+  } catch (err) {
+    // NOTE: on failure, staging is intentionally kept on disk so AI Fix
+    // can read the broken files. It will be wiped on the next fresh deploy.
+    throw err;
+  }
+}
+
+// Roll the project back to a specific archived version. The current live
+// build is itself archived first so the rollback is reversible.
+async function rollback(pool, projectId, versionId) {
+  await ensureVersionsSchema(pool);
+  const project = await getProject(pool, projectId);
+  if (!project) throw new Error('Project not found');
+
+  const { rows } = await pool.query(
+    `SELECT * FROM web_hosting_versions WHERE id = $1 AND project_id = $2`,
+    [versionId, projectId]
+  );
+  const target = rows[0];
+  if (!target) throw new Error('Version not found');
+  if (!target.version_dir || !fs.existsSync(target.version_dir)) {
+    await pool.query(`DELETE FROM web_hosting_versions WHERE id = $1`, [versionId]).catch(() => {});
+    throw new Error('Version files no longer exist on disk');
+  }
+
+  const livePath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
+  const versionsRoot = versionsRootFor(livePath);
+  const isNodeApp = project.project_type === 'node' || project.project_type === 'fullstack';
+  let log = `> Rolling back to ${path.basename(target.version_dir)}\n`;
+
+  if (isNodeApp && project.pm2_name) {
+    try { await runCommand(`pm2 delete ${project.pm2_name}`, '/'); } catch {}
+  }
+
+  // Archive the current live build before swapping so the rollback is itself reversible
+  if (fs.existsSync(livePath)) {
+    ensureDirSync(versionsRoot);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const archiveDir = path.join(versionsRoot, `v_${stamp}_rollback`);
+    try {
+      fs.renameSync(livePath, archiveDir);
+      await recordVersion(pool, project.id, archiveDir, { commitHash: null, commitMessage: 'pre-rollback snapshot' });
+    } catch (renameErr) {
+      await new Promise((r) => setTimeout(r, 800));
+      fs.renameSync(livePath, archiveDir);
+      await recordVersion(pool, project.id, archiveDir, { commitHash: null, commitMessage: 'pre-rollback snapshot' });
+    }
+  }
+
+  fs.renameSync(target.version_dir, livePath);
+  await pool.query(`DELETE FROM web_hosting_versions WHERE id = $1`, [versionId]).catch(() => {});
+
+  if (isNodeApp) {
+    const ecosystemPath = path.join(livePath, 'ecosystem.wh.config.js');
+    if (fs.existsSync(ecosystemPath)) {
+      const startOut = await runCommand(`pm2 start "${ecosystemPath}"`, livePath);
+      log += startOut + '\n';
+      await runCommand('pm2 save', '/');
+    } else {
+      log += '> No ecosystem config in restored version — skipping PM2 start\n';
+    }
+  }
+
+  await pool.query(
+    `UPDATE web_hosting_projects SET status = 'running', last_deploy_at = NOW(), last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
+    [(project.last_deploy_log ? project.last_deploy_log + '\n' : '') + log, project.id]
+  );
+  await refreshSlugCache(pool);
+  await refreshDomainCache(pool);
+  await trimOldVersions(pool, project.id);
+
+  return { success: true, log };
 }
 
 async function redeploy(pool, projectId) {
@@ -964,6 +1216,15 @@ async function refreshSlugCache(pool) {
     for (const row of rows) {
       cache[row.slug] = row;
     }
+    // Also add active PR previews — they live in a separate table but share
+    // the same routing logic (project_type, deploy_path, output_dir, node_port).
+    try {
+      const previewService = require('./webHostingPreviewService');
+      const previews = await previewService.listActiveForCache(pool);
+      for (const p of previews) {
+        cache[p.slug] = p;
+      }
+    } catch {}
     slugCache = cache;
   } catch {}
 }
@@ -1144,38 +1405,51 @@ async function fixWithAI(pool, projectId) {
   if (!project) throw new Error('Project not found');
   if (!project.last_deploy_log) throw new Error('No deploy log available. Deploy the project first.');
 
-  const deployPath = project.deploy_path;
-  if (!deployPath || !fs.existsSync(deployPath)) {
-    throw new Error('Deploy path not found. Deploy the project first.');
+  // AI Fix ALWAYS operates on the staging dir — never on the live build.
+  // The staging dir is left in place by `deploy()` precisely so we can repair it.
+  // If staging is missing (e.g. user wiped it manually or this is the first
+  // failed deploy on a system that pre-dates this change) we re-clone fresh.
+  const livePath = project.deploy_path || path.join(HOSTING_DIR, project.slug);
+  const stagingPath = stagingPathFor(livePath);
+
+  // Start with the existing deploy log so the user sees the failure → fix trail end-to-end.
+  // runBuildAndPromote will overwrite last_deploy_log with this when it finishes.
+  let fixLog = (project.last_deploy_log || '') + '\n--- AI Fix ---\n';
+
+  if (!fs.existsSync(stagingPath)) {
+    fixLog += '> No staging dir found — recloning fresh from git\n';
+    fixLog = await cloneIntoStaging(pool, project, stagingPath, fixLog);
+    // Need a fresh install for the new clone; the pipeline will run install again
+    // but we surface this in the log so the user knows what's happening.
   }
 
   // Parse the error from deploy log
   const parsed = parseDeployError(project.last_deploy_log);
   if (!parsed) throw new Error('Could not parse any errors from the deploy log. The log may not contain a build error.');
 
-  let fixLog = '--- AI Fix ---\n';
-
-  // Read the erroring file
+  // Read the erroring file from staging
   let errorContext = null;
   if (parsed.filePath) {
-    errorContext = readErrorContext(deployPath, parsed.filePath, parsed.line);
+    errorContext = readErrorContext(stagingPath, parsed.filePath, parsed.line);
   }
 
-  // Fallback: if no specific file parsed, try to extract ANY file path from the raw error
+  // Fallback: try any file path from the raw error
   if (!errorContext && parsed.rawError) {
     const anyFileMatch = parsed.rawError.match(/\.?\/?([^\s:'"]+\.(tsx?|jsx?|mjs|mts|css|json|vue|svelte))[\s:(\n]/);
     if (anyFileMatch) {
       const fallbackPath = anyFileMatch[1];
       parsed.filePath = fallbackPath;
-      errorContext = readErrorContext(deployPath, fallbackPath, null);
+      errorContext = readErrorContext(stagingPath, fallbackPath, null);
       if (errorContext) fixLog += `> Found file reference in error: ${fallbackPath}\n`;
     }
   }
 
-  // Find similar files that might have the same issue
-  const similarFiles = parsed.filePath ? findSimilarErrorFiles(deployPath, parsed.errorMessage, parsed.filePath) : [];
+  if (!errorContext) {
+    throw new Error(`Could not locate the erroring file in staging. Raw error:\n${parsed.rawError?.slice(0, 500) || '(empty)'}`);
+  }
 
-  // Build AI prompt
+  const similarFiles = parsed.filePath ? findSimilarErrorFiles(stagingPath, parsed.errorMessage, parsed.filePath) : [];
+
   const systemPrompt = `You are a code fixer for web projects. You receive build errors and must return exact fixes.
 
 RULES:
@@ -1188,10 +1462,7 @@ RULES:
 - Never add @ts-ignore or any type suppression comments.`;
 
   let userPrompt = `A web project deployment failed with this build error:\n\n${parsed.rawError}\n\n`;
-
-  if (errorContext) {
-    userPrompt += `The erroring file (${errorContext.relativePath}):\n\`\`\`\n${errorContext.fullContent}\n\`\`\`\n\n`;
-  }
+  userPrompt += `The erroring file (${errorContext.relativePath}):\n\`\`\`\n${errorContext.fullContent}\n\`\`\`\n\n`;
 
   if (similarFiles.length > 0) {
     userPrompt += `These files have similar patterns and likely need the same fix:\n`;
@@ -1203,12 +1474,9 @@ RULES:
 
   userPrompt += `Return a JSON array of fixes for ALL affected files. Each fix: { "file": "relative/path", "old": "exact old string", "new": "new string" }`;
 
-  fixLog += `> Analyzing error in ${parsed.filePath || 'unknown file'}...\n`;
-  if (similarFiles.length > 0) {
-    fixLog += `> Found ${similarFiles.length} file(s) with similar patterns\n`;
-  }
+  fixLog += `> Analyzing error in ${parsed.filePath || 'unknown file'}\n`;
+  if (similarFiles.length > 0) fixLog += `> Found ${similarFiles.length} file(s) with similar patterns\n`;
 
-  // Call AI
   fixLog += '> Calling AI for fix suggestions...\n';
   let aiResult;
   try {
@@ -1222,10 +1490,8 @@ RULES:
     throw new Error(`AI provider error: ${err.message}. Make sure an AI provider is configured in Settings > AI Providers.`);
   }
 
-  // Parse AI response
   let fixes;
   try {
-    // Extract JSON from response (handle markdown fences if AI adds them)
     let jsonStr = aiResult.text.trim();
     const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
     if (fenceMatch) jsonStr = fenceMatch[1].trim();
@@ -1235,13 +1501,12 @@ RULES:
     throw new Error(`Failed to parse AI response: ${err.message}\nRaw response: ${aiResult.text.slice(0, 500)}`);
   }
 
-  if (fixes.length === 0) {
-    throw new Error('AI could not determine a fix for this error.');
-  }
+  if (fixes.length === 0) throw new Error('AI could not determine a fix for this error.');
 
-  // Apply fixes
+  // Apply fixes to staging (NOT live — live keeps serving the previous build)
   let appliedCount = 0;
   const failedFixes = [];
+  const realStagingPath = fs.realpathSync(stagingPath);
 
   for (const fix of fixes) {
     if (!fix.file || !fix.old || typeof fix.new !== 'string') {
@@ -1249,23 +1514,18 @@ RULES:
       continue;
     }
 
-    const fullPath = path.join(deployPath, fix.file);
-
-    // Security: prevent path traversal
-    const realDeployPath = fs.realpathSync(deployPath);
+    const fullPath = path.join(stagingPath, fix.file);
     let realFixPath;
     try {
-      // For new files the path won't resolve, check parent
       realFixPath = fs.existsSync(fullPath) ? fs.realpathSync(fullPath) : fs.realpathSync(path.dirname(fullPath));
     } catch {
-      failedFixes.push({ file: fix.file, reason: 'Path not found' });
+      failedFixes.push({ file: fix.file, reason: 'Path not found in staging' });
       continue;
     }
-    if (!realFixPath.startsWith(realDeployPath)) {
+    if (!realFixPath.startsWith(realStagingPath)) {
       failedFixes.push({ file: fix.file, reason: 'Path traversal blocked' });
       continue;
     }
-
     if (!fs.existsSync(fullPath)) {
       failedFixes.push({ file: fix.file, reason: 'File not found' });
       continue;
@@ -1276,126 +1536,35 @@ RULES:
       failedFixes.push({ file: fix.file, reason: 'Old string not found in file' });
       continue;
     }
-
     content = content.replace(fix.old, fix.new);
     fs.writeFileSync(fullPath, content, 'utf8');
     appliedCount++;
     fixLog += `> Fixed: ${fix.file}\n`;
   }
 
-  if (failedFixes.length > 0) {
-    for (const f of failedFixes) {
-      fixLog += `> Warning: Could not fix ${f.file} — ${f.reason}\n`;
-    }
-  }
+  for (const f of failedFixes) fixLog += `> Warning: Could not fix ${f.file} — ${f.reason}\n`;
 
   if (appliedCount === 0) {
-    throw new Error(`AI suggested ${fixes.length} fix(es) but none could be applied:\n${failedFixes.map(f => `  ${f.file}: ${f.reason}`).join('\n')}`);
+    throw new Error(`AI suggested ${fixes.length} fix(es) but none could be applied:\n${failedFixes.map((f) => `  ${f.file}: ${f.reason}`).join('\n')}`);
   }
 
-  fixLog += `> Applied ${appliedCount} fix(es). Redeploying...\n`;
+  fixLog += `> Applied ${appliedCount} fix(es) to staging. Re-running build pipeline...\n`;
 
-  // Update log so user can see progress
+  // Persist progress so the UI can stream it (fixLog already includes the original deploy log)
   await pool.query(
-    `UPDATE web_hosting_projects SET last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
-    [project.last_deploy_log + '\n' + fixLog, project.id]
+    `UPDATE web_hosting_projects SET status = 'deploying', last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
+    [fixLog, project.id]
   );
 
-  // Redeploy — skip git pull since we just patched the local files
-  // Run install + build + start (same steps as deploy minus git clone/pull)
-  let buildLog = '';
+  // Run shared build → healthcheck → swap pipeline against the patched staging
   try {
-    // Write .env file so build can access env vars
-    const envVars = project.env_vars || {};
-    writeEnvFile(deployPath, envVars);
-
-    // Re-run install command (dependencies may need refresh after patching)
-    if (project.install_command) {
-      buildLog += `> ${project.install_command}\n`;
-      const installOut = await runCommand(project.install_command, deployPath, { NODE_ENV: 'development' });
-      buildLog += installOut + '\n';
-      chmodBinDirs(deployPath);
-    }
-
-    // Remove stale Next.js lock files before building
-    if (project.build_command) {
-      const nextLock = path.join(deployPath, '.next', 'lock');
-      const frontendDir = project.build_command.match(/^cd\s+(\S+)\s*&&/);
-      if (frontendDir) {
-        const fLock = path.join(deployPath, frontendDir[1], '.next', 'lock');
-        if (fs.existsSync(fLock)) fs.unlinkSync(fLock);
-      }
-      if (fs.existsSync(nextLock)) fs.unlinkSync(nextLock);
-
-      buildLog += `> ${project.build_command}\n`;
-      const buildOut = await runCommand(project.build_command, deployPath);
-      buildLog += buildOut + '\n';
-    }
-
-    // Start Node backend if needed
-    if (project.project_type === 'node' || project.project_type === 'fullstack') {
-      let port = project.node_port;
-      if (!port) {
-        port = await getNextPort(pool);
-      }
-      const pm2Name = project.pm2_name || `wh-${project.slug}`;
-
-      // Stop existing process
-      try { await runCommand(`pm2 delete ${pm2Name}`, '/'); } catch {}
-
-      const detected = detectProjectStructure(deployPath, project.slug);
-      const isNextJs = detected.framework === 'next' || project.node_entry_point === '__nextjs__';
-      const pm2Env = { ...(project.env_vars || {}), PORT: String(port) };
-
-      let ecosystemPath;
-      if (isNextJs) {
-        const nextDir = detected.frontendDir ? path.join(deployPath, detected.frontendDir) : deployPath;
-        const nextBin = path.join(nextDir, 'node_modules', '.bin', 'next');
-        if (!fs.existsSync(nextBin)) {
-          throw new Error(`Next.js binary not found at ${nextBin}`);
-        }
-        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, null, pm2Env, nextDir, {
-          script: nextBin,
-          args: `start -p ${port}`,
-        });
-        buildLog += `> Starting Next.js on port ${port}\n`;
-      } else {
-        const entryPoint = project.node_entry_point || 'index.js';
-        const entryPath = path.join(deployPath, entryPoint);
-        if (!fs.existsSync(entryPath)) {
-          throw new Error(`Entry point "${entryPoint}" not found`);
-        }
-        const entryDir = path.dirname(entryPath);
-        ecosystemPath = writeEcosystemConfig(deployPath, pm2Name, entryPath, pm2Env, entryDir);
-        buildLog += `> Starting Node.js on port ${port}\n`;
-      }
-
-      const startOut = await runCommand(`pm2 start "${ecosystemPath}"`, deployPath);
-      buildLog += startOut + '\n';
-      await runCommand('pm2 save', '/');
-
-      await pool.query(
-        `UPDATE web_hosting_projects SET node_port = $1, pm2_name = $2, status = 'running', last_deploy_at = NOW(), last_deploy_log = $3, updated_at = NOW() WHERE id = $4`,
-        [port, pm2Name, project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
-      );
-    } else {
-      await pool.query(
-        `UPDATE web_hosting_projects SET status = 'running', last_deploy_at = NOW(), last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
-        [project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
-      );
-    }
-
-    await refreshSlugCache(pool);
-    await refreshDomainCache(pool);
-
-    return { success: true, fixesApplied: appliedCount, log: fixLog + buildLog };
+    const result = await runBuildAndPromote(pool, project, stagingPath, fixLog);
+    return { success: true, fixesApplied: appliedCount, log: result.log, commit: result.commit };
   } catch (err) {
-    buildLog += `\nERROR: ${err.message}\n`;
-    await pool.query(
-      `UPDATE web_hosting_projects SET status = 'error', last_deploy_log = $1, updated_at = NOW() WHERE id = $2`,
-      [project.last_deploy_log + '\n' + fixLog + buildLog, project.id]
-    );
-    throw new Error(fixLog + buildLog);
+    // Pipeline already wrote status='error' and the failure log to DB.
+    // Staging is intentionally left in place so the user can run AI Fix again.
+    const out = err && err.message ? err.message : String(err);
+    throw new Error(out);
   }
 }
 
@@ -1405,5 +1574,6 @@ module.exports = {
   refreshSlugCache, getSlugCache, refreshDomainCache, getDomainCache, getProjectByDomain,
   generateDomainVerifyToken, verifyDomain, removeDomain,
   detectProjectStructure, buildCloneUrl,
-  RESERVED_SLUGS, HOSTING_DIR, ensureHostingDir
+  listVersions, rollback, ensureVersionsSchema,
+  RESERVED_SLUGS, HOSTING_DIR, MAX_VERSIONS, ensureHostingDir
 };

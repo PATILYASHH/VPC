@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Plus, Trash2, Play, Pencil, Loader2, CheckCircle2, XCircle,
   Github, Database, Cloud, Shield, MessageSquare, Mail, Box,
-  RefreshCw, ExternalLink, Plug, AlertTriangle,
+  RefreshCw, ExternalLink, Plug, AlertTriangle, Activity, Clock,
+  ChevronDown, ChevronUp, Server, Zap,
 } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import api from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 const TYPE_UI = {
   github: { icon: Github, gradient: 'from-[#24292e] to-[#1a1e22]', label: 'GitHub' },
@@ -31,6 +33,33 @@ const STATUS_BADGE = {
   error: 'bg-red-500/15 text-red-400 border-red-500/25',
 };
 
+const APP_LABELS = {
+  'web-hosting': 'Web Hosting',
+  'vpshub': 'VPSHub',
+  'pipeline': 'Pipeline',
+  'db': 'Database',
+  'backup': 'Backups',
+  'gallery': 'Gallery',
+  'unknown': 'Other',
+};
+
+function formatRelative(dateStr) {
+  if (!dateStr) return 'never';
+  const ms = Date.now() - new Date(dateStr).getTime();
+  if (ms < 0) return 'just now';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const mo = Math.floor(day / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.floor(mo / 12)}y ago`;
+}
+
 // ─── Main Component ──────────────────────────────────────────
 
 export default function IntegrationMonitor() {
@@ -43,19 +72,36 @@ export default function IntegrationMonitor() {
   const { data, isLoading, refetch } = useApiQuery('integrations', '/admin/integrations', { refetchInterval: 30000 });
   const integrations = data?.integrations || [];
 
+  const totals = useMemo(() => {
+    let totalUses = 0, totalApps = 0, connected = 0;
+    let lastUsed = null;
+    const appSet = new Set();
+    for (const int of integrations) {
+      const u = int.usage || {};
+      totalUses += u.total_uses || 0;
+      for (const a of (u.apps || [])) appSet.add(a.app_id);
+      if (int.status === 'connected') connected += 1;
+      if (u.last_used_at && (!lastUsed || new Date(u.last_used_at) > new Date(lastUsed))) {
+        lastUsed = u.last_used_at;
+      }
+    }
+    totalApps = appSet.size;
+    return { totalUses, totalApps, connected, lastUsed };
+  }, [integrations]);
+
   async function handleTest(id) {
-    setTesting(prev => ({ ...prev, [id]: true }));
+    setTesting((p) => ({ ...p, [id]: true }));
     try {
       const { data: result } = await api.post(`/admin/integrations/${id}/test`);
-      setTestResults(prev => ({ ...prev, [id]: result }));
+      setTestResults((p) => ({ ...p, [id]: result }));
       if (result.ok) toast.success(`Connected (${result.latency}ms)`);
       else toast.error(result.error || 'Connection failed');
       refetch();
     } catch (err) {
-      setTestResults(prev => ({ ...prev, [id]: { ok: false, error: err.message } }));
+      setTestResults((p) => ({ ...p, [id]: { ok: false, error: err.message } }));
       toast.error('Test failed');
     } finally {
-      setTesting(prev => ({ ...prev, [id]: false }));
+      setTesting((p) => ({ ...p, [id]: false }));
     }
   }
 
@@ -75,10 +121,13 @@ export default function IntegrationMonitor() {
   return (
     <div className="h-full flex flex-col" style={{ background: 'var(--surface-0)' }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'var(--surface-border)' }}>
+      <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{ borderColor: 'var(--surface-border)' }}>
         <div>
           <h2 className="text-sm font-bold">Integrations</h2>
-          <p className="text-[11px] text-muted-foreground/50">{integrations.length} service{integrations.length !== 1 ? 's' : ''} connected</p>
+          <p className="text-[11px] text-muted-foreground/50">
+            {integrations.length} service{integrations.length !== 1 ? 's' : ''} ·{' '}
+            {totals.connected} connected
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => refetch()}>
@@ -91,29 +140,74 @@ export default function IntegrationMonitor() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-5">
-        {integrations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'linear-gradient(135deg, rgba(20,184,166,0.1), rgba(59,130,246,0.1))' }}>
-              <Plug className="w-8 h-8 text-teal-400/40" />
+      <div className="flex-1 overflow-auto">
+        <div className="max-w-5xl mx-auto p-5 space-y-4">
+          {integrations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-20">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'linear-gradient(135deg, rgba(20,184,166,0.1), rgba(59,130,246,0.1))' }}>
+                <Plug className="w-8 h-8 text-teal-400/40" />
+              </div>
+              <h3 className="text-sm font-semibold mb-1">No integrations yet</h3>
+              <p className="text-xs text-muted-foreground/40 max-w-xs mb-4">
+                Connect GitHub, Supabase, Cloudflare, Slack, and more — manage everything from VPC.
+              </p>
+              <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> Connect Your First Service
+              </Button>
             </div>
-            <h3 className="text-sm font-semibold mb-1">No integrations yet</h3>
-            <p className="text-xs text-muted-foreground/40 max-w-xs mb-4">
-              Connect GitHub, Supabase, Cloudflare, Slack, and more — manage everything from VPC.
-            </p>
-            <Button size="sm" onClick={() => setShowAdd(true)} className="gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> Connect Your First Service
-            </Button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-4xl">
-            {integrations.map(int => <IntegrationCard key={int.id} integration={int} testing={testing[int.id]} testResult={testResults[int.id]} onTest={() => handleTest(int.id)} onEdit={() => setEditId(int.id)} onDelete={() => handleDelete(int.id, int.name)} />)}
-          </div>
-        )}
+          ) : (
+            <>
+              {/* Stats summary */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <StatTile icon={Plug} label="Connected" value={`${totals.connected}/${integrations.length}`} accent="emerald" />
+                <StatTile icon={Activity} label="Total Uses" value={totals.totalUses.toLocaleString()} accent="blue" />
+                <StatTile icon={Server} label="Apps Using" value={totals.totalApps} accent="violet" />
+                <StatTile icon={Clock} label="Last Activity" value={formatRelative(totals.lastUsed)} accent="amber" />
+              </div>
+
+              {/* Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {integrations.map((int) => (
+                  <IntegrationCard
+                    key={int.id}
+                    integration={int}
+                    testing={testing[int.id]}
+                    testResult={testResults[int.id]}
+                    onTest={() => handleTest(int.id)}
+                    onEdit={() => setEditId(int.id)}
+                    onDelete={() => handleDelete(int.id, int.name)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <AddIntegrationDialog open={showAdd} onOpenChange={setShowAdd} onSaved={() => queryClient.invalidateQueries({ queryKey: ['integrations'] })} />
       {editId && <EditIntegrationDialog integrationId={editId} onClose={() => setEditId(null)} onSaved={() => { setEditId(null); queryClient.invalidateQueries({ queryKey: ['integrations'] }); }} />}
+    </div>
+  );
+}
+
+// ─── Stat Tile ───────────────────────────────────────────────
+
+function StatTile({ icon: Icon, label, value, accent = 'blue' }) {
+  const accentMap = {
+    emerald: 'text-emerald-400 bg-emerald-500/10',
+    blue: 'text-blue-400 bg-blue-500/10',
+    violet: 'text-violet-400 bg-violet-500/10',
+    amber: 'text-amber-400 bg-amber-500/10',
+  };
+  return (
+    <div className="rounded-lg border p-3 flex items-center gap-3" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-1)' }}>
+      <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center shrink-0', accentMap[accent])}>
+        <Icon className="w-4 h-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60">{label}</div>
+        <div className="text-sm font-semibold truncate">{value}</div>
+      </div>
     </div>
   );
 }
@@ -124,6 +218,8 @@ function IntegrationCard({ integration: int, testing, testResult, onTest, onEdit
   const ui = TYPE_UI[int.type] || TYPE_UI.github;
   const Icon = ui.icon;
   const meta = int.metadata || {};
+  const usage = int.usage || { total_uses: 0, unique_apps: 0, apps: [], last_used_at: null };
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--surface-border)' }}>
@@ -142,14 +238,74 @@ function IntegrationCard({ integration: int, testing, testResult, onTest, onEdit
       </div>
 
       {/* Body */}
-      <div className="px-4 py-3 space-y-2" style={{ background: 'var(--surface-1)' }}>
+      <div className="px-4 py-3 space-y-2.5" style={{ background: 'var(--surface-1)' }}>
         {/* Type-specific metadata */}
         <MetadataDisplay type={int.type} metadata={meta} config={int.config} />
 
-        {/* Last checked */}
+        {/* Usage strip */}
+        <div className="flex items-center gap-3 py-1.5 px-2.5 rounded-md text-[11px]" style={{ background: 'var(--surface-0)' }}>
+          <div className="flex items-center gap-1 text-muted-foreground/70">
+            <Activity className="w-3 h-3" />
+            <span>
+              <span className="font-semibold text-foreground/90">{usage.total_uses.toLocaleString()}</span>{' '}
+              use{usage.total_uses === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-muted-foreground/70">
+            <Server className="w-3 h-3" />
+            <span>
+              <span className="font-semibold text-foreground/90">{usage.unique_apps}</span>{' '}
+              app{usage.unique_apps === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="flex-1" />
+          <div className="flex items-center gap-1 text-muted-foreground/70">
+            <Clock className="w-3 h-3" />
+            <span title={usage.last_used_at ? new Date(usage.last_used_at).toLocaleString() : ''}>
+              {formatRelative(usage.last_used_at)}
+            </span>
+          </div>
+        </div>
+
+        {/* Per-app breakdown (collapsible) */}
+        {usage.apps && usage.apps.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground/60 hover:text-foreground/80 transition-colors"
+            >
+              {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {expanded ? 'Hide' : 'Show'} usage by app
+            </button>
+            {expanded && (
+              <div className="mt-2 space-y-1.5">
+                {usage.apps.map((a) => (
+                  <div
+                    key={a.app_id}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-[11px] border"
+                    style={{ borderColor: 'var(--surface-border)' }}
+                  >
+                    <Zap className="w-3 h-3 text-teal-400/70 shrink-0" />
+                    <span className="font-medium">{APP_LABELS[a.app_id] || a.app_id}</span>
+                    <Badge variant="outline" className="text-[9px] h-4 px-1.5">
+                      {a.count} {a.count === 1 ? 'use' : 'uses'}
+                    </Badge>
+                    <div className="flex-1" />
+                    <span className="text-muted-foreground/50" title={new Date(a.last_used_at).toLocaleString()}>
+                      {formatRelative(a.last_used_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Last verified */}
         {int.last_checked_at && (
           <p className="text-[10px] text-muted-foreground/30">
-            Last verified {new Date(int.last_checked_at).toLocaleString()}
+            Verified {formatRelative(int.last_checked_at)}
           </p>
         )}
 
@@ -162,7 +318,7 @@ function IntegrationCard({ integration: int, testing, testResult, onTest, onEdit
         )}
 
         {/* Actions */}
-        <div className="flex items-center gap-1 pt-1.5 border-t" style={{ borderColor: 'var(--surface-border)' }}>
+        <div className="flex items-center gap-1 pt-2 border-t" style={{ borderColor: 'var(--surface-border)' }}>
           <Button variant="ghost" size="sm" className="h-7 text-[11px] gap-1" onClick={onTest} disabled={testing}>
             {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />} Test
           </Button>
@@ -219,10 +375,11 @@ function AddIntegrationDialog({ open, onOpenChange, onSaved }) {
   const [name, setName] = useState('');
   const [formValues, setFormValues] = useState({});
   const [saving, setSaving] = useState(false);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setStep('select'); setSelectedType(null); setName(''); setFormValues({});
+    setStep('select'); setSelectedType(null); setName(''); setFormValues({}); setFilter('');
     api.get('/admin/integrations/types').then(({ data }) => setTypes(data.types)).catch(() => {});
   }, [open]);
 
@@ -257,50 +414,105 @@ function AddIntegrationDialog({ open, onOpenChange, onSaved }) {
     } finally { setSaving(false); }
   }
 
+  // Filter and group types by category for the picker
+  const grouped = useMemo(() => {
+    if (!types) return [];
+    const f = filter.trim().toLowerCase();
+    const all = Object.entries(types)
+      .filter(([key, def]) => {
+        if (!f) return true;
+        return (
+          def.name.toLowerCase().includes(f) ||
+          def.description?.toLowerCase().includes(f) ||
+          def.category?.toLowerCase().includes(f) ||
+          key.toLowerCase().includes(f)
+        );
+      });
+    const byCat = {};
+    for (const entry of all) {
+      const cat = entry[1].category || 'Other';
+      (byCat[cat] = byCat[cat] || []).push(entry);
+    }
+    return Object.entries(byCat); // [[catName, [[key, def], ...]], ...]
+  }, [types, filter]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{step === 'select' ? 'Connect a Service' : `Configure ${types?.[selectedType]?.name}`}</DialogTitle>
         </DialogHeader>
 
         {step === 'select' && types && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 py-1">
-            {Object.entries(types).map(([key, def]) => {
-              const ui = TYPE_UI[key];
-              const Icon = ui?.icon || Plug;
-              return (
-                <button key={key} onClick={() => selectType(key)} className="flex flex-col items-center gap-2.5 p-4 rounded-xl border transition-all hover:border-primary/50 active:scale-[0.97] group" style={{ borderColor: 'var(--surface-border)' }}>
-                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${ui?.gradient || 'from-zinc-500 to-zinc-600'} flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform`}>
-                    <Icon className="w-6 h-6 text-white" />
-                  </div>
-                  <div className="text-center">
-                    <p className="text-xs font-semibold">{def.name}</p>
-                    <p className="text-[10px] text-muted-foreground/40 mt-0.5 leading-tight">{def.description}</p>
-                  </div>
-                  <Badge variant="outline" className="text-[8px]">{def.category}</Badge>
-                </button>
-              );
-            })}
+          <div className="flex flex-col flex-1 min-h-0 -mx-6">
+            <div className="px-6 pb-3 shrink-0">
+              <Input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Search GitHub, Slack, AWS…"
+                className="text-sm h-9"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 pb-2">
+              {grouped.length === 0 ? (
+                <div className="text-center py-12 text-xs text-muted-foreground/50">
+                  No services match "{filter}"
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {grouped.map(([cat, entries]) => (
+                    <div key={cat}>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 font-semibold mb-2 sticky top-0 py-1" style={{ background: 'var(--surface-0)' }}>
+                        {cat}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {entries.map(([key, def]) => {
+                          const ui = TYPE_UI[key];
+                          const Icon = ui?.icon || Plug;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => selectType(key)}
+                              className="flex flex-col items-center gap-2 p-3 rounded-lg border transition-all hover:border-primary/50 active:scale-[0.97] group"
+                              style={{ borderColor: 'var(--surface-border)' }}
+                            >
+                              <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${ui?.gradient || 'from-zinc-500 to-zinc-600'} flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform`}>
+                                <Icon className="w-5 h-5 text-white" />
+                              </div>
+                              <div className="text-center min-h-[2.5rem]">
+                                <p className="text-xs font-semibold leading-tight">{def.name}</p>
+                                <p className="text-[10px] text-muted-foreground/50 mt-0.5 leading-tight line-clamp-2">{def.description}</p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {step === 'configure' && types?.[selectedType] && (
-          <div className="space-y-3">
+          <div className="space-y-3 flex-1 overflow-y-auto -mx-6 px-6">
             <button onClick={() => setStep('select')} className="text-[11px] text-muted-foreground hover:text-foreground">&larr; Back</button>
 
             <div className="space-y-1.5">
               <Label className="text-xs">Display Name</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} className="text-sm" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} className="text-sm" />
             </div>
 
-            {types[selectedType].fields.map(f => (
+            {types[selectedType].fields.map((f) => (
               <div key={f.key} className="space-y-1.5">
                 <Label className="text-xs">{f.label} {f.required && <span className="text-red-400">*</span>}</Label>
                 <Input
                   type={f.type === 'secret' ? 'password' : f.type === 'number' ? 'number' : 'text'}
                   value={formValues[f.key] || ''}
-                  onChange={e => setFormValues(p => ({ ...p, [f.key]: e.target.value }))}
+                  onChange={(e) => setFormValues((p) => ({ ...p, [f.key]: e.target.value }))}
                   placeholder={f.placeholder || ''}
                   className="text-sm font-mono"
                 />
@@ -334,7 +546,7 @@ function EditIntegrationDialog({ integrationId, onClose, onSaved }) {
       api.get('/admin/integrations'),
       api.get('/admin/integrations/types'),
     ]).then(([intRes, typeRes]) => {
-      const int = (intRes.data.integrations || []).find(i => i.id === integrationId);
+      const int = (intRes.data.integrations || []).find((i) => i.id === integrationId);
       setIntegration(int);
       setTypes(typeRes.data.types);
       if (int) { setName(int.name); setFormValues(int.config || {}); }
@@ -365,20 +577,20 @@ function EditIntegrationDialog({ integrationId, onClose, onSaved }) {
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Edit {integration.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label className="text-xs">Display Name</Label>
-            <Input value={name} onChange={e => setName(e.target.value)} className="text-sm" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} className="text-sm" />
           </div>
-          {typeDef?.fields.map(f => (
+          {typeDef?.fields.map((f) => (
             <div key={f.key} className="space-y-1.5">
               <Label className="text-xs">{f.label}</Label>
               <Input
                 type={f.type === 'secret' ? 'password' : f.type === 'number' ? 'number' : 'text'}
                 value={formValues[f.key] || ''}
-                onChange={e => setFormValues(p => ({ ...p, [f.key]: e.target.value }))}
+                onChange={(e) => setFormValues((p) => ({ ...p, [f.key]: e.target.value }))}
                 placeholder={f.type === 'secret' ? 'Leave blank to keep current' : (f.placeholder || '')}
                 className="text-sm font-mono"
               />

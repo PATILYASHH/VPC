@@ -4,8 +4,9 @@ import { toast } from 'sonner';
 import {
   Play, Square, RotateCcw, Rocket, GitBranch, Globe, Terminal, Settings, ExternalLink,
   Loader2, Copy, ChevronDown, Plus, Trash2, Save, RefreshCw, Link, CheckCircle2, AlertCircle,
-  Shield, Pencil, Sparkles
+  Shield, Pencil, Sparkles, History, Undo2, GitPullRequest, Eye, EyeOff
 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,6 +94,7 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="deploy-log">Deploy Log</TabsTrigger>
           {isNode && <TabsTrigger value="logs">Logs</TabsTrigger>}
+          <TabsTrigger value="previews">Previews</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="env">Environment</TabsTrigger>
           <TabsTrigger value="domain">Domain</TabsTrigger>
@@ -204,6 +206,9 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
 
           {/* Git Status & Version */}
           {project?.git_url && <GitStatusCard project={project} onDeploy={handleDeploy} deploying={deploying} />}
+
+          {/* Version history & rollback */}
+          <VersionsCard project={project} refetch={refetch} />
         </TabsContent>
 
         {/* Deploy Log */}
@@ -225,6 +230,11 @@ export default function ProjectDashboard({ project: initialProject, onBack }) {
             <LogsViewer projectId={project?.id} />
           </TabsContent>
         )}
+
+        {/* PR Previews */}
+        <TabsContent value="previews" className="flex-1 overflow-auto p-4">
+          <PreviewsPanel project={project} />
+        </TabsContent>
 
         {/* Settings */}
         <TabsContent value="settings" className="flex-1 overflow-auto p-4">
@@ -772,6 +782,327 @@ function DomainSettings({ project, onSaved }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── PR Previews panel ──────────────────────────────────────
+
+function PreviewsPanel({ project }) {
+  const [settings, setSettings] = useState(null);
+  const [previews, setPreviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const refresh = async () => {
+    if (!project?.id) return;
+    setLoading(true);
+    try {
+      const [s, p] = await Promise.all([
+        api.get(`/admin/web-hosting/projects/${project.id}/preview-settings`),
+        api.get(`/admin/web-hosting/projects/${project.id}/previews`),
+      ]);
+      setSettings(s.data);
+      setPreviews(p.data.previews || []);
+    } catch {} finally { setLoading(false); }
+  };
+
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [project?.id]);
+  // Poll every 5s while there's a building preview
+  useEffect(() => {
+    if (!previews.some((p) => p.status === 'building')) return;
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line
+  }, [previews]);
+
+  const toggleEnabled = async (enabled) => {
+    setSaving(true);
+    try {
+      const { data } = await api.put(
+        `/admin/web-hosting/projects/${project.id}/preview-settings`,
+        { enabled }
+      );
+      setSettings(data);
+      toast.success(enabled ? 'PR previews enabled' : 'PR previews disabled');
+      refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed');
+    } finally { setSaving(false); }
+  };
+
+  const regenerateSecret = async () => {
+    if (!confirm('Regenerate webhook secret? You will need to update GitHub with the new secret.')) return;
+    setSaving(true);
+    try {
+      const { data } = await api.put(
+        `/admin/web-hosting/projects/${project.id}/preview-settings`,
+        { enabled: true, regenerateSecret: true }
+      );
+      setSettings(data);
+      toast.success('Secret regenerated');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed');
+    } finally { setSaving(false); }
+  };
+
+  const handleRebuild = async (id) => {
+    setBusyId(id);
+    try {
+      await api.post(`/admin/web-hosting/projects/${project.id}/previews/${id}/rebuild`);
+      toast.success('Rebuild started');
+      setTimeout(refresh, 1500);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed');
+    } finally { setBusyId(null); }
+  };
+
+  const handleClose = async (id) => {
+    if (!confirm('Close this preview? The deployment will be torn down.')) return;
+    setBusyId(id);
+    try {
+      await api.delete(`/admin/web-hosting/projects/${project.id}/previews/${id}`);
+      toast.success('Preview closed');
+      refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed');
+    } finally { setBusyId(null); }
+  };
+
+  const copy = async (text) => {
+    try { await navigator.clipboard.writeText(text); toast.success('Copied'); } catch {}
+  };
+
+  if (loading && !settings) return <Loader2 className="w-4 h-4 animate-spin" />;
+
+  const baseUrl = window.location.origin;
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      {/* Webhook setup card */}
+      <div className="border rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <GitPullRequest className="w-4 h-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">PR Previews</h3>
+          <span className="text-[11px] text-muted-foreground">— deploy every PR to a unique URL</span>
+          <div className="flex-1" />
+          <Switch checked={!!settings?.enabled} onCheckedChange={toggleEnabled} disabled={saving} />
+        </div>
+
+        {settings?.enabled && (
+          <>
+            <p className="text-[11px] text-muted-foreground/80">
+              Add this webhook to your GitHub repo (<span className="font-mono">Settings → Webhooks → Add webhook</span>).
+              Set <span className="font-mono">Content type</span> to <span className="font-mono">application/json</span> and select{' '}
+              <span className="font-mono">Pull requests</span> events.
+            </p>
+            <div className="space-y-1">
+              <Label className="text-xs">Payload URL</Label>
+              <div className="flex items-center gap-1">
+                <Input readOnly value={settings.webhook_url} className="text-xs font-mono bg-muted/50" />
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copy(settings.webhook_url)}>
+                  <Copy className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Secret</Label>
+              <div className="flex items-center gap-1">
+                <Input
+                  readOnly
+                  type={showSecret ? 'text' : 'password'}
+                  value={settings.secret || ''}
+                  className="text-xs font-mono bg-muted/50"
+                />
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowSecret((v) => !v)}>
+                  {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => copy(settings.secret || '')}>
+                  <Copy className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" className="h-6 text-[11px]" onClick={regenerateSecret} disabled={saving}>
+                  <RefreshCw className="w-3 h-3 mr-1" /> Regenerate secret
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Active previews list */}
+      <div className="border rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">Active Previews</h3>
+          <Badge variant="outline" className="text-[10px]">{previews.length}</Badge>
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={refresh}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+
+        {previews.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-6 text-center">
+            {settings?.enabled
+              ? 'No active previews. Open a pull request against the main branch to trigger one.'
+              : 'Enable PR previews above to start building per-PR deployments.'}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {previews.map((p) => {
+              const previewUrl = `${baseUrl}/${p.preview_slug}/`;
+              const statusBadge =
+                p.status === 'ready' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : p.status === 'building' ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                : 'bg-red-500/15 text-red-400 border-red-500/30';
+              return (
+                <div key={p.id} className="flex items-center gap-3 p-3 border rounded-md bg-muted/20">
+                  <GitPullRequest className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-xs">
+                      <a href={p.pr_url || '#'} target="_blank" rel="noreferrer" className="font-medium hover:underline">
+                        #{p.pr_number} {p.pr_title || ''}
+                      </a>
+                      <Badge className={`text-[9px] border ${statusBadge}`}>{p.status}</Badge>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                      <span className="font-mono">{(p.head_sha || '').slice(0, 8)}</span>
+                      <span>·</span>
+                      <span>{p.head_ref}</span>
+                      {p.pr_user && <><span>·</span><span>by {p.pr_user}</span></>}
+                      {p.last_built_at && <><span>·</span><span>built {new Date(p.last_built_at).toLocaleString()}</span></>}
+                    </div>
+                    {p.status === 'ready' && (
+                      <a
+                        href={previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-emerald-400 hover:underline mt-1 inline-flex items-center gap-1"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        {previewUrl}
+                      </a>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost" size="sm" className="h-7 text-xs"
+                    onClick={() => handleRebuild(p.id)} disabled={busyId === p.id || p.status === 'building'}
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="sm" className="h-7 text-xs text-destructive"
+                    onClick={() => handleClose(p.id)} disabled={busyId === p.id}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Version history & rollback ─────────────────────────────
+
+function VersionsCard({ project, refetch }) {
+  const [versions, setVersions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [rollingBack, setRollingBack] = useState(null);
+
+  const fetchVersions = () => {
+    if (!project?.id) return;
+    setLoading(true);
+    api.get(`/admin/web-hosting/projects/${project.id}/versions`)
+      .then(({ data }) => setVersions(data.versions || []))
+      .catch(() => setVersions([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { fetchVersions(); /* eslint-disable-next-line */ }, [project?.id, project?.last_deploy_at]);
+
+  const handleRollback = async (versionId) => {
+    if (!confirm('Roll back to this version? The current build will be archived so you can switch back.')) return;
+    setRollingBack(versionId);
+    try {
+      await api.post(`/admin/web-hosting/projects/${project.id}/rollback/${versionId}`);
+      toast.success('Rolled back successfully');
+      refetch();
+      fetchVersions();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Rollback failed');
+    } finally {
+      setRollingBack(null);
+    }
+  };
+
+  return (
+    <div className="bg-card border rounded-lg p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <History className="w-4 h-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">Version History</h3>
+        <span className="text-[11px] text-muted-foreground">— last 3 builds kept for instant rollback</span>
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={fetchVersions} disabled={loading}>
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+
+      {loading && versions.length === 0 ? (
+        <div className="text-xs text-muted-foreground py-4 text-center">Loading…</div>
+      ) : versions.length === 0 ? (
+        <div className="text-xs text-muted-foreground py-4 text-center">
+          No archived versions yet. The next deploy will keep this one as a rollback target.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {versions.map((v) => {
+            const stamp = v.deployed_at ? new Date(v.deployed_at).toLocaleString() : '';
+            const sha = (v.commit_hash || '').slice(0, 8);
+            return (
+              <div
+                key={v.id}
+                className="flex items-center gap-3 p-2.5 border rounded-md bg-muted/20"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-muted-foreground">
+                      {sha || 'archived'}
+                    </span>
+                    {v.commit_message && (
+                      <span className="truncate text-foreground/90">{v.commit_message}</span>
+                    )}
+                    {!v.available && (
+                      <Badge variant="outline" className="text-[10px]">files missing</Badge>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{stamp}</div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  disabled={!v.available || rollingBack === v.id}
+                  onClick={() => handleRollback(v.id)}
+                >
+                  {rollingBack === v.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Undo2 className="w-3.5 h-3.5" />
+                  )}
+                  Rollback
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

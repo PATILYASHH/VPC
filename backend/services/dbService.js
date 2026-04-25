@@ -200,14 +200,22 @@ async function createProject(pool, { name, slug, storageLimitMb, maxConnections,
       CREATE TABLE IF NOT EXISTS auth_users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
+        password_hash VARCHAR(255),
         is_active BOOLEAN DEFAULT true,
+        provider VARCHAR(32) NOT NULL DEFAULT 'email',
+        provider_id VARCHAR(255),
+        full_name VARCHAR(255),
+        avatar_url TEXT,
         metadata JSONB DEFAULT '{}',
         last_login_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    await projectPool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS auth_users_provider_idx ON auth_users(provider, provider_id) WHERE provider_id IS NOT NULL`
+    );
+    await ensureAuthOAuthSchema(projectPool);
 
     // Set up storage tables
     await dbStorage.ensureStorageTables(projectPool);
@@ -405,22 +413,179 @@ async function updateProjectSettings(pool, projectId, { storageLimitMb, maxConne
   return rows[0];
 }
 
+// Self-healing migration: add OAuth fields to auth_users + auth_providers table.
+// Idempotent — safe to call repeatedly. Existing projects pick up Google support
+// the first time someone opens their Auth tab or hits an OAuth route.
+const _oauthSchemaDone = new Set();
+async function ensureAuthOAuthSchema(projectPool) {
+  const cacheKey = projectPool.options?.database || JSON.stringify(projectPool.options || {});
+  if (_oauthSchemaDone.has(cacheKey)) return;
+  await projectPool.query(`ALTER TABLE auth_users ALTER COLUMN password_hash DROP NOT NULL`).catch(() => {});
+  await projectPool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NOT NULL DEFAULT 'email'`);
+  await projectPool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS provider_id VARCHAR(255)`);
+  await projectPool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)`);
+  await projectPool.query(`ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+  await projectPool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS auth_users_provider_idx ON auth_users(provider, provider_id) WHERE provider_id IS NOT NULL`
+  );
+  await projectPool.query(`
+    CREATE TABLE IF NOT EXISTS auth_providers (
+      provider VARCHAR(32) PRIMARY KEY,
+      enabled BOOLEAN NOT NULL DEFAULT false,
+      client_id TEXT,
+      client_secret_encrypted TEXT,
+      config JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  _oauthSchemaDone.add(cacheKey);
+}
+
 // Auth user management (operates on project database)
 async function getAuthUsers(projectPool) {
+  await ensureAuthOAuthSchema(projectPool);
   const { rows } = await projectPool.query(
-    `SELECT id, email, is_active, metadata, last_login_at, created_at, updated_at
+    `SELECT id, email, is_active, provider, provider_id, full_name, avatar_url, metadata, last_login_at, created_at, updated_at
      FROM auth_users ORDER BY created_at DESC`
   );
   return rows;
 }
 
 async function createAuthUser(projectPool, { email, password }) {
+  await ensureAuthOAuthSchema(projectPool);
   const passwordHash = await bcrypt.hash(password, 12);
   const { rows } = await projectPool.query(
-    `INSERT INTO auth_users (email, password_hash) VALUES ($1, $2) RETURNING id, email, is_active, created_at`,
+    `INSERT INTO auth_users (email, password_hash, provider) VALUES ($1, $2, 'email')
+     RETURNING id, email, is_active, provider, created_at`,
     [email, passwordHash]
   );
   return rows[0];
+}
+
+// Find or create a user from an OAuth provider profile. Links by provider_id first,
+// then by email (so an email user signing in via Google promotes to OAuth). Returns
+// the project user record suitable for token issuance.
+async function findOrCreateOAuthUser(projectPool, { provider, providerId, email, fullName, avatarUrl }) {
+  await ensureAuthOAuthSchema(projectPool);
+  if (!provider || !providerId || !email) {
+    throw new Error('provider, providerId and email are required');
+  }
+
+  // 1) Match by provider + provider_id (returning user)
+  const { rows: byProvider } = await projectPool.query(
+    `SELECT * FROM auth_users WHERE provider = $1 AND provider_id = $2`,
+    [provider, providerId]
+  );
+  if (byProvider[0]) {
+    const user = byProvider[0];
+    if (!user.is_active) throw new Error('User account is disabled');
+    await projectPool.query(
+      `UPDATE auth_users
+         SET email = $1, full_name = COALESCE($2, full_name), avatar_url = COALESCE($3, avatar_url),
+             last_login_at = NOW(), updated_at = NOW()
+       WHERE id = $4`,
+      [email, fullName || null, avatarUrl || null, user.id]
+    );
+    return { id: user.id, email, provider, full_name: fullName || user.full_name, avatar_url: avatarUrl || user.avatar_url, isNew: false };
+  }
+
+  // 2) Match by email — link existing email account to this OAuth identity
+  const { rows: byEmail } = await projectPool.query(
+    `SELECT * FROM auth_users WHERE email = $1`,
+    [email]
+  );
+  if (byEmail[0]) {
+    const user = byEmail[0];
+    if (!user.is_active) throw new Error('User account is disabled');
+    await projectPool.query(
+      `UPDATE auth_users
+         SET provider = $1, provider_id = $2,
+             full_name = COALESCE($3, full_name), avatar_url = COALESCE($4, avatar_url),
+             last_login_at = NOW(), updated_at = NOW()
+       WHERE id = $5`,
+      [provider, providerId, fullName || null, avatarUrl || null, user.id]
+    );
+    return { id: user.id, email: user.email, provider, full_name: fullName || user.full_name, avatar_url: avatarUrl || user.avatar_url, isNew: false };
+  }
+
+  // 3) New OAuth user
+  const { rows } = await projectPool.query(
+    `INSERT INTO auth_users (email, provider, provider_id, full_name, avatar_url, last_login_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     RETURNING id, email, provider, full_name, avatar_url`,
+    [email, provider, providerId, fullName || null, avatarUrl || null]
+  );
+  return { ...rows[0], isNew: true };
+}
+
+// Auth provider configuration (stored per project, in the project DB)
+async function getAuthProviders(projectPool) {
+  await ensureAuthOAuthSchema(projectPool);
+  const { rows } = await projectPool.query(
+    `SELECT provider, enabled, client_id, client_secret_encrypted, config, updated_at
+       FROM auth_providers ORDER BY provider`
+  );
+  return rows.map((row) => ({
+    provider: row.provider,
+    enabled: row.enabled,
+    client_id: row.client_id || '',
+    has_client_secret: !!row.client_secret_encrypted,
+    config: row.config || {},
+    updated_at: row.updated_at,
+  }));
+}
+
+async function setAuthProvider(projectPool, provider, { enabled, clientId, clientSecret, config }) {
+  await ensureAuthOAuthSchema(projectPool);
+  // Pull current row so an unspecified clientSecret doesn't wipe an existing one
+  const { rows: existing } = await projectPool.query(
+    `SELECT client_secret_encrypted FROM auth_providers WHERE provider = $1`,
+    [provider]
+  );
+  const currentSecret = existing[0]?.client_secret_encrypted || null;
+  const encryptedSecret = clientSecret
+    ? encryptApiKey(clientSecret)
+    : (clientSecret === '' ? null : currentSecret);
+
+  const { rows } = await projectPool.query(
+    `INSERT INTO auth_providers (provider, enabled, client_id, client_secret_encrypted, config, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (provider) DO UPDATE
+       SET enabled = EXCLUDED.enabled,
+           client_id = EXCLUDED.client_id,
+           client_secret_encrypted = EXCLUDED.client_secret_encrypted,
+           config = EXCLUDED.config,
+           updated_at = NOW()
+     RETURNING provider, enabled, client_id, client_secret_encrypted, config, updated_at`,
+    [provider, !!enabled, clientId || null, encryptedSecret, config || {}]
+  );
+  const row = rows[0];
+  return {
+    provider: row.provider,
+    enabled: row.enabled,
+    client_id: row.client_id || '',
+    has_client_secret: !!row.client_secret_encrypted,
+    config: row.config || {},
+    updated_at: row.updated_at,
+  };
+}
+
+async function getAuthProviderWithSecret(projectPool, provider) {
+  await ensureAuthOAuthSchema(projectPool);
+  const { rows } = await projectPool.query(
+    `SELECT provider, enabled, client_id, client_secret_encrypted, config FROM auth_providers WHERE provider = $1`,
+    [provider]
+  );
+  if (!rows[0]) return null;
+  const row = rows[0];
+  return {
+    provider: row.provider,
+    enabled: row.enabled,
+    client_id: row.client_id,
+    client_secret: row.client_secret_encrypted ? decryptApiKey(row.client_secret_encrypted) : null,
+    config: row.config || {},
+  };
 }
 
 async function deleteAuthUser(projectPool, userId) {
@@ -692,6 +857,11 @@ module.exports = {
   toggleAuthUser,
   resetAuthUserPassword,
   authenticateAuthUser,
+  ensureAuthOAuthSchema,
+  findOrCreateOAuthUser,
+  getAuthProviders,
+  setAuthProvider,
+  getAuthProviderWithSecret,
   generateApiKey,
   getApiKeys,
   createApiKey,
