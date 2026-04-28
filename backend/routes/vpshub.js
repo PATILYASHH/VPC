@@ -1226,6 +1226,24 @@ router.get('/system/upgrade-check', async (req, res) => {
   }
 });
 
+// In-memory upgrade progress (single concurrent upgrade)
+let upgradeProgress = null;
+function setUpgradeProgress(step, total, label, error = null) {
+  upgradeProgress = {
+    step, total,
+    percent: Math.round((step / total) * 100),
+    label,
+    error,
+    updated_at: new Date().toISOString(),
+    done: step >= total && !error,
+  };
+}
+
+// GET /system/upgrade-progress  → real-time upgrade % for the UI
+router.get('/system/upgrade-progress', (req, res) => {
+  res.json(upgradeProgress || { step: 0, total: 0, percent: 0, label: 'Idle', done: true });
+});
+
 // Apply upgrade — git pull, npm install, rebuild frontend
 router.post('/system/upgrade-apply', async (req, res) => {
   try {
@@ -1237,27 +1255,35 @@ router.post('/system/upgrade-apply', async (req, res) => {
 
     res.json({ started: true, message: skipRestart ? 'Upgrade started. Restart manually when ready.' : 'Upgrade started. Server will restart.' });
 
+    const STEPS = [
+      { label: 'Pulling latest code from git…', cmd: `git pull origin ${branch}` },
+      { label: 'Installing backend dependencies…', cmd: 'cd backend && npm install --production' },
+      { label: 'Installing frontend dependencies…', cmd: 'cd frontend && npm install' },
+      { label: 'Building frontend bundle…', cmd: 'cd frontend && npx vite build' },
+      { label: 'Running database migrations…' },        // handled inline below
+      { label: 'Finalizing…' },                          // marker step
+    ];
+    const TOTAL = STEPS.length;
+    setUpgradeProgress(0, TOTAL, 'Starting upgrade…');
+
     const run = (cmd) => new Promise((resolve, reject) => {
-      exec(cmd, { cwd: rootDir, timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      exec(cmd, { cwd: rootDir, timeout: 300000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) reject(new Error(`${cmd}: ${stderr || err.message}`));
         else resolve(stdout);
       });
     });
 
     try {
-      console.log('[VPC Upgrade] Step 1: git pull...');
-      await run(`git pull origin ${branch}`);
+      // Steps 1-4: shell commands
+      for (let i = 0; i < 4; i++) {
+        setUpgradeProgress(i, TOTAL, STEPS[i].label);
+        console.log(`[VPC Upgrade] Step ${i + 1}/${TOTAL}: ${STEPS[i].label}`);
+        await run(STEPS[i].cmd);
+      }
 
-      console.log('[VPC Upgrade] Step 2: npm install (backend)...');
-      await run('cd backend && npm install --production');
-
-      console.log('[VPC Upgrade] Step 3: npm install (frontend)...');
-      await run('cd frontend && npm install');
-
-      console.log('[VPC Upgrade] Step 4: build frontend...');
-      await run('cd frontend && npx vite build');
-
-      console.log('[VPC Upgrade] Step 5: run migrations...');
+      // Step 5: migrations
+      setUpgradeProgress(4, TOTAL, STEPS[4].label);
+      console.log(`[VPC Upgrade] Step 5/${TOTAL}: ${STEPS[4].label}`);
       try {
         const fs = require('fs');
         const pool = req.app.locals.pool;
@@ -1273,24 +1299,26 @@ router.post('/system/upgrade-apply', async (req, res) => {
         console.error('[VPC Upgrade] Migration warning:', migErr.message);
       }
 
+      // Step 6: finalize
+      setUpgradeProgress(5, TOTAL, STEPS[5].label);
+
       if (skipRestart) {
         console.log('[VPC Upgrade] Complete! Waiting for manual restart.');
-        // Save state so frontend knows upgrade is done but restart pending
         const pool = req.app.locals.pool;
         await pool.query(
           `INSERT INTO vpc_settings (key, value) VALUES ('upgrade_pending_restart', $1)
            ON CONFLICT (key) DO UPDATE SET value = $1`,
           [JSON.stringify({ upgraded_at: new Date().toISOString(), branch })]
         ).catch(() => {});
+        setUpgradeProgress(TOTAL, TOTAL, 'Upgrade complete — restart to apply.');
       } else {
-        console.log('[VPC Upgrade] Complete! Restarting server...');
-        setTimeout(() => {
-          try { require('child_process').execSync('pm2 restart all', { timeout: 5000 }); }
-          catch { process.exit(0); }
-        }, 1000);
+        setUpgradeProgress(TOTAL, TOTAL, 'Upgrade complete — restarting…');
+        console.log('[VPC Upgrade] Complete! Restarting server…');
+        setTimeout(() => triggerRestart(), 800);
       }
     } catch (upgradeErr) {
       console.error('[VPC Upgrade] Failed:', upgradeErr.message);
+      setUpgradeProgress(upgradeProgress?.step || 0, TOTAL, `Failed: ${upgradeErr.message}`, upgradeErr.message);
     }
   } catch (err) {
     console.error('[VPC] Upgrade apply error:', err.message);
@@ -1298,16 +1326,56 @@ router.post('/system/upgrade-apply', async (req, res) => {
   }
 });
 
+// Robust restart that works under PM2, nodemon, or plain node
+function triggerRestart() {
+  const cp = require('child_process');
+  const fs = require('fs');
+  const path = require('path');
+  const rootDir = path.join(__dirname, '..', '..');
+
+  // 1. PM2 (production) — preferred
+  try {
+    cp.execSync('pm2 restart all', { timeout: 5000, stdio: 'ignore' });
+    console.log('[VPC] Restart via pm2');
+    return;
+  } catch {}
+
+  // 2. nodemon (dev) — touching a watched file forces a clean restart of backend
+  // Vite (frontend dev) auto-HMRs the new files, no restart needed there.
+  try {
+    const watched = path.join(rootDir, 'app.js');
+    if (fs.existsSync(watched)) {
+      const now = new Date();
+      fs.utimesSync(watched, now, now);
+      console.log('[VPC] Restart via nodemon (touched app.js)');
+    }
+  } catch (err) {
+    console.warn('[VPC] Could not touch watched file:', err.message);
+  }
+
+  // 3. Detached respawner — for plain `node app.js` with no supervisor
+  try {
+    const child = cp.spawn(process.execPath, [path.join(__dirname, '..', 'scripts', 'respawn.js'), String(process.pid), rootDir], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    console.log('[VPC] Detached respawner spawned (pid=' + child.pid + ')');
+  } catch (err) {
+    console.warn('[VPC] Respawner spawn failed:', err.message);
+  }
+
+  // 4. Exit non-zero so nodemon also picks it up via crash-restart
+  setTimeout(() => process.exit(1), 400);
+}
+
 // Restart server manually
 router.post('/system/restart', async (req, res) => {
   res.json({ restarting: true });
-  // Clear pending restart flag
   const pool = req.app.locals.pool;
   await pool.query("DELETE FROM vpc_settings WHERE key = 'upgrade_pending_restart'").catch(() => {});
-  setTimeout(() => {
-    try { require('child_process').execSync('pm2 restart all', { timeout: 5000 }); }
-    catch { process.exit(0); }
-  }, 500);
+  setTimeout(() => triggerRestart(), 400);
 });
 
 // Get/Set auto-upgrade preference
@@ -2041,3 +2109,4 @@ router.get('/projects-overview', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.triggerRestart = triggerRestart;

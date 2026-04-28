@@ -786,7 +786,7 @@ router.post('/projects/:id/fork', resolveProject, async (req, res) => {
     const project = await dbForkService.forkProject(req.app.locals.pool, req.params.id, {
       name,
       slug: slug || dbService.generateSlug(name),
-      copyData: !!copyData,
+      copyData: copyData === undefined ? true : !!copyData,
       environment: environment || 'beta',
     });
     res.status(201).json({ project });

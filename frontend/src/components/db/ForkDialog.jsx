@@ -18,7 +18,7 @@ export default function ForkDialog({ open, onOpenChange, sourceProject, onSucces
   const [name, setName] = useState(`${sourceProject?.name || ''} (Beta)`);
   const [slug, setSlug] = useState(`${sourceProject?.slug || ''}-beta`);
   const [environment, setEnvironment] = useState('beta');
-  const [copyData, setCopyData] = useState(false);
+  const [copyData, setCopyData] = useState(true);
   const [forking, setForking] = useState(false);
 
   const generateSlug = (str) =>
@@ -103,14 +103,18 @@ export default function ForkDialog({ open, onOpenChange, sourceProject, onSucces
               className="rounded"
             />
             <div>
-              <span className="text-xs font-medium">Copy data</span>
-              <p className="text-[10px] text-muted-foreground">Include all table rows, not just schema structure</p>
+              <span className="text-xs font-medium">Full clone (schema + data)</span>
+              <p className="text-[10px] text-muted-foreground">Default. Uncheck to fork schema only (no rows).</p>
             </div>
           </label>
 
-          {copyData && (
+          {copyData ? (
+            <div className="text-[10px] text-emerald-500 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
+              Will clone all tables, indexes, constraints, and row data. May take longer for large databases.
+            </div>
+          ) : (
             <div className="text-[10px] text-amber-500 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/15">
-              Data copy may take longer for large databases. Schema-only fork is recommended for development.
+              Schema-only fork — tables and structure will be cloned but no row data.
             </div>
           )}
         </div>

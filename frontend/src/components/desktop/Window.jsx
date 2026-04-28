@@ -77,7 +77,7 @@ export default function Window({ windowId }) {
         <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
           <ErrorBoundary>
             <Suspense fallback={<div className="flex items-center justify-center h-full"><LoadingSpinner /></div>}>
-              <AppComponent />
+              <AppComponent windowId={windowId} />
             </Suspense>
           </ErrorBoundary>
         </div>
@@ -125,7 +125,7 @@ export default function Window({ windowId }) {
         <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
           <ErrorBoundary>
             <Suspense fallback={<div className="flex items-center justify-center h-full"><LoadingSpinner /></div>}>
-              <AppComponent />
+              <AppComponent windowId={windowId} />
             </Suspense>
           </ErrorBoundary>
         </div>

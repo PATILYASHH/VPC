@@ -23,30 +23,40 @@ router.get('/commands', async (req, res) => {
 router.post('/execute', async (req, res) => {
   try {
     const pool = req.app.locals.pool;
-    const { command } = req.body;
+    const { command, cwd } = req.body;
 
     if (!command) return res.status(400).json({ error: 'Command is required' });
 
     const trimmed = command.trim();
 
-    // Check exact match first
+    // Built-in vpc commands (allowlist or dynamic prefix) → routed handler
     const { rows } = await pool.query(
       'SELECT * FROM allowed_commands WHERE command = $1 AND is_active = true',
       [trimmed]
     );
+    const isDynamic = DYNAMIC_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 
-    // If no exact match, check if it matches a dynamic prefix
-    if (rows.length === 0) {
-      const isDynamic = DYNAMIC_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
-      if (!isDynamic) {
-        return res.status(403).json({ error: `Command not allowed: "${trimmed}"` });
-      }
+    if (rows.length > 0 || isDynamic) {
+      const result = await terminalService.execute(trimmed, pool);
+      return res.json(result);
     }
 
-    const result = await terminalService.execute(trimmed, pool);
+    // Fallback: execute as a real shell command
+    const result = await terminalService.shellExec(trimmed, cwd);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/terminal/resolve-cwd  → validate + resolve a target dir for `cd`
+router.post('/resolve-cwd', async (req, res) => {
+  try {
+    const { cwd, target } = req.body;
+    const result = await terminalService.resolveCwd(cwd, target);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

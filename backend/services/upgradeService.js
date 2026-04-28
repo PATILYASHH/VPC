@@ -89,8 +89,14 @@ async function status(pool) {
 // with the fresh code on disk. Returns a promise so we can respond first.
 function requestRestart({ delayMs = 400 } = {}) {
   setTimeout(() => {
-    console.log('[upgrade] restart requested — exiting process so supervisor relaunches');
-    process.exit(0);
+    console.log('[upgrade] restart requested — using triggerRestart()');
+    try {
+      // Reuse the robust restart logic in the vpshub route module
+      const { triggerRestart } = require('../routes/vpshub');
+      if (typeof triggerRestart === 'function') return triggerRestart();
+    } catch {}
+    // Fallback — exit non-zero so nodemon picks it up
+    process.exit(1);
   }, delayMs);
 }
 

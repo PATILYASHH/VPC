@@ -15,6 +15,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8001',
         changeOrigin: true,
+        ws: true, // forward WebSocket upgrades (PTY terminal)
       },
       // Proxy hosted website slugs to the backend in dev mode.
       // Bypasses Vite's own root, internals, and static assets.

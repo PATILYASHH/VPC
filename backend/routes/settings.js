@@ -349,7 +349,8 @@ router.put('/ai-agent/todos/:id', async (req, res) => {
     const { rows } = await pool.query(
       `UPDATE ai_agent_todos SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`, vals
     );
-    res.json(rows[0] || { error: 'Not found' });
+    if (!rows[0]) return res.status(404).json({ error: 'Todo not found' });
+    res.json(rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -426,28 +427,35 @@ router.post('/ai-providers/:id/test', async (req, res) => {
 // Claude CLI status — check auth, version, subscription info
 router.get('/ai-providers/claude-cli/status', async (req, res) => {
   try {
-    const { execFile } = require('child_process');
+    const { execFile, spawn } = require('child_process');
+    const { buildAugmentedEnv } = require('../utils/shellEnv');
     const status = { installed: false, version: null, authenticated: false, account: null };
 
-    // Check version
+    // Step 1: PATH-based existence check (instant, won't time out)
+    status.installed = await aiProvider.isClaudeCliAvailable();
+    if (!status.installed) return res.json(status);
+
+    // Step 2: Read version (use augmented env + shell so .cmd shim resolves on Windows)
     await new Promise(resolve => {
-      execFile('claude', ['--version'], { timeout: 5000 }, (err, stdout) => {
-        if (!err && stdout) {
-          status.installed = true;
-          status.version = stdout.trim();
-        }
+      execFile('claude', ['--version'], {
+        timeout: 10000,
+        env: buildAugmentedEnv(),
+        shell: process.platform === 'win32',
+        windowsHide: true,
+      }, (err, stdout) => {
+        if (!err && stdout) status.version = stdout.trim();
         resolve();
       });
     });
 
-    if (!status.installed) return res.json(status);
-
-    // Check auth by running a quick non-interactive test
+    // Step 3: Check auth by running a quick non-interactive test
     await new Promise(resolve => {
-      const { spawn } = require('child_process');
       const proc = spawn('claude', ['-p', 'say ok', '--output-format', 'text'], {
-        timeout: 15000,
+        timeout: 30000,
+        env: buildAugmentedEnv(),
+        shell: process.platform === 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
       });
       let stdout = '';
       let stderr = '';

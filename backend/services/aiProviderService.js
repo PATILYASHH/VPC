@@ -1,5 +1,6 @@
 const { execFile } = require('child_process');
 const { decrypt, encrypt } = require('../utils/encryption');
+const { buildAugmentedEnv } = require('../utils/shellEnv');
 
 // ─── Provider Definitions ────────────────────────────────────
 
@@ -122,9 +123,23 @@ async function setProviderConfig(pool, providerId, { apiKey, model } = {}) {
 // ─── Availability Checks ─────────────────────────────────────
 
 async function isClaudeCliAvailable() {
-  return new Promise(resolve => {
-    execFile('claude', ['--version'], { timeout: 5000 }, (err) => resolve(!err));
-  });
+  // Scan PATH directly — much faster and more reliable than spawning `claude --version`
+  // (which can take 5+ seconds on cold start and times out).
+  const fs = require('fs');
+  const path = require('path');
+  const env = buildAugmentedEnv();
+  const isWin = process.platform === 'win32';
+  const sep = isWin ? ';' : ':';
+  const exts = isWin ? ['.cmd', '.exe', '.bat', ''] : [''];
+  const dirs = (env.PATH || env.Path || '').split(sep).filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      try {
+        if (fs.existsSync(path.join(dir, 'claude' + ext))) return true;
+      } catch {}
+    }
+  }
+  return false;
 }
 
 async function isOllamaAvailable() {
@@ -200,7 +215,8 @@ async function callClaudeCli(system, messages, options = {}) {
     const { spawn } = require('child_process');
     const proc = spawn('claude', args, {
       timeout: options.timeout || 180000,
-      env: { ...process.env },
+      env: buildAugmentedEnv(),
+      shell: process.platform === 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -447,6 +463,7 @@ module.exports = {
   getProviderKey,
   getProviderModel,
   isProviderAvailable,
+  isClaudeCliAvailable,
   isAnyAvailable,
   testProvider,
   getOllamaStatus,

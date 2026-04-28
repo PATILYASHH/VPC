@@ -17,6 +17,7 @@ const CATEGORIES = ['general', 'preference', 'project', 'technical'];
 
 const NAV_ITEMS = [
   { id: 'providers', label: 'Providers', icon: Cpu, desc: 'AI models & keys' },
+  { id: 'chat', label: 'Chat', icon: MessageSquare, desc: 'Talk to the bot' },
   { id: 'personality', label: 'System Prompt', icon: Brain, desc: 'Bot personality' },
   { id: 'todos', label: 'Todos', icon: ListTodo, desc: 'Task management' },
   { id: 'memory', label: 'Memory', icon: BookOpen, desc: 'Knowledge base' },
@@ -89,6 +90,7 @@ export default function AgentSettings() {
 
         <div className="px-5 sm:px-6 py-5">
           {tab === 'providers' && <ProvidersTab />}
+          {tab === 'chat' && <ChatTab />}
           {tab === 'personality' && <PersonalityTab />}
           {tab === 'todos' && <TodosTab />}
           {tab === 'memory' && <MemoryTab />}

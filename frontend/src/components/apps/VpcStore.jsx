@@ -351,6 +351,7 @@ function SoftwareUpgrade() {
   const [pendingRestart, setPendingRestart] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [togglingAuto, setTogglingAuto] = useState(false);
+  const [progress, setProgress] = useState({ percent: 0, label: '', step: 0, total: 0 });
 
   useEffect(() => {
     // Load cached upgrade check
@@ -409,17 +410,31 @@ function SoftwareUpgrade() {
   async function applyUpgrade() {
     if (!window.confirm('Upgrade VPC to the latest version?\n\nThe server will NOT restart automatically.\nYou can restart when ready.')) return;
     setUpgrading(true);
+    setProgress({ percent: 0, label: 'Starting upgrade…', step: 0, total: 6 });
     try {
       await api.post('/admin/vpshub/system/upgrade-apply', {
         branch: status?.current?.branch || 'main',
         skipRestart: true,
       });
-      toast.success('Upgrade in progress... You will need to restart when done.');
-      // Poll until upgrade completes (check pending restart flag)
+      toast.success('Upgrade started…');
+
+      // Poll real progress endpoint every 1.5s
       const poll = setInterval(async () => {
         try {
-          const { data } = await api.get('/admin/vpshub/system/auto-upgrade');
-          if (data.pendingRestart) {
+          const { data } = await api.get('/admin/vpshub/system/upgrade-progress');
+          setProgress({
+            percent: data.percent || 0,
+            label: data.label || '',
+            step: data.step || 0,
+            total: data.total || 0,
+          });
+          if (data.error) {
+            clearInterval(poll);
+            setUpgrading(false);
+            toast.error(`Upgrade failed: ${data.error}`);
+            return;
+          }
+          if (data.done && data.percent >= 100) {
             clearInterval(poll);
             setPendingRestart(true);
             setUpgrading(false);
@@ -428,8 +443,8 @@ function SoftwareUpgrade() {
             toast.success('Upgrade complete! Restart server when ready.');
           }
         } catch {}
-      }, 5000);
-      setTimeout(() => { clearInterval(poll); setUpgrading(false); }, 180000);
+      }, 1500);
+      setTimeout(() => { clearInterval(poll); setUpgrading(false); }, 600000);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Upgrade failed');
       setUpgrading(false);
@@ -529,7 +544,7 @@ function SoftwareUpgrade() {
               {hasUpdate && <Badge className="bg-violet-500/20 text-violet-400 border-violet-500/30 text-[9px]">NEW</Badge>}
             </div>
             <p className="text-[11px] text-muted-foreground/50 mt-0.5">
-              {upgrading ? 'Downloading & installing update...' :
+              {upgrading ? (progress.label || 'Downloading & installing update…') :
                hasUpdate ? `${status.behindCount} update${status.behindCount !== 1 ? 's' : ''} available` :
                status?.error && !status?.current ? status.error :
                status ? 'VPC is up to date' : 'Checking...'}
@@ -578,11 +593,20 @@ function SoftwareUpgrade() {
         </div>
       )}
 
-      {/* Progress bar */}
+      {/* Progress bar — real % from backend */}
       {upgrading && (
         <div className="px-4 pb-3">
-          <div className="h-1 bg-white/[0.04] rounded-full overflow-hidden">
-            <div className="h-full bg-violet-500/50 rounded-full animate-pulse" style={{ width: '60%' }} />
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] text-violet-400/70 font-medium">
+              {progress.step > 0 && progress.total > 0 ? `Step ${progress.step}/${progress.total}` : 'Preparing…'}
+            </span>
+            <span className="text-[10px] text-violet-400 font-mono tabular-nums">{progress.percent}%</span>
+          </div>
+          <div className="h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
+              style={{ width: `${Math.max(2, progress.percent)}%` }}
+            />
           </div>
         </div>
       )}

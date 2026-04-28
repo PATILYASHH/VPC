@@ -38,7 +38,17 @@ pool.query(`ALTER TABLE vpc_admins ADD COLUMN IF NOT EXISTS permissions JSONB DE
 const webHostingService = require('./backend/services/webHostingService');
 const jarvisTelegram = require('./backend/services/jarvisTelegramService');
 
-app.listen(PORT, async () => {
+const http = require('http');
+const httpServer = http.createServer(app);
+
+// Attach the PTY WebSocket endpoint so the in-app terminal gets a real shell
+try {
+  require('./backend/services/ptyService').attachPtyWebSocket(httpServer);
+} catch (err) {
+  console.warn('[VPC] PTY WebSocket setup failed:', err.message);
+}
+
+httpServer.listen(PORT, async () => {
   console.log(`[VPC] Server running on port ${PORT}`);
   console.log(`[VPC] Environment: ${process.env.NODE_ENV || 'development'}`);
   try {

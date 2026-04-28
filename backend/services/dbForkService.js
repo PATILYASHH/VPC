@@ -10,7 +10,7 @@ const TEMP_DIR = process.env.BACKUP_DIR || path.join(__dirname, '..', '..', 'bac
 
 // ─── Fork a project database ────────────────────────────────────────
 
-async function forkProject(pool, sourceProjectId, { name, slug, copyData = false, environment = 'beta' }) {
+async function forkProject(pool, sourceProjectId, { name, slug, copyData = true, environment = 'beta' }) {
   const source = await dbService.getProject(pool, sourceProjectId);
   if (!source) throw new Error('Source project not found');
   if (source.status !== 'active') throw new Error('Source project is not active');

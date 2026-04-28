@@ -30,13 +30,31 @@ export default function JarvisChat() {
   const inputRef = useRef(null);
 
   useEffect(() => {
-    api.get('/admin/settings/ai-agent/users').then(({ data }) => {
-      setUsers(data.users || []);
-      const def = data.users?.find(u => u.is_default) || data.users?.[0];
-      if (def) setUserId(def.id);
-    }).catch((err) => {
-      console.error('[JarvisChat] Failed to load users:', err.message);
-    });
+    (async () => {
+      try {
+        let { data } = await api.get('/admin/settings/ai-agent/users');
+        let list = data.users || [];
+        // Auto-create a default user on first run so chat is immediately usable
+        if (list.length === 0) {
+          try {
+            const { data: created } = await api.post('/admin/settings/ai-agent/users', {
+              name: 'You',
+              displayName: 'You',
+              greeting: '',
+              isDefault: true,
+            });
+            list = [created];
+          } catch (e) {
+            console.error('[JarvisChat] Auto-create user failed:', e.message);
+          }
+        }
+        setUsers(list);
+        const def = list.find(u => u.is_default) || list[0];
+        if (def) setUserId(def.id);
+      } catch (err) {
+        console.error('[JarvisChat] Failed to load users:', err.message);
+      }
+    })();
     api.get('/admin/settings/ai-providers').then(({ data }) => {
       setProviders(data.providers || []);
       setDefaultProvider(data.default || '');
@@ -283,11 +301,11 @@ export default function JarvisChat() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder={userId ? "Ask Bot anything..." : "Loading..."}
-            disabled={!userId || sending}
+            placeholder="Ask Bot anything..."
+            disabled={sending}
             className="flex-1 h-10 rounded-xl border border-border bg-muted/30 px-4 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-all"
           />
-          <Button onClick={() => handleSend()} disabled={!userId || !input.trim() || sending} className="h-10 w-10 p-0 rounded-xl">
+          <Button onClick={() => handleSend()} disabled={!input.trim() || sending} className="h-10 w-10 p-0 rounded-xl">
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </Button>
         </div>
