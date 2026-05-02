@@ -1333,11 +1333,24 @@ function triggerRestart() {
   const path = require('path');
   const rootDir = path.join(__dirname, '..', '..');
 
-  // 1. PM2 (production) — preferred
+  // 1. PM2 (production) — preferred. Target the 'vpc' app by name (matches
+  //    deploy/ecosystem.config.js) so we DON'T restart hosted user sites
+  //    that share this PM2 daemon. Fall back to --update-env id if name is
+  //    missing for any reason.
+  const pm2AppName = process.env.VPC_PM2_NAME || 'vpc';
   try {
-    cp.execSync('pm2 restart all', { timeout: 5000, stdio: 'ignore' });
-    console.log('[VPC] Restart via pm2');
+    cp.execSync(`pm2 restart ${pm2AppName} --update-env`, { timeout: 5000, stdio: 'ignore' });
+    console.log(`[VPC] Restart via pm2 (${pm2AppName})`);
     return;
+  } catch {}
+  try {
+    // App name not registered yet — start it from the ecosystem file.
+    const ecosystem = path.join(rootDir, 'deploy', 'ecosystem.config.js');
+    if (fs.existsSync(ecosystem)) {
+      cp.execSync(`pm2 startOrRestart "${ecosystem}" --update-env`, { timeout: 7000, stdio: 'ignore' });
+      console.log('[VPC] Restart via pm2 startOrRestart (ecosystem.config.js)');
+      return;
+    }
   } catch {}
 
   // 2. nodemon (dev) — touching a watched file forces a clean restart of backend

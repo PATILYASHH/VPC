@@ -209,6 +209,106 @@ router.delete('/ai-agent/conversations/:userId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Chat Mode + Scope ───────────────────────────────────────────────────
+
+router.get('/ai-agent/chat-settings/:userId', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const userId = parseInt(req.params.userId, 10);
+    const { rows } = await pool.query('SELECT * FROM ai_agent_chat_settings WHERE user_id = $1', [userId]);
+    if (rows[0]) return res.json(rows[0]);
+    res.json({
+      user_id: userId, mode: 'read_write', scope_enabled: false,
+      allowed_hosting_ids: null, allowed_db_ids: null, allowed_repo_ids: null,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/ai-agent/chat-settings/:userId', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const userId = parseInt(req.params.userId, 10);
+    const { mode, scope_enabled, allowed_hosting_ids, allowed_db_ids, allowed_repo_ids } = req.body;
+    const safeMode = mode === 'read' ? 'read' : 'read_write';
+    const intArray = a => Array.isArray(a) ? a.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n)) : null;
+    const { rows } = await pool.query(
+      `INSERT INTO ai_agent_chat_settings (user_id, mode, scope_enabled, allowed_hosting_ids, allowed_db_ids, allowed_repo_ids, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         mode = EXCLUDED.mode,
+         scope_enabled = EXCLUDED.scope_enabled,
+         allowed_hosting_ids = EXCLUDED.allowed_hosting_ids,
+         allowed_db_ids = EXCLUDED.allowed_db_ids,
+         allowed_repo_ids = EXCLUDED.allowed_repo_ids,
+         updated_at = NOW()
+       RETURNING *`,
+      [userId, safeMode, !!scope_enabled, intArray(allowed_hosting_ids), intArray(allowed_db_ids), intArray(allowed_repo_ids)]
+    );
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/ai-agent/scope-resources', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const [hosting, dbs, repos] = await Promise.all([
+      pool.query("SELECT id, name, slug, status, project_type FROM web_hosting_projects WHERE status != 'deleted' ORDER BY name"),
+      pool.query("SELECT id, name, slug, status FROM db_projects WHERE status != 'deleted' ORDER BY name"),
+      pool.query("SELECT id, name, slug FROM vpshub_repositories ORDER BY name").catch(() => ({ rows: [] })),
+    ]);
+    res.json({ hosting: hosting.rows, databases: dbs.rows, repos: repos.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Generated Document Downloads ────────────────────────────────────────
+
+const path = require('path');
+const fs = require('fs');
+const EXPORTS_DIR = path.join(__dirname, '..', 'exports');
+
+router.get('/ai-agent/exports/:filename', async (req, res) => {
+  try {
+    const safe = path.basename(req.params.filename);
+    const filepath = path.join(EXPORTS_DIR, safe);
+    if (!filepath.startsWith(EXPORTS_DIR) || !fs.existsSync(filepath)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.download(filepath, safe);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/ai-agent/documents/:userId', async (req, res) => {
+  try {
+    const { rows } = await req.app.locals.pool.query(
+      'SELECT id, filename, format, byte_size, title, created_at FROM ai_agent_documents WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [req.params.userId]
+    );
+    res.json({ documents: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── Single-action approve / deny ────────────────────────────────────────
+// Re-runs a previously requested approval-needed tool with _approved: true.
+
+router.post('/ai-agent/approve', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const aiAgent = require('../services/aiAgentService');
+    const { userId, tool, params, decision } = req.body;
+    if (decision === 'deny') {
+      return res.json({ ok: true, denied: true });
+    }
+    const approvedParams = { ...(params || {}), _approved: true };
+    const result = await aiAgent.executeTool(tool, approvedParams, userId || null, pool);
+    // Persist as an assistant message so chat history reflects the action
+    await pool.query(
+      'INSERT INTO ai_agent_conversations (user_id, role, content, tool_calls) VALUES ($1, $2, $3, $4)',
+      [userId || null, 'assistant', `Executed ${tool} after approval.`, JSON.stringify([{ tool, params, result }])]
+    );
+    res.json({ ok: true, result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // TELEGRAM
 // ══════════════════════════════════════════════════════════════════════════

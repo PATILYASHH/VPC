@@ -14,7 +14,11 @@ function loadPrefs() {
 
 function savePrefs(state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: state.theme, accent: state.accent }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      theme: state.theme,
+      accent: state.accent,
+      clockFormat: state.clockFormat,
+    }));
   } catch {}
 }
 
@@ -166,6 +170,7 @@ function applyThemeToDOM(themeId) {
 const saved = loadPrefs();
 const initialTheme = saved.theme || 'dark';
 const initialAccent = saved.accent || 'blue';
+const initialClockFormat = saved.clockFormat === '12h' ? '12h' : '24h';
 if (typeof document !== 'undefined') {
   applyThemeToDOM(initialTheme);
   applyAccentToDOM(initialAccent);
@@ -174,6 +179,7 @@ if (typeof document !== 'undefined') {
 const useDesktopStore = create((set) => ({
   theme: initialTheme,
   accent: initialAccent,
+  clockFormat: initialClockFormat,
   launcherOpen: false,
 
   setTheme: (theme) => {
@@ -188,6 +194,7 @@ const useDesktopStore = create((set) => ({
     }
     set({ accent });
   },
+  setClockFormat: (clockFormat) => set({ clockFormat: clockFormat === '12h' ? '12h' : '24h' }),
   toggleLauncher: () => set((s) => ({ launcherOpen: !s.launcherOpen })),
   closeLauncher: () => set({ launcherOpen: false }),
 }));

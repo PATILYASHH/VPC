@@ -3,13 +3,48 @@ const fs = require('fs');
 const path = require('path');
 const aiProvider = require('./aiProviderService');
 
+// ── Mode + Scope ────────────────────────────────────────────────────────
+// Read-only tools are safe to run in 'read' mode. Anything else is blocked.
+const READ_ONLY_TOOLS = new Set([
+  'health_check', 'check_service', 'list_ports',
+  'search_logs', 'analyze_logs', 'db_health',
+  'list_dir', 'read_file', 'list_projects', 'list_todos',
+  'diagnose',
+  // run_sql + run_terminal handled separately (SELECT-only / blocked)
+  'generate_document',
+]);
+
+const EXPORTS_DIR = path.join(__dirname, '..', 'exports');
+
+function isSelectOnlySQL(sql) {
+  if (!sql) return false;
+  const stripped = sql.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  // Must start with SELECT or WITH (CTE) and contain no semicolons followed by mutating verbs.
+  if (!/^(select|with|show|explain)\b/i.test(stripped)) return false;
+  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|do)\b/i.test(stripped)) return false;
+  return true;
+}
+
+async function getChatSettings(pool, userId) {
+  if (!userId) return { mode: 'read_write', scope_enabled: false };
+  try {
+    const { rows } = await pool.query('SELECT * FROM ai_agent_chat_settings WHERE user_id = $1', [userId]);
+    if (rows[0]) return rows[0];
+  } catch {}
+  return { mode: 'read_write', scope_enabled: false, allowed_hosting_ids: null, allowed_db_ids: null, allowed_repo_ids: null };
+}
+
 // ── Prompt Builder ───────────────────────────────────────────────────────
 
-async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) {
+async function buildPrompt(userMessage, userId, pool, { channel = 'web', settings = null } = {}) {
   const sections = [];
   const now = new Date();
   const dateStr = now.toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
-  sections.push(`[CONTEXT]\nDate/Time: ${dateStr}\nChannel: ${channel === 'telegram' ? 'Telegram (user is on mobile/remote — keep responses shorter)' : 'Web Dashboard (user is at the PC)'}`);
+  const cs = settings || await getChatSettings(pool, userId);
+  const modeLabel = cs.mode === 'read'
+    ? 'READ-ONLY (you may inspect anything but cannot deploy, write files, run scripts, run mutating SQL, or send messages — refuse such requests politely)'
+    : 'READ & WRITE (you may act, but write_file, edit_file, and run_script still require user approval)';
+  sections.push(`[CONTEXT]\nDate/Time: ${dateStr}\nChannel: ${channel === 'telegram' ? 'Telegram (user is on mobile/remote — keep responses shorter)' : 'Web Dashboard (user is at the PC)'}\nMode: ${modeLabel}`);
 
   // 1. Personality
   try {
@@ -71,21 +106,34 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
     } catch {}
   }
 
-  // 5. System state
+  // 5. System state — scoped to user's allocated resources when scope_enabled
   try {
     const state = [];
-    const { rows: hosting } = await pool.query(
-      "SELECT name, slug, status, project_type, node_port FROM web_hosting_projects ORDER BY name"
-    );
+    const scope = cs.scope_enabled ? cs : null;
+    const hostingFilter = scope?.allowed_hosting_ids;
+    const dbFilter = scope?.allowed_db_ids;
+
+    const hostingQuery = hostingFilter && hostingFilter.length > 0
+      ? { sql: "SELECT id, name, slug, status, project_type, node_port FROM web_hosting_projects WHERE id = ANY($1) ORDER BY name", args: [hostingFilter] }
+      : hostingFilter && hostingFilter.length === 0
+        ? null
+        : { sql: "SELECT id, name, slug, status, project_type, node_port FROM web_hosting_projects ORDER BY name", args: [] };
+    const { rows: hosting } = hostingQuery ? await pool.query(hostingQuery.sql, hostingQuery.args) : { rows: [] };
     if (hosting.length) {
-      state.push('Web Hosting Projects:\n' + hosting.map(h =>
+      const scopeNote = scope ? ' (scoped — only these are in your scope)' : '';
+      state.push(`Web Hosting Projects${scopeNote}:\n` + hosting.map(h =>
         `  - ${h.name} (/${h.slug}/) [${h.status}] type=${h.project_type}${h.node_port ? ` port=${h.node_port}` : ''}`
       ).join('\n'));
+    } else if (scope) {
+      state.push('Web Hosting Projects: (none in scope)');
     }
 
-    const { rows: dbProjects } = await pool.query(
-      "SELECT name, slug, status, db_name FROM db_projects WHERE status != 'deleted' ORDER BY name"
-    );
+    const dbQuery = dbFilter && dbFilter.length > 0
+      ? { sql: "SELECT id, name, slug, status, db_name FROM db_projects WHERE status != 'deleted' AND id = ANY($1) ORDER BY name", args: [dbFilter] }
+      : dbFilter && dbFilter.length === 0
+        ? null
+        : { sql: "SELECT id, name, slug, status, db_name FROM db_projects WHERE status != 'deleted' ORDER BY name", args: [] };
+    const { rows: dbProjects } = dbQuery ? await pool.query(dbQuery.sql, dbQuery.args) : { rows: [] };
     if (dbProjects.length) {
       const dbInfo = [];
       for (const b of dbProjects) {
@@ -100,7 +148,10 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web' } = {}) 
         } catch {}
         dbInfo.push(`  - ${b.name} (slug: "${b.slug}") [${b.status}]${tables}`);
       }
-      state.push('DB Projects (use run_sql with projectSlug to query):\n' + dbInfo.join('\n'));
+      const scopeNote = scope ? ' (scoped)' : '';
+      state.push(`DB Projects${scopeNote} (use run_sql with projectSlug to query):\n` + dbInfo.join('\n'));
+    } else if (scope) {
+      state.push('DB Projects: (none in scope)');
     }
 
     if (state.length) sections.push(`[SYSTEM STATE]\n${state.join('\n\n')}`);
@@ -175,6 +226,12 @@ You can perform actions by including JSON blocks. Use MULTIPLE tools in ONE resp
 ═══ DIAGNOSTICS ═══
 - diagnose: {"issue": "site is slow|502 error|high cpu|db connection issues|..."} — Auto-diagnose a problem. Runs multiple checks and gives root cause + fix.
 
+═══ DOCUMENT GENERATION ═══
+- generate_document: {"format": "pdf|xlsx|csv|md|html", "title": "...", "filename": "report",
+    "content": "markdown text" | "rows": [[...], [...]] | "headers": [...]}
+  Creates a downloadable document the user can grab from the chat. Use rows+headers for xlsx/csv;
+  use content (markdown) for pdf/md/html. Always set a clear title and a slug-style filename.
+
 APPROVAL RULES for write_file, edit_file, run_script:
 - ALWAYS ask user first. Tell them what you plan to do, ask "Should I proceed?"
 - Only after yes/confirm, system adds _approved: true automatically.
@@ -214,7 +271,45 @@ Respond naturally. Be direct. Act fast.`;
 
 // ── Tool Execution ───────────────────────────────────────────────────────
 
-async function executeTool(toolName, params, userId, pool) {
+async function executeTool(toolName, params, userId, pool, ctx = {}) {
+  const settings = ctx.settings || await getChatSettings(pool, userId);
+  const isRead = settings.mode === 'read';
+
+  // Mode gating
+  if (isRead) {
+    if (toolName === 'run_sql' && !isSelectOnlySQL(params?.sql)) {
+      return { error: 'Read-only mode: only SELECT/WITH/SHOW/EXPLAIN queries allowed.' };
+    }
+    if (toolName === 'run_terminal') {
+      const cmd = (params?.command || '').toLowerCase();
+      const safeRead = /^(vpc\s+(status|logs|info|list|show|ps)|status|uptime|free|df|ls|cat|tail|head|ps|top)\b/.test(cmd);
+      if (!safeRead) return { error: 'Read-only mode: terminal command blocked. Switch to Read & Write mode.' };
+    }
+    if (!READ_ONLY_TOOLS.has(toolName) && toolName !== 'run_sql' && toolName !== 'run_terminal') {
+      return { error: `Read-only mode: tool "${toolName}" is blocked. Switch to Read & Write mode to run it.` };
+    }
+  }
+
+  // Scope gating: when scope is enabled, deployments / SQL / git limited to allowed slugs
+  if (settings.scope_enabled) {
+    if ((toolName === 'deploy_site' || toolName === 'git_operation') && params?.slug) {
+      const { rows } = await pool.query('SELECT id FROM web_hosting_projects WHERE slug = $1', [params.slug]);
+      const id = rows[0]?.id;
+      const allowed = settings.allowed_hosting_ids || [];
+      if (!id || !allowed.includes(id)) return { error: `Scope: hosting project "${params.slug}" not in your allocated scope.` };
+    }
+    if ((toolName === 'run_sql' || toolName === 'db_health') && params?.projectSlug) {
+      const { rows } = await pool.query('SELECT id FROM db_projects WHERE slug = $1', [params.projectSlug]);
+      const id = rows[0]?.id;
+      const allowed = settings.allowed_db_ids || [];
+      if (!id || !allowed.includes(id)) return { error: `Scope: database "${params.projectSlug}" not in your allocated scope.` };
+    }
+  }
+
+  return executeToolCore(toolName, params, userId, pool, ctx);
+}
+
+async function executeToolCore(toolName, params, userId, pool, ctx = {}) {
   switch (toolName) {
     case 'deploy_site': {
       const webHostingService = require('./webHostingService');
@@ -433,7 +528,7 @@ async function executeTool(toolName, params, userId, pool) {
       const results = {};
       for (const check of checks) {
         try {
-          results[check.tool + (check.params.service || check.params.logFile || '')] = await executeTool(check.tool, check.params, userId, pool);
+          results[check.tool + (check.params.service || check.params.logFile || '')] = await executeToolCore(check.tool, check.params, userId, pool, ctx);
         } catch (err) {
           results[check.tool] = { error: err.message };
         }
@@ -610,9 +705,129 @@ async function executeTool(toolName, params, userId, pool) {
       });
     }
 
+    case 'generate_document': {
+      try {
+        if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
+        const format = (params.format || 'md').toLowerCase();
+        const baseName = (params.filename || 'document').toString().replace(/[^a-z0-9_-]+/gi, '-').toLowerCase().slice(0, 64) || 'document';
+        const stamp = Date.now();
+        const ext = ({ pdf: 'pdf', xlsx: 'xlsx', csv: 'csv', md: 'md', html: 'html' })[format] || 'txt';
+        const filename = `${baseName}-${stamp}.${ext}`;
+        const filepath = path.join(EXPORTS_DIR, filename);
+        const title = params.title || baseName;
+
+        if (format === 'csv') {
+          const headers = params.headers || (params.rows?.[0] ? Object.keys(params.rows[0]) : []);
+          const rows = params.rows || [];
+          const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+          const lines = [headers.map(esc).join(',')];
+          for (const r of rows) {
+            const arr = Array.isArray(r) ? r : headers.map(h => r[h]);
+            lines.push(arr.map(esc).join(','));
+          }
+          fs.writeFileSync(filepath, lines.join('\n'), 'utf8');
+        } else if (format === 'xlsx') {
+          const ExcelJS = require('exceljs');
+          const wb = new ExcelJS.Workbook();
+          const ws = wb.addWorksheet(title.slice(0, 30));
+          const headers = params.headers || (params.rows?.[0] ? Object.keys(params.rows[0]) : []);
+          if (headers.length) {
+            ws.addRow(headers);
+            ws.getRow(1).font = { bold: true };
+          }
+          for (const r of (params.rows || [])) {
+            ws.addRow(Array.isArray(r) ? r : headers.map(h => r[h]));
+          }
+          ws.columns.forEach(c => { c.width = Math.max(c.width || 10, 14); });
+          await wb.xlsx.writeFile(filepath);
+        } else if (format === 'md') {
+          const body = `# ${title}\n\n${params.content || ''}\n`;
+          fs.writeFileSync(filepath, body, 'utf8');
+        } else if (format === 'html') {
+          const body = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:780px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#222}
+h1{border-bottom:1px solid #ddd;padding-bottom:.4rem}pre{background:#f5f5f5;padding:1rem;border-radius:6px;overflow:auto}
+code{background:#f5f5f5;padding:.1rem .35rem;border-radius:3px}</style></head>
+<body><h1>${escapeHtml(title)}</h1>${markdownToHtml(params.content || '')}</body></html>`;
+          fs.writeFileSync(filepath, body, 'utf8');
+        } else if (format === 'pdf') {
+          const PDFDocument = require('pdfkit');
+          await new Promise((resolve, reject) => {
+            const doc = new PDFDocument({ margin: 50 });
+            const stream = fs.createWriteStream(filepath);
+            doc.pipe(stream);
+            doc.fontSize(20).text(title, { underline: true });
+            doc.moveDown();
+            doc.fontSize(11);
+            const lines = (params.content || '').split('\n');
+            for (const line of lines) {
+              if (line.startsWith('# ')) doc.fontSize(16).text(line.slice(2)).fontSize(11);
+              else if (line.startsWith('## ')) doc.fontSize(14).text(line.slice(3)).fontSize(11);
+              else doc.text(line);
+            }
+            // Optional table from rows+headers
+            if (params.rows?.length) {
+              doc.moveDown();
+              const headers = params.headers || Object.keys(params.rows[0] || {});
+              if (headers.length) doc.font('Helvetica-Bold').text(headers.join(' | ')).font('Helvetica');
+              for (const r of params.rows) {
+                const arr = Array.isArray(r) ? r : headers.map(h => r[h]);
+                doc.text(arr.join(' | '));
+              }
+            }
+            doc.end();
+            stream.on('finish', resolve);
+            stream.on('error', reject);
+          });
+        } else {
+          return { error: `Unsupported format: ${format}` };
+        }
+
+        const stat = fs.statSync(filepath);
+        try {
+          await pool.query(
+            `INSERT INTO ai_agent_documents (user_id, filename, format, byte_size, title)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [userId || null, filename, format, stat.size, title]
+          );
+        } catch {}
+
+        return {
+          success: true,
+          document: {
+            filename,
+            format,
+            title,
+            byte_size: stat.size,
+            download_url: `/api/admin/settings/ai-agent/exports/${filename}`,
+          },
+        };
+      } catch (err) {
+        return { error: `Document generation failed: ${err.message}` };
+      }
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function markdownToHtml(md) {
+  // Tiny, dependency-free MD -> HTML for our generated docs
+  return escapeHtml(md)
+    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.*)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^(?!<)/, '<p>') + '</p>';
 }
 
 // ── Parse tool calls from AI response ────────────────────────────────────
@@ -660,6 +875,9 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
   const ok = await aiProvider.isAnyAvailable(pool);
   if (!ok) throw new Error('No AI provider available');
 
+  const settings = await getChatSettings(pool, userId);
+  const ctx = { settings };
+
   // Save user message
   await pool.query(
     'INSERT INTO ai_agent_conversations (user_id, role, content) VALUES ($1, $2, $3)',
@@ -667,7 +885,7 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
   );
 
   // Build prompt and call CLI
-  const prompt = await buildPrompt(userMessage, userId, pool, { channel });
+  const prompt = await buildPrompt(userMessage, userId, pool, { channel, settings });
   const chatResult = await aiProvider.chat(prompt, { pool, provider, model });
   let response = chatResult.text;
 
@@ -690,7 +908,7 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
           for (const t of needsApproval) {
             try {
               const approvedParams = { ...t.params, _approved: true };
-              const result = await executeTool(t.result.action || t.tool, approvedParams, userId, pool);
+              const result = await executeTool(t.result.action || t.tool, approvedParams, userId, pool, ctx);
               approvedResults.push({ tool: t.result.action || t.tool, params: t.params, result });
             } catch (err) {
               approvedResults.push({ tool: t.result.action || t.tool, error: err.message });
@@ -701,7 +919,7 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
           ).join('\n');
           const summaryPrompt = await buildPrompt(
             `User confirmed the pending action. Results:\n${resultSummary}\n\nSummarize what was done. Be concise.`,
-            userId, pool, { channel }
+            userId, pool, { channel, settings }
           );
           let summaryResponse;
           try {
@@ -726,7 +944,7 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
 
   for (const tc of toolCalls) {
     try {
-      const result = await executeTool(tc.tool, tc.params || {}, userId, pool);
+      const result = await executeTool(tc.tool, tc.params || {}, userId, pool, ctx);
       if (result?.needs_approval) {
         hasPendingApproval = true;
       }
@@ -896,6 +1114,8 @@ WHAT NOT TO DO:
 
 module.exports = {
   chat,
+  executeTool,
+  getChatSettings,
   reviewSQL,
   reviewSmartMerge,
   loadModelSettings,

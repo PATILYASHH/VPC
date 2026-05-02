@@ -46,6 +46,8 @@ const THEMES = [
 export default function SystemSettings() {
   const theme = useDesktopStore((s) => s.theme);
   const setTheme = useDesktopStore((s) => s.setTheme);
+  const clockFormat = useDesktopStore((s) => s.clockFormat);
+  const setClockFormat = useDesktopStore((s) => s.setClockFormat);
   const [activeSection, setActiveSection] = useState('appearance');
   const [restarting, setRestarting] = useState(false);
   const pollRef = useRef(null);
@@ -192,6 +194,45 @@ export default function SystemSettings() {
             <h3 className="text-lg font-semibold mb-1">Display</h3>
             <p className="text-sm text-muted-foreground mb-6">Display and window settings.</p>
             <div className="space-y-4">
+              <div className="p-4 rounded-xl border" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-xs font-medium">Clock Format</p>
+                    <p className="text-[11px] text-muted-foreground/50 mt-0.5">
+                      Used by the taskbar clock and other time displays in the desktop.
+                    </p>
+                  </div>
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {clockFormat === '12h'
+                      ? new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                      : new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setClockFormat('24h')}
+                    className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                      clockFormat === '24h'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-[var(--surface-border)] text-muted-foreground hover:bg-muted/30'
+                    }`}
+                  >
+                    <div className="font-semibold">24-hour</div>
+                    <div className="text-[10px] opacity-70 font-mono mt-0.5">e.g. 14:30</div>
+                  </button>
+                  <button
+                    onClick={() => setClockFormat('12h')}
+                    className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                      clockFormat === '12h'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-[var(--surface-border)] text-muted-foreground hover:bg-muted/30'
+                    }`}
+                  >
+                    <div className="font-semibold">12-hour</div>
+                    <div className="text-[10px] opacity-70 font-mono mt-0.5">e.g. 2:30 PM</div>
+                  </button>
+                </div>
+              </div>
               <div className="p-4 rounded-xl border" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
                 <div className="flex items-center justify-between">
                   <div>

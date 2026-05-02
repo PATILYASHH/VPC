@@ -16,6 +16,7 @@ export default function Taskbar() {
   const focusWindow = useWindowStore((s) => s.focusWindow);
   const minimizeWindow = useWindowStore((s) => s.minimizeWindow);
   const toggleLauncher = useDesktopStore((s) => s.toggleLauncher);
+  const clockFormat = useDesktopStore((s) => s.clockFormat);
   const openPalette = useCommandStore((s) => s.openPalette);
   const admin = useAuthStore((s) => s.admin);
   const logout = useAuthStore((s) => s.logout);
@@ -172,7 +173,7 @@ export default function Taskbar() {
         <div className="flex items-center gap-2 sm:gap-3 text-xs text-muted-foreground shrink-0">
           <span className="font-medium text-foreground/70 hidden sm:inline">{admin?.username}</span>
           <div className="text-right">
-            <div className="font-mono text-[11px] text-foreground/60 leading-none">{format(time, 'HH:mm')}</div>
+            <div className="font-mono text-[11px] text-foreground/60 leading-none">{format(time, clockFormat === '12h' ? 'h:mm a' : 'HH:mm')}</div>
             <div className="font-mono text-[9px] text-foreground/30 leading-none mt-0.5">{format(time, 'dd MMM')}</div>
           </div>
           <button

@@ -5,6 +5,7 @@ import {
   GitBranch, Database, Globe, Plus, X, ExternalLink, Rocket,
   HardDrive, Lock, RefreshCw, GitFork, Loader2,
   CheckCircle2, XCircle, AlertTriangle, Clock, Activity, ArrowUpRight,
+  ShieldCheck, Sparkles,
 } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
@@ -100,6 +101,10 @@ export default function PipelineDashboard({ pipeline }) {
   const prodTotal = prod.repos.length + prod.databases.length + prod.hosting.length;
   const betaTotal = beta.repos.length + beta.databases.length + beta.hosting.length;
   const hasSchemaDiff = schemaDiff && (schemaDiff.newTables?.length > 0 || schemaDiff.modifiedTables?.length > 0);
+  const prodDiffDbId = prod.databases[0]?.id;
+  const betaDiffDbId = beta.databases[0]?.id;
+  // Promote SQL is additive-only (CREATE/ALTER ADD), so prod can safely pull when a diff exists.
+  const prodPullSafe = hasSchemaDiff;
 
   return (
     <div className="flex-1 overflow-auto" style={{ background: 'var(--surface-0)' }}>
@@ -140,7 +145,8 @@ export default function PipelineDashboard({ pipeline }) {
           <EnvHeader label="Production" color="emerald" count={prodTotal} onAdd={() => { setAddEnv('production'); setShowAdd(true); }} />
           <div className="p-3 space-y-3">
             {prodTotal === 0 ? <EmptyState label="production" onAdd={() => { setAddEnv('production'); setShowAdd(true); }} /> :
-              <EnvResources resources={prod} env="production" onRemove={removeResource} onOpenApp={openWindow} onDeploy={handleDeploy} deploying={deploying} />}
+              <EnvResources resources={prod} env="production" onRemove={removeResource} onOpenApp={openWindow} onDeploy={handleDeploy} deploying={deploying}
+                schemaDiff={schemaDiff} diffDbId={prodDiffDbId} pullSafe={prodPullSafe} onShowDiff={() => setShowDiff(true)} />}
           </div>
         </div>
         <div className="flex-1 min-w-0">
@@ -163,7 +169,8 @@ export default function PipelineDashboard({ pipeline }) {
                   </Button>
                 ) : <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setAddEnv('beta'); setShowAdd(true); }}><Plus className="w-3 h-3 mr-1" /> Add manually</Button>}
               </div>
-            ) : <EnvResources resources={beta} env="beta" onRemove={removeResource} onOpenApp={openWindow} onDeploy={handleDeploy} deploying={deploying} />}
+            ) : <EnvResources resources={beta} env="beta" onRemove={removeResource} onOpenApp={openWindow} onDeploy={handleDeploy} deploying={deploying}
+                schemaDiff={schemaDiff} diffDbId={betaDiffDbId} onShowDiff={() => setShowDiff(true)} />}
           </div>
         </div>
       </div>
@@ -231,7 +238,7 @@ function EmptyState({ label, onAdd }) {
   );
 }
 
-function EnvResources({ resources, env, onRemove, onOpenApp, onDeploy, deploying }) {
+function EnvResources({ resources, env, onRemove, onOpenApp, onDeploy, deploying, schemaDiff, diffDbId, pullSafe, onShowDiff }) {
   return (
     <>
       {resources.repos.length > 0 && (
@@ -260,6 +267,9 @@ function EnvResources({ resources, env, onRemove, onOpenApp, onDeploy, deploying
               </div>
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground/30 mt-1.5"><HardDrive className="w-3 h-3" />{d.storage_used_mb || 0}/{d.storage_limit_mb || 500} MB{d.active_connections > 0 && ` · ${d.active_connections} conn`}</div>
               <Progress value={Math.min(((d.storage_used_mb || 0) / (d.storage_limit_mb || 500)) * 100, 100)} className="h-1 mt-1" />
+              {d.id === diffDbId && schemaDiff && (
+                <SchemaStatusBadge env={env} diff={schemaDiff} pullSafe={pullSafe} onClick={onShowDiff} />
+              )}
             </Card>
           ))}
         </Sec>
@@ -286,6 +296,66 @@ function EnvResources({ resources, env, onRemove, onOpenApp, onDeploy, deploying
       )}
     </>
   );
+}
+
+function SchemaStatusBadge({ env, diff, pullSafe, onClick }) {
+  const newTables = diff.newTables || [];
+  const newCols = diff.summary?.newColumns || 0;
+  const hasChanges = newTables.length > 0 || diff.modifiedTables?.length > 0;
+
+  if (env === 'beta') {
+    if (!hasChanges) {
+      return (
+        <button onClick={onClick} className="mt-2 w-full flex items-center gap-1.5 px-2 py-1.5 rounded border text-[10px] text-emerald-400 border-emerald-500/20 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08] transition-colors">
+          <CheckCircle2 className="w-3 h-3" />
+          <span className="font-medium">In sync with prod</span>
+        </button>
+      );
+    }
+    const names = newTables.slice(0, 3).map(t => t.name).join(', ');
+    const more = newTables.length > 3 ? ` +${newTables.length - 3}` : '';
+    return (
+      <button onClick={onClick} className="mt-2 w-full flex flex-col items-start gap-0.5 px-2 py-1.5 rounded border text-[10px] text-amber-400 border-amber-500/25 bg-amber-500/[0.05] hover:bg-amber-500/[0.1] transition-colors text-left">
+        <div className="flex items-center gap-1.5 w-full">
+          <Sparkles className="w-3 h-3 shrink-0" />
+          <span className="font-semibold">
+            {newTables.length > 0 && `+${newTables.length} new table${newTables.length !== 1 ? 's' : ''}`}
+            {newTables.length > 0 && newCols > 0 && ' · '}
+            {newCols > 0 && `+${newCols} col${newCols !== 1 ? 's' : ''}`}
+          </span>
+          <span className="ml-auto text-amber-400/60">view diff</span>
+        </div>
+        {newTables.length > 0 && (
+          <span className="text-[9px] font-mono text-amber-400/70 truncate w-full" title={newTables.map(t => t.name).join(', ')}>
+            {names}{more}
+          </span>
+        )}
+      </button>
+    );
+  }
+
+  // production side
+  if (!hasChanges) {
+    return (
+      <div className="mt-2 w-full flex items-center gap-1.5 px-2 py-1.5 rounded border text-[10px] text-emerald-400 border-emerald-500/20 bg-emerald-500/[0.04]">
+        <CheckCircle2 className="w-3 h-3" />
+        <span className="font-medium">All synced — nothing to pull</span>
+      </div>
+    );
+  }
+  if (pullSafe) {
+    return (
+      <button onClick={onClick} className="mt-2 w-full flex items-center gap-1.5 px-2 py-1.5 rounded border text-[10px] text-emerald-400 border-emerald-500/25 bg-emerald-500/[0.05] hover:bg-emerald-500/[0.1] transition-colors">
+        <ShieldCheck className="w-3 h-3 shrink-0" />
+        <span className="font-semibold">Safe to pull</span>
+        <span className="text-emerald-400/60">
+          · +{diff.summary.newTables} table{diff.summary.newTables !== 1 ? 's' : ''}, +{diff.summary.newColumns} col{diff.summary.newColumns !== 1 ? 's' : ''}
+        </span>
+        <span className="ml-auto text-emerald-400/60">review</span>
+      </button>
+    );
+  }
+  return null;
 }
 
 function Sec({ icon: Icon, color, label, children }) {
