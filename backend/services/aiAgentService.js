@@ -16,6 +16,55 @@ const READ_ONLY_TOOLS = new Set([
 
 const EXPORTS_DIR = path.join(__dirname, '..', 'exports');
 
+// ── Agent API Key permission gating ──────────────────────────────────────
+// Maps each tool to the permission(s) an agent API key must hold.
+// run_sql / run_terminal / run_script get extra verb-based checks below.
+const API_KEY_TOOL_PERMS = {
+  health_check: ['view'], check_service: ['view'], list_ports: ['view'],
+  search_logs: ['view'], analyze_logs: ['view'], list_dir: ['view'],
+  read_file: ['view'], list_projects: ['view'], list_todos: ['view'],
+  diagnose: ['view'], generate_document: ['view'],
+  run_sql: ['database'], db_health: ['database'], create_database: ['database', 'edit'],
+  git_operation: ['repositories'], deploy_site: ['repositories'], create_site: ['repositories', 'edit'],
+  write_file: ['edit'], edit_file: ['edit'], run_script: ['edit'],
+  run_terminal: [], pm2_action: ['edit'],
+  add_todo: ['edit'], update_todo: ['edit'], store_memory: ['edit'],
+  broadcast: ['edit'], message_user: ['edit'],
+};
+
+const DESTRUCTIVE_SQL = /\b(delete|drop|truncate)\b/i;
+const DESTRUCTIVE_CMD = /\b(rm|rmdir|del|unlink|drop)\b/i;
+
+// Returns an error string when the key's permissions don't cover this tool, else null.
+function checkApiKeyPerms(toolName, params, perms) {
+  const required = API_KEY_TOOL_PERMS[toolName];
+  if (!required) return `Tool "${toolName}" is not available via API key access.`;
+
+  for (const p of required) {
+    if (perms?.[p] !== true) return `API key permission denied: tool "${toolName}" requires the "${p}" permission.`;
+  }
+
+  if (toolName === 'run_sql') {
+    const sql = params?.sql || '';
+    if (DESTRUCTIVE_SQL.test(sql) && perms?.delete !== true) {
+      return 'API key permission denied: destructive SQL (DELETE/DROP/TRUNCATE) requires the "delete" permission.';
+    }
+    if (!isSelectOnlySQL(sql) && perms?.edit !== true && !DESTRUCTIVE_SQL.test(sql)) {
+      return 'API key permission denied: mutating SQL requires the "edit" permission.';
+    }
+  }
+  if ((toolName === 'run_script' || toolName === 'run_terminal') && DESTRUCTIVE_CMD.test(params?.command || '') && perms?.delete !== true) {
+    return 'API key permission denied: destructive commands require the "delete" permission.';
+  }
+  if (toolName === 'run_terminal' && perms?.edit !== true) {
+    // Without edit, only safe read-only terminal commands are allowed (needs view)
+    const cmd = (params?.command || '').toLowerCase();
+    const safeRead = /^(vpc\s+(status|logs|info|list|show|ps)|status|uptime|free|df|ls|cat|tail|head|ps|top)\b/.test(cmd);
+    if (!safeRead || perms?.view !== true) return 'API key permission denied: terminal commands require the "edit" permission.';
+  }
+  return null;
+}
+
 function isSelectOnlySQL(sql) {
   if (!sql) return false;
   const stripped = sql.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
@@ -36,7 +85,7 @@ async function getChatSettings(pool, userId) {
 
 // ── Prompt Builder ───────────────────────────────────────────────────────
 
-async function buildPrompt(userMessage, userId, pool, { channel = 'web', settings = null } = {}) {
+async function buildPrompt(userMessage, userId, pool, { channel = 'web', settings = null, clientHistory = null } = {}) {
   const sections = [];
   const now = new Date();
   const dateStr = now.toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
@@ -44,7 +93,12 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web', setting
   const modeLabel = cs.mode === 'read'
     ? 'READ-ONLY (you may inspect anything but cannot deploy, write files, run scripts, run mutating SQL, or send messages — refuse such requests politely)'
     : 'READ & WRITE (you may act, but write_file, edit_file, and run_script still require user approval)';
-  sections.push(`[CONTEXT]\nDate/Time: ${dateStr}\nChannel: ${channel === 'telegram' ? 'Telegram (user is on mobile/remote — keep responses shorter)' : 'Web Dashboard (user is at the PC)'}\nMode: ${modeLabel}`);
+  const channelLabel = channel === 'telegram'
+    ? 'Telegram (user is on mobile/remote — keep responses shorter)'
+    : channel === 'api'
+      ? 'External API (remote client via API key — be concise, plain text)'
+      : 'Web Dashboard (user is at the PC)';
+  sections.push(`[CONTEXT]\nDate/Time: ${dateStr}\nChannel: ${channelLabel}\nMode: ${modeLabel}`);
 
   // 1. Personality
   try {
@@ -104,6 +158,14 @@ async function buildPrompt(userMessage, userId, pool, { channel = 'web', setting
         sections.push(`[RECENT CONVERSATION]\n${history}`);
       }
     } catch {}
+  }
+
+  // 4b. Client-provided history (untracked API clients keep context themselves)
+  if (Array.isArray(clientHistory) && clientHistory.length) {
+    const hist = clientHistory.slice(-20).map(m =>
+      `${m.role === 'user' ? 'User' : 'Bot'}: ${String(m.content || '').slice(0, 1000)}`
+    ).join('\n');
+    sections.push(`[CLIENT-PROVIDED CONVERSATION]\n${hist}`);
   }
 
   // 5. System state — scoped to user's allocated resources when scope_enabled
@@ -274,6 +336,17 @@ Respond naturally. Be direct. Act fast.`;
 async function executeTool(toolName, params, userId, pool, ctx = {}) {
   const settings = ctx.settings || await getChatSettings(pool, userId);
   const isRead = settings.mode === 'read';
+
+  // API key gating: when called via an agent API key, the key's permissions
+  // decide what's allowed. Keys with "edit" skip the interactive approval
+  // flow (granting edit IS the approval) since API clients are stateless.
+  if (ctx.apiKey) {
+    const denied = checkApiKeyPerms(toolName, params, ctx.apiKey.permissions);
+    if (denied) return { error: denied };
+    if (['write_file', 'edit_file', 'run_script'].includes(toolName)) {
+      params = { ...params, _approved: true };
+    }
+  }
 
   // Mode gating
   if (isRead) {
@@ -871,21 +944,25 @@ function stripToolBlocks(text) {
 
 // ── Main Chat Handler ────────────────────────────────────────────────────
 
-async function chat(userMessage, userId, pool, { channel = 'web', provider, model } = {}) {
+async function chat(userMessage, userId, pool, { channel = 'web', provider, model, apiKey = null, clientHistory = null } = {}) {
   const ok = await aiProvider.isAnyAvailable(pool);
   if (!ok) throw new Error('No AI provider available');
 
   const settings = await getChatSettings(pool, userId);
-  const ctx = { settings };
+  const ctx = { settings, apiKey };
+  // API key chats stay untracked unless the key opts into history storage
+  const storeHistory = apiKey ? apiKey.store_history === true : true;
 
   // Save user message
-  await pool.query(
-    'INSERT INTO ai_agent_conversations (user_id, role, content) VALUES ($1, $2, $3)',
-    [userId || null, 'user', userMessage]
-  );
+  if (storeHistory) {
+    await pool.query(
+      'INSERT INTO ai_agent_conversations (user_id, role, content) VALUES ($1, $2, $3)',
+      [userId || null, 'user', userMessage]
+    );
+  }
 
   // Build prompt and call CLI
-  const prompt = await buildPrompt(userMessage, userId, pool, { channel, settings });
+  const prompt = await buildPrompt(userMessage, userId, pool, { channel, settings, clientHistory });
   const chatResult = await aiProvider.chat(prompt, { pool, provider, model });
   let response = chatResult.text;
 
@@ -894,7 +971,8 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
   const isConfirmation = confirmWords.some(w => userMessage.toLowerCase().trim() === w || userMessage.toLowerCase().trim().startsWith(w + ' '));
 
   // If confirming, check for pending approval in recent conversation
-  if (isConfirmation) {
+  // (skipped for API keys — their tools are auto-approved by permission)
+  if (isConfirmation && !apiKey) {
     try {
       const { rows: recent } = await pool.query(
         "SELECT tool_calls FROM ai_agent_conversations WHERE user_id = $1 AND role = 'assistant' AND tool_calls IS NOT NULL ORDER BY created_at DESC LIMIT 1",
@@ -986,10 +1064,12 @@ async function chat(userMessage, userId, pool, { channel = 'web', provider, mode
   const cleanResponse = stripToolBlocks(response) || response;
 
   // Save assistant response
-  await pool.query(
-    'INSERT INTO ai_agent_conversations (user_id, role, content, tool_calls) VALUES ($1, $2, $3, $4)',
-    [userId || null, 'assistant', cleanResponse, toolResults.length ? JSON.stringify(toolResults) : null]
-  );
+  if (storeHistory) {
+    await pool.query(
+      'INSERT INTO ai_agent_conversations (user_id, role, content, tool_calls) VALUES ($1, $2, $3, $4)',
+      [userId || null, 'assistant', cleanResponse, toolResults.length ? JSON.stringify(toolResults) : null]
+    );
+  }
 
   return { response: cleanResponse, toolResults: toolResults.length ? toolResults : undefined };
 }

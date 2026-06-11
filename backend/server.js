@@ -31,6 +31,8 @@ const allowedOrigins = [
 app.use('/api/admin', cors({ origin: allowedOrigins, credentials: true }));
 // CORS for DB external API (open to any origin)
 app.use('/api/db', cors());
+// CORS for Agent external API (open to any origin — auth via API key)
+app.use('/api/agent', cors());
 // Fallback CORS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -76,6 +78,9 @@ app.use('/api/db/v1', require('./routes/pull'));
 app.use('/api/bana/v1', require('./routes/pull'));
 app.use('/api/db/v1', require('./routes/syncApi'));
 app.use('/api/bana/v1', require('./routes/syncApi'));
+
+// Agent external API — remote bot access via agent API keys (no JWT)
+app.use('/api/agent/v1', require('./routes/agentApi'));
 
 // Admin API routes
 const adminRouter = express.Router();

@@ -70,6 +70,22 @@ router.delete('/projects/:id', async (req, res) => {
     const result = await dbService.deleteProject(req.app.locals.pool, req.params.id);
     res.json(result);
   } catch (err) {
+    if (err.code === 'PROJECT_STARRED') {
+      return res.status(err.statusCode || 423).json({ error: err.message, code: err.code });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Star / unstar a project (starred = protected, cannot be deleted)
+router.put('/projects/:id/star', async (req, res) => {
+  try {
+    const result = await dbService.setProjectStar(req.app.locals.pool, req.params.id, {
+      isStarred: !!req.body.isStarred,
+      starredBy: req.admin?.username || null,
+    });
+    res.json(result);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -82,6 +98,9 @@ router.delete('/projects/:id/rows', async (req, res) => {
     const result = await dbService.deleteAllRows(req.app.locals.pool, req.params.id);
     res.json(result);
   } catch (err) {
+    if (err.code === 'PROJECT_STARRED') {
+      return res.status(err.statusCode || 423).json({ error: err.message, code: err.code });
+    }
     res.status(500).json({ error: err.message });
   }
 });

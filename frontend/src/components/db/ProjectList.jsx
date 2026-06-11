@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Plus, Database, Trash2, HardDrive, Eraser, GitFork } from 'lucide-react';
+import { Plus, Database, Trash2, HardDrive, Eraser, GitFork, Star, Lock } from 'lucide-react';
 import { useApiQuery } from '@/hooks/useApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,6 +83,10 @@ export default function ProjectList({ onSelectProject }) {
 
   const handleDelete = async (e, project) => {
     e.stopPropagation();
+    if (project.is_starred) {
+      toast.error(`"${project.name}" is starred — unstar it first to delete`);
+      return;
+    }
     if (!confirm(`Delete project "${project.name}"? This will permanently drop the database.`)) return;
     try {
       await api.delete(`/admin/db/projects/${project.id}`, { data: { confirm: true } });
@@ -90,6 +94,20 @@ export default function ProjectList({ onSelectProject }) {
       toast.success(`Project "${project.name}" deleted`);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to delete project');
+    }
+  };
+
+  const handleToggleStar = async (e, project) => {
+    e.stopPropagation();
+    const next = !project.is_starred;
+    try {
+      await api.put(`/admin/db/projects/${project.id}/star`, { isStarred: next });
+      queryClient.invalidateQueries({ queryKey: ['db-projects'] });
+      toast.success(next
+        ? `"${project.name}" starred — protected from deletion`
+        : `"${project.name}" unstarred`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update star');
     }
   };
 
@@ -160,17 +178,28 @@ export default function ProjectList({ onSelectProject }) {
               const isNearLimit = usedPercent > 80;
               const isOverLimit = usedPercent >= 100;
 
+              const starred = !!project.is_starred;
               return (
                 <div
                   key={project.id}
                   onClick={() => onSelectProject(project)}
-                  className="border rounded-lg p-4 bg-card hover:border-primary/50 cursor-pointer transition-colors group"
+                  className={`border rounded-lg p-4 bg-card hover:border-primary/50 cursor-pointer transition-colors group ${
+                    starred ? 'border-amber-500/40 ring-1 ring-amber-500/15' : ''
+                  }`}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>
-                      <h3 className="font-medium text-sm group-hover:text-primary transition-colors">
-                        {project.name}
-                      </h3>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="font-medium text-sm group-hover:text-primary transition-colors">
+                          {project.name}
+                        </h3>
+                        {starred && (
+                          <span title={`Protected${project.starred_by ? ` by ${project.starred_by}` : ''} — unstar to delete`}
+                                className="flex items-center gap-0.5 text-[9px] text-amber-400 bg-amber-500/10 border border-amber-500/25 px-1.5 py-0.5 rounded-full">
+                            <Lock className="w-2.5 h-2.5" /> Protected
+                          </span>
+                        )}
+                      </div>
                       <span className="text-xs text-muted-foreground font-mono">/{project.slug}</span>
                       {project.forked_from && (
                         <span className="flex items-center gap-1 text-[10px] text-blue-400/70 mt-0.5">
@@ -184,6 +213,16 @@ export default function ProjectList({ onSelectProject }) {
                           {project.environment}
                         </Badge>
                       )}
+                      {/* Star — visible always when starred so the lock is obvious */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-6 w-6 ${starred ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        title={starred ? 'Unstar (allow delete)' : 'Star this project to protect from deletion'}
+                        onClick={(e) => handleToggleStar(e, project)}
+                      >
+                        <Star className={`w-3 h-3 ${starred ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground'}`} />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -196,20 +235,22 @@ export default function ProjectList({ onSelectProject }) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                        title="Delete all rows"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 disabled:opacity-30"
+                        title={starred ? 'Starred — unstar to clear data' : 'Delete all rows'}
+                        disabled={starred}
                         onClick={(e) => handleDeleteRows(e, project)}
                       >
-                        <Eraser className="w-3 h-3 text-amber-500" />
+                        <Eraser className={`w-3 h-3 ${starred ? 'text-muted-foreground/40' : 'text-amber-500'}`} />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                        title="Delete project"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100 disabled:opacity-30"
+                        title={starred ? 'Starred — unstar to delete' : 'Delete project'}
+                        disabled={starred}
                         onClick={(e) => handleDelete(e, project)}
                       >
-                        <Trash2 className="w-3 h-3 text-destructive" />
+                        <Trash2 className={`w-3 h-3 ${starred ? 'text-muted-foreground/40' : 'text-destructive'}`} />
                       </Button>
                     </div>
                   </div>

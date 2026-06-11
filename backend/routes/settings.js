@@ -619,6 +619,89 @@ router.delete('/ollama/models/:name', async (req, res) => {
   }
 });
 
+// ─── Agent API Keys (remote bot access) ──────────────────────────────────
+
+const ALLOWED_AGENT_PERMS = ['view', 'edit', 'delete', 'repositories', 'database', 'claude'];
+
+function sanitizeAgentPerms(permissions) {
+  const perms = {};
+  for (const p of ALLOWED_AGENT_PERMS) perms[p] = permissions?.[p] === true;
+  return perms;
+}
+
+router.get('/ai-agent/api-keys', async (req, res) => {
+  try {
+    const { rows } = await req.app.locals.pool.query(
+      `SELECT id, name, key_prefix, permissions, store_history, is_active,
+              rate_limit_per_minute, expires_at, last_used_at, total_requests, key_type, created_at
+       FROM agent_api_keys ORDER BY created_at DESC`
+    );
+    res.json({ keys: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/ai-agent/api-keys', async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const pool = req.app.locals.pool;
+    const { name, permissions, store_history, expires_at, rate_limit_per_minute, key_type } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
+
+    const type = key_type === 'claude' ? 'claude' : 'bot';
+    const prefix = type === 'claude' ? 'vpccli_' : 'vpcbot_';
+    const rawKey = prefix + crypto.randomBytes(32).toString('hex');
+    const keyPrefix = rawKey.slice(0, prefix.length + 8);
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    // Claude CLI keys get exactly the claude permission — no bot/tool access
+    const perms = type === 'claude'
+      ? { ...sanitizeAgentPerms({}), claude: true, view: false }
+      : sanitizeAgentPerms(permissions);
+
+    const { rows } = await pool.query(
+      `INSERT INTO agent_api_keys (name, key_prefix, key_hash, permissions, store_history, expires_at, rate_limit_per_minute, key_type, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, name, key_prefix, permissions, store_history, is_active, rate_limit_per_minute, expires_at, key_type, created_at`,
+      [name.trim(), keyPrefix, keyHash, JSON.stringify(perms), store_history === true,
+       expires_at || null, rate_limit_per_minute || 30, type, req.admin?.id || null]
+    );
+
+    res.status(201).json({ ...rows[0], api_key: rawKey }); // raw key shown only once
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/ai-agent/api-keys/:id', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    const { name, permissions, store_history, is_active, expires_at, rate_limit_per_minute } = req.body;
+    const sets = [];
+    const vals = [];
+    let i = 1;
+    if (name?.trim()) { sets.push(`name = $${i++}`); vals.push(name.trim()); }
+    if (permissions) { sets.push(`permissions = $${i++}`); vals.push(JSON.stringify(sanitizeAgentPerms(permissions))); }
+    if (typeof store_history === 'boolean') { sets.push(`store_history = $${i++}`); vals.push(store_history); }
+    if (typeof is_active === 'boolean') { sets.push(`is_active = $${i++}`); vals.push(is_active); }
+    if (expires_at !== undefined) { sets.push(`expires_at = $${i++}`); vals.push(expires_at || null); }
+    if (rate_limit_per_minute) { sets.push(`rate_limit_per_minute = $${i++}`); vals.push(rate_limit_per_minute); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    sets.push('updated_at = NOW()');
+    vals.push(req.params.id);
+    const { rows } = await pool.query(
+      `UPDATE agent_api_keys SET ${sets.join(', ')} WHERE id = $${i}
+       RETURNING id, name, key_prefix, permissions, store_history, is_active, rate_limit_per_minute, expires_at, last_used_at, total_requests, created_at`,
+      vals
+    );
+    if (!rows.length) return res.status(404).json({ error: 'API key not found' });
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/ai-agent/api-keys/:id', async (req, res) => {
+  try {
+    await req.app.locals.pool.query('DELETE FROM agent_api_keys WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Export decrypt for telegramService
 router.decrypt = decrypt;
 module.exports = router;

@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   Brain, MessageSquare, User, BookOpen, Send, Loader2, Trash2, Plus, Save,
   CheckCircle2, XCircle, RefreshCw, AlertTriangle, Settings, Bell, Zap,
   Terminal, Star, StarOff, Cpu, Key, ChevronDown, Play, Eye, EyeOff,
-  CircleDot, Download, ListTodo, Activity, MessageCircle,
+  CircleDot, Download, ListTodo, Activity, MessageCircle, Copy, Shield,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import api from '@/lib/api';
+import AgentApiKeys from '@/components/shared/AgentApiKeys';
 
 const CATEGORIES = ['general', 'preference', 'project', 'technical'];
 
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { id: 'memory', label: 'Memory', icon: BookOpen, desc: 'Knowledge base' },
   { id: 'activity', label: 'Activity', icon: Activity, desc: 'Usage logs' },
   { id: 'telegram', label: 'Telegram', icon: MessageCircle, desc: 'Bot integration' },
+  { id: 'apikeys', label: 'API Access', icon: Key, desc: 'Remote access keys' },
   { id: 'users', label: 'Users', icon: User, desc: 'Bot users' },
 ];
 
@@ -96,6 +98,7 @@ export default function AgentSettings() {
           {tab === 'memory' && <MemoryTab />}
           {tab === 'activity' && <ActivityTab />}
           {tab === 'telegram' && <TelegramTab />}
+          {tab === 'apikeys' && <AgentApiKeys />}
           {tab === 'users' && <UsersTab />}
         </div>
       </div>
@@ -103,9 +106,9 @@ export default function AgentSettings() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CHAT TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function ChatTab() {
   const [users, setUsers] = useState([]);
@@ -228,8 +231,8 @@ function ChatTab() {
                       {tools.map((t, j) => (
                         <div key={j} className="text-[10px] bg-black/20 rounded px-2 py-1 font-mono">
                           <span className="text-emerald-400">{t.tool}</span>
-                          {t.result && <span className="text-muted-foreground"> — done</span>}
-                          {t.error && <span className="text-red-400"> — {t.error}</span>}
+                          {t.result && <span className="text-muted-foreground"> â€” done</span>}
+                          {t.error && <span className="text-red-400"> â€” {t.error}</span>}
                         </div>
                       ))}
                     </div>
@@ -295,9 +298,9 @@ function ChatTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PROVIDERS TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const COST_COLORS = {
   free: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
@@ -422,7 +425,7 @@ function ProvidersTab() {
   return (
     <div className="space-y-6 max-w-4xl">
 
-      {/* ═══════ AI Agent Features Banner ═══════ */}
+      {/* â•â•â•â•â•â•â• AI Agent Features Banner â•â•â•â•â•â•â• */}
       <div className="rounded-xl p-4" style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(59,130,246,0.05) 100%)', border: '1px solid rgba(139,92,246,0.12)' }}>
         <h3 className="text-sm font-semibold mb-3">What can AI Agent do?</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -441,7 +444,7 @@ function ProvidersTab() {
         </div>
       </div>
 
-      {/* ═══════ Claude CLI — Hero Card ═══════ */}
+      {/* â•â•â•â•â•â•â• Claude CLI â€” Hero Card â•â•â•â•â•â•â• */}
       {cliProvider && (() => {
         const p = cliProvider;
         const isDefault = p.id === defaultId;
@@ -465,7 +468,7 @@ function ProvidersTab() {
                     <Badge className="text-[9px] bg-amber-500/15 text-amber-400 border-amber-500/25">subscription</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Uses your Claude Pro, Max, or Team subscription directly — no API key or per-token costs.
+                    Uses your Claude Pro, Max, or Team subscription directly â€” no API key or per-token costs.
                   </p>
                 </div>
                 {/* Actions */}
@@ -564,7 +567,7 @@ function ProvidersTab() {
         );
       })()}
 
-      {/* ═══════ API Providers ═══════ */}
+      {/* â•â•â•â•â•â•â• API Providers â•â•â•â•â•â•â• */}
       <div>
         <div className="flex items-center gap-2 mb-3 px-1">
           <Key className="w-3.5 h-3.5 text-muted-foreground/50" />
@@ -632,7 +635,7 @@ function ProvidersTab() {
                               type={showKeys[p.id] ? 'text' : 'password'}
                               value={keyInputs[p.id] || ''}
                               onChange={e => setKeyInputs(prev => ({ ...prev, [p.id]: e.target.value }))}
-                              placeholder={p.available ? 'Key saved — enter new to replace' : 'Paste your API key here...'}
+                              placeholder={p.available ? 'Key saved â€” enter new to replace' : 'Paste your API key here...'}
                               className="h-9 text-xs font-mono pr-9"
                             />
                             <button
@@ -672,7 +675,7 @@ function ProvidersTab() {
         </div>
       </div>
 
-      {/* ═══════ Ollama ═══════ */}
+      {/* â•â•â•â•â•â•â• Ollama â•â•â•â•â•â•â• */}
       {ollamaProvider && (() => {
         const p = ollamaProvider;
         const isDefault = p.id === defaultId;
@@ -695,7 +698,7 @@ function ProvidersTab() {
                       <Badge className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">free</Badge>
                       <div className={`w-2 h-2 rounded-full ${p.available ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-zinc-600'}`} />
                     </div>
-                    <p className="text-[11px] text-muted-foreground/70 mt-0.5">Run open-source LLMs locally — Llama, Mistral, Phi, etc.</p>
+                    <p className="text-[11px] text-muted-foreground/70 mt-0.5">Run open-source LLMs locally â€” Llama, Mistral, Phi, etc.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -730,7 +733,7 @@ function ProvidersTab() {
         );
       })()}
 
-      {/* ═══════ Terminal Commands ═══════ */}
+      {/* â•â•â•â•â•â•â• Terminal Commands â•â•â•â•â•â•â• */}
       <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--surface-1)', border: '1px solid var(--surface-border)' }}>
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-muted-foreground/60" />
@@ -788,9 +791,9 @@ function TestResultBanner({ result }) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TODOS TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const PRIORITY_COLORS = { urgent: 'text-red-400 bg-red-500/10', high: 'text-orange-400 bg-orange-500/10', normal: 'text-blue-400 bg-blue-500/10', low: 'text-zinc-400 bg-zinc-500/10' };
 const STATUS_COLORS = { pending: 'text-zinc-400', in_progress: 'text-amber-400', done: 'text-emerald-400', blocked: 'text-red-400' };
@@ -888,9 +891,9 @@ function TodosTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ACTIVITY TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function ActivityTab() {
   const [activity, setActivity] = useState([]);
@@ -904,7 +907,7 @@ function ActivityTab() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">Recent Bot actions — tool executions, deployments, queries, and alerts.</p>
+      <p className="text-xs text-muted-foreground">Recent Bot actions â€” tool executions, deployments, queries, and alerts.</p>
 
       {activity.length === 0 ? (
         <div className="rounded-lg border border-border p-6 text-center text-sm text-muted-foreground">
@@ -926,7 +929,7 @@ function ActivityTab() {
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {tools.map((t, i) => (
                       <span key={i} className={`text-[9px] px-1.5 py-0.5 rounded font-mono ${t.error ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                        {t.tool}{t.error ? ' ✗' : ' ✓'}
+                        {t.tool}{t.error ? ' âœ—' : ' âœ“'}
                       </span>
                     ))}
                   </div>
@@ -940,9 +943,9 @@ function ActivityTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TELEGRAM TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function TelegramTab() {
   const [config, setConfig] = useState({});
@@ -1045,8 +1048,8 @@ function TelegramTab() {
       {/* Setup Guide */}
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground space-y-1">
         <p className="font-medium text-blue-400">Setup Guide</p>
-        <p>1. Message <strong>@BotFather</strong> on Telegram → /newbot → get token</p>
-        <p>2. Paste token above → Bot connects automatically</p>
+        <p>1. Message <strong>@BotFather</strong> on Telegram â†’ /newbot â†’ get token</p>
+        <p>2. Paste token above â†’ Bot connects automatically</p>
         <p>3. Each user needs their Chat ID linked (Users tab)</p>
         <p>4. Send <code>/start</code> to your bot to get your Chat ID</p>
         <p>5. Bot responds to messages with full AI + tools + alerts</p>
@@ -1055,9 +1058,9 @@ function TelegramTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PERSONALITY TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function PersonalityTab() {
   const [personality, setPersonality] = useState('');
@@ -1131,9 +1134,9 @@ function PersonalityTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // MEMORY TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function MemoryTab() {
   const [users, setUsers] = useState([]);
@@ -1226,9 +1229,9 @@ function MemoryTab() {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // USERS TAB
-// ══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function UsersTab() {
   const [users, setUsers] = useState([]);
@@ -1369,9 +1372,9 @@ function UsersTab() {
       {/* Telegram Bot Setup Info */}
       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground space-y-1">
         <p className="font-medium text-blue-400">Telegram Setup</p>
-        <p>1. The Telegram bot token is configured in VPC Settings → Telegram tab</p>
+        <p>1. The Telegram bot token is configured in VPC Settings â†’ Telegram tab</p>
         <p>2. Each user needs their own Telegram Chat ID linked above</p>
-        <p>3. Send <code>/start</code> to your bot on Telegram — it will show your Chat ID</p>
+        <p>3. Send <code>/start</code> to your bot on Telegram â€” it will show your Chat ID</p>
         <p>4. Bot will respond to messages on Telegram with full AI + automation powers</p>
         <p>5. Bot can also send proactive alerts to all linked users</p>
       </div>

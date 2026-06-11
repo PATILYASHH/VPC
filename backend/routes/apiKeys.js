@@ -60,6 +60,18 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// DELETE /api/admin/api-keys/:id/permanent (hard delete — removes key + usage logs)
+router.delete('/:id/permanent', async (req, res) => {
+  try {
+    const pool = req.app.locals.pool;
+    await pool.query('DELETE FROM api_key_usage_logs WHERE api_key_id = $1', [req.params.id]);
+    await pool.query('DELETE FROM api_keys WHERE id = $1', [req.params.id]);
+    res.json({ message: 'API key deleted permanently' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/api-keys/:id/usage
 router.get('/:id/usage', async (req, res) => {
   try {

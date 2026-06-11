@@ -231,9 +231,16 @@ async function createProject(pool, { name, slug, storageLimitMb, maxConnections,
   }
 }
 
-async function deleteProject(pool, projectId) {
+async function deleteProject(pool, projectId, { force = false } = {}) {
   const project = await getProject(pool, projectId);
   if (!project) throw new Error('Project not found');
+
+  if (project.is_starred && !force) {
+    const err = new Error(`"${project.name}" is starred (protected). Unstar it first to delete.`);
+    err.code = 'PROJECT_STARRED';
+    err.statusCode = 423; // Locked
+    throw err;
+  }
 
   // Close cached pool
   removeProjectPool(projectId);
@@ -266,6 +273,13 @@ async function deleteProject(pool, projectId) {
 async function deleteAllRows(pool, projectId) {
   const project = await getProject(pool, projectId);
   if (!project) throw new Error('Project not found');
+
+  if (project.is_starred) {
+    const err = new Error(`"${project.name}" is starred (protected). Unstar it first to clear data.`);
+    err.code = 'PROJECT_STARRED';
+    err.statusCode = 423;
+    throw err;
+  }
 
   // Use admin pool (superuser) to bypass permission issues
   const adminPool = getProjectAdminPool(project);
@@ -378,6 +392,21 @@ async function deleteAllRows(pool, projectId) {
   } finally {
     client.release();
   }
+}
+
+async function setProjectStar(pool, projectId, { isStarred, starredBy }) {
+  const { rows } = await pool.query(
+    `UPDATE db_projects
+       SET is_starred = $1,
+           starred_at = CASE WHEN $1 THEN NOW() ELSE NULL END,
+           starred_by = CASE WHEN $1 THEN $2 ELSE NULL END,
+           updated_at = NOW()
+     WHERE id = $3 AND status != 'deleted'
+     RETURNING id, name, slug, is_starred, starred_at, starred_by`,
+    [!!isStarred, starredBy || null, projectId]
+  );
+  if (!rows[0]) throw new Error('Project not found');
+  return rows[0];
 }
 
 async function updateProjectSettings(pool, projectId, { storageLimitMb, maxConnections }) {
@@ -850,6 +879,7 @@ module.exports = {
   createProject,
   deleteProject,
   deleteAllRows,
+  setProjectStar,
   updateProjectSettings,
   getAuthUsers,
   createAuthUser,
