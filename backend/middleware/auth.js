@@ -19,6 +19,7 @@ const ROUTE_PERMISSION_MAP = {
   '/pipeline': 'pipeline',
   '/realtime': 'realtime',
   '/upgrade': 'settings',
+  '/notify': 'notify',
 };
 
 async function authenticateAdmin(req, res, next) {

@@ -17,6 +17,7 @@ const PERMISSION_KEYS = [
   { key: 'terminal', label: 'Terminal' },
   { key: 'users', label: 'User Management' },
   { key: 'gallery', label: 'Gallery' },
+  { key: 'notify', label: 'Notify' },
 ];
 
 // GET /permissions — return available permission keys

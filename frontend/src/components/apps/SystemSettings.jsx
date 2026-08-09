@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Palette, Monitor, Sun, Moon, Sunset, Mountain, Snowflake, Check, Power, RefreshCw, Loader2, Server, AlertTriangle } from 'lucide-react';
+import { Palette, Monitor, Sun, Moon, Sunset, Mountain, Snowflake, Check, Power, RefreshCw, Loader2, Server, AlertTriangle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import useDesktopStore from '@/stores/useDesktopStore';
 import api from '@/lib/api';
+import { VPC_VERSION, VPC_OS_VERSION, VPCUI_VERSION } from '@/lib/version';
 
 const THEMES = [
   {
@@ -89,6 +90,7 @@ export default function SystemSettings() {
   const sections = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'display', label: 'Display', icon: Monitor },
+    { id: 'system', label: 'System', icon: Info },
     { id: 'server', label: 'Server', icon: Server },
   ];
 
@@ -259,6 +261,48 @@ export default function SystemSettings() {
           </div>
         )}
 
+        {activeSection === 'system' && (
+          <div className="max-w-2xl">
+            <h3 className="text-lg font-semibold mb-1">System</h3>
+            <p className="text-sm text-muted-foreground mb-6">Version information for this VPC installation.</p>
+
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl border" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Info className="w-4 h-4 text-primary" />
+                  <span className="text-xs font-semibold">Versions</span>
+                </div>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">VPC Version</span>
+                    <span className="font-mono font-medium">v{VPC_VERSION}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">VPC OS Version</span>
+                    <span className="font-mono font-medium">v{VPC_OS_VERSION}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">VPCUI Version</span>
+                    <span className="font-mono font-medium">v{VPCUI_VERSION}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">VPC Sync Extension</span>
+                    <span className="font-mono font-medium">v9.0.0</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Node.js</span>
+                    <span className="font-mono font-medium">{typeof process !== 'undefined' ? process.version : 'N/A'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Platform</span>
+                    <span className="font-mono font-medium">{navigator.platform}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeSection === 'server' && (
           <div className="max-w-2xl">
             <h3 className="text-lg font-semibold mb-1">Server Control</h3>
@@ -326,32 +370,6 @@ export default function SystemSettings() {
                     >
                       <Power className="w-4 h-4 mr-2" /> Shutdown Server
                     </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Server Info */}
-              <div className="p-4 rounded-xl border" style={{ background: 'var(--surface-1)', borderColor: 'var(--surface-border)' }}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Server className="w-4 h-4 text-primary" />
-                  <span className="text-xs font-semibold">Server Info</span>
-                </div>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">VPC OS Version</span>
-                    <span className="font-mono font-medium">v3.0.0</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">VPC Sync Extension</span>
-                    <span className="font-mono font-medium">v9.0.0</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Node.js</span>
-                    <span className="font-mono font-medium">{typeof process !== 'undefined' ? process.version : 'N/A'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Platform</span>
-                    <span className="font-mono font-medium">{navigator.platform}</span>
                   </div>
                 </div>
               </div>

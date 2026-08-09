@@ -15,7 +15,11 @@ function loadSavedWindows() {
     // Validate that saved apps still exist in registry
     const windows = {};
     let maxZ = 10;
-    for (const [id, win] of Object.entries(data.windows || {})) {
+    for (const [id, rawWin] of Object.entries(data.windows || {})) {
+      // Guard against windows saved with a negative y from a past bug — that
+      // hides the title bar (the only drag handle) off the top edge and
+      // strands the window with no way to grab it back.
+      const win = rawWin.y < 0 ? { ...rawWin, y: 0 } : rawWin;
       if (APP_REGISTRY[win.appId]) {
         windows[id] = win;
         if (win.zIndex > maxZ) maxZ = win.zIndex;

@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot, LayoutDashboard, Gauge, Plug } from 'lucide-react';
+import { Server, Database, Key, Activity, HardDrive, FileText, Terminal, Layers, Shield, FolderOpen, GitMerge, Globe, Brain, Download, Settings, Bot, LayoutDashboard, Gauge, Plug, Bell } from 'lucide-react';
 
 // Dashboard + Connections stay eager (most common first-open apps)
 import Dashboard from '@/components/apps/Dashboard';
@@ -23,6 +23,7 @@ const JarvisChat = lazy(() => import('@/components/apps/JarvisChat'));
 const VpcStore = lazy(() => import('@/components/apps/VpcStore'));
 const SystemSettings = lazy(() => import('@/components/apps/SystemSettings'));
 const Pipeline = lazy(() => import('@/components/apps/Pipeline'));
+const Notify = lazy(() => import('@/components/apps/Notify'));
 
 const APP_REGISTRY = {
   'dashboard': {
@@ -91,6 +92,21 @@ const APP_REGISTRY = {
     category: 'development',
     component: DB,
     permission: 'db',
+    defaultWidth: 1200,
+    defaultHeight: 700,
+    minWidth: 900,
+    minHeight: 550,
+  },
+  'notify': {
+    id: 'notify',
+    title: 'Notify',
+    description: 'Push Notification Projects',
+    icon: Bell,
+    iconColor: 'text-red-400',
+    iconBg: 'bg-red-500/15',
+    category: 'development',
+    component: Notify,
+    permission: 'notify',
     defaultWidth: 1200,
     defaultHeight: 700,
     minWidth: 900,

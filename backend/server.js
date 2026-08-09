@@ -33,6 +33,8 @@ app.use('/api/admin', cors({ origin: allowedOrigins, credentials: true }));
 app.use('/api/db', cors());
 // CORS for Agent external API (open to any origin — auth via API key)
 app.use('/api/agent', cors());
+// CORS for Notify external API (open to any origin — auth via API key)
+app.use('/api/notify', cors());
 // Fallback CORS
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -82,6 +84,9 @@ app.use('/api/bana/v1', require('./routes/syncApi'));
 // Agent external API — remote bot access via agent API keys (no JWT)
 app.use('/api/agent/v1', require('./routes/agentApi'));
 
+// Notify external API — device register/send via notify API keys (no JWT)
+app.use('/api/notify/v1', require('./routes/notifyApi'));
+
 // Admin API routes
 const adminRouter = express.Router();
 
@@ -115,6 +120,7 @@ adminRouter.use('/vpshub', require('./routes/vpshub'));
 adminRouter.use('/pipeline', require('./routes/pipeline'));
 adminRouter.use('/realtime', require('./routes/realtime'));
 adminRouter.use('/upgrade', require('./routes/upgrade'));
+adminRouter.use('/notify', require('./routes/notify'));
 
 // Return current admin info including permissions
 adminRouter.get('/me', (req, res) => {

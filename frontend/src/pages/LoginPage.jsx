@@ -141,7 +141,7 @@ export default function LoginPage() {
               ? 'Two-Factor Authentication'
               : loginMode === 'authenticator'
                 ? 'Login with Authenticator'
-                : 'Virtual PC Management Dashboard'}
+                : 'Virtual Private Computer Dashboard'}
           </p>
         </div>
 

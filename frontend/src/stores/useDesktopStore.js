@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 const STORAGE_KEY = 'vpc-desktop-prefs';
+const ICONS_STORAGE_KEY = 'vpc-desktop-icons';
 
 function loadPrefs() {
   try {
@@ -18,6 +19,34 @@ function savePrefs(state) {
       theme: state.theme,
       accent: state.accent,
       clockFormat: state.clockFormat,
+    }));
+  } catch {}
+}
+
+// pinnedAppIds: null means "default" — every app the user has permission for
+// shows on the desktop (matches pre-existing behavior, and auto-includes any
+// new app added to the registry later). It only becomes a concrete array
+// once the user removes or adds an icon — from that point on it's the
+// explicit source of truth.
+function loadIconPrefs() {
+  try {
+    const saved = localStorage.getItem(ICONS_STORAGE_KEY);
+    if (!saved) return { pinnedAppIds: null, iconPositions: {} };
+    const data = JSON.parse(saved);
+    return {
+      pinnedAppIds: Array.isArray(data.pinnedAppIds) ? data.pinnedAppIds : null,
+      iconPositions: data.iconPositions && typeof data.iconPositions === 'object' ? data.iconPositions : {},
+    };
+  } catch {
+    return { pinnedAppIds: null, iconPositions: {} };
+  }
+}
+
+function saveIconPrefs(state) {
+  try {
+    localStorage.setItem(ICONS_STORAGE_KEY, JSON.stringify({
+      pinnedAppIds: state.pinnedAppIds,
+      iconPositions: state.iconPositions,
     }));
   } catch {}
 }
@@ -176,11 +205,16 @@ if (typeof document !== 'undefined') {
   applyAccentToDOM(initialAccent);
 }
 
-const useDesktopStore = create((set) => ({
+const initialIconPrefs = loadIconPrefs();
+
+const useDesktopStore = create((set, get) => ({
   theme: initialTheme,
   accent: initialAccent,
   clockFormat: initialClockFormat,
   launcherOpen: false,
+
+  pinnedAppIds: initialIconPrefs.pinnedAppIds, // null | string[]
+  iconPositions: initialIconPrefs.iconPositions, // { [appId]: { col, row } }
 
   setTheme: (theme) => {
     if (typeof document !== 'undefined') {
@@ -197,8 +231,35 @@ const useDesktopStore = create((set) => ({
   setClockFormat: (clockFormat) => set({ clockFormat: clockFormat === '12h' ? '12h' : '24h' }),
   toggleLauncher: () => set((s) => ({ launcherOpen: !s.launcherOpen })),
   closeLauncher: () => set({ launcherOpen: false }),
+
+  isPinned: (appId) => {
+    const { pinnedAppIds } = get();
+    return pinnedAppIds === null ? true : pinnedAppIds.includes(appId);
+  },
+  getPinnedAppIds: (allAppIds) => {
+    const { pinnedAppIds } = get();
+    return pinnedAppIds === null ? allAppIds : pinnedAppIds.filter((id) => allAppIds.includes(id));
+  },
+  pinApp: (appId, allAppIds) => set((s) => {
+    const current = s.pinnedAppIds === null ? [...allAppIds] : [...s.pinnedAppIds];
+    if (!current.includes(appId)) current.push(appId);
+    return { pinnedAppIds: current };
+  }),
+  unpinApp: (appId, allAppIds) => set((s) => {
+    const current = s.pinnedAppIds === null ? [...allAppIds] : [...s.pinnedAppIds];
+    return {
+      pinnedAppIds: current.filter((id) => id !== appId),
+      iconPositions: Object.fromEntries(Object.entries(s.iconPositions).filter(([id]) => id !== appId)),
+    };
+  }),
+  moveIcon: (appId, pos) => set((s) => ({
+    iconPositions: { ...s.iconPositions, [appId]: pos },
+  })),
 }));
 
-useDesktopStore.subscribe((state) => savePrefs(state));
+useDesktopStore.subscribe((state) => {
+  savePrefs(state);
+  saveIconPrefs(state);
+});
 
 export default useDesktopStore;

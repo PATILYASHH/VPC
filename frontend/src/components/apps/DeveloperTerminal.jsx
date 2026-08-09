@@ -63,7 +63,7 @@ export default function DeveloperTerminal() {
 
     // Welcome banner before WS connects
     term.writeln('\x1b[32m  __     ______   ____\x1b[0m');
-    term.writeln('\x1b[32m  \\ \\   / /  _ \\ / ___|   Virtual PC Control\x1b[0m');
+    term.writeln('\x1b[32m  \\ \\   / /  _ \\ / ___|   Virtual Private Computer\x1b[0m');
     term.writeln('\x1b[32m   \\ \\ / /| |_) | |       Terminal v3.0  (real PTY)\x1b[0m');
     term.writeln('\x1b[32m    \\ V / |  __/| |___\x1b[0m');
     term.writeln('\x1b[32m     \\_/  |_|    \\____|\x1b[0m');

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, X, Pin, PinOff } from 'lucide-react';
 import useDesktopStore from '@/stores/useDesktopStore';
 import useWindowStore from '@/stores/useWindowStore';
 import useAuthStore from '@/stores/useAuthStore';
@@ -10,10 +10,25 @@ export default function AppLauncher() {
   const closeLauncher = useDesktopStore((s) => s.closeLauncher);
   const openWindow = useWindowStore((s) => s.openWindow);
   const hasPermission = useAuthStore((s) => s.hasPermission);
+  const isPinned = useDesktopStore((s) => s.isPinned);
+  const pinApp = useDesktopStore((s) => s.pinApp);
+  const unpinApp = useDesktopStore((s) => s.unpinApp);
   const isMobile = useIsMobile();
   const ref = useRef(null);
   const searchRef = useRef(null);
   const [search, setSearch] = useState('');
+
+  // Permission-filtered (not search-filtered) — pin state shouldn't depend on
+  // whatever's currently typed in the search box.
+  const permittedAppIds = Object.values(APP_REGISTRY)
+    .filter((app) => !app.permission || hasPermission(app.permission))
+    .map((app) => app.id);
+
+  const togglePin = (e, appId) => {
+    e.stopPropagation();
+    if (isPinned(appId)) unpinApp(appId, permittedAppIds);
+    else pinApp(appId, permittedAppIds);
+  };
 
   useEffect(() => {
     searchRef.current?.focus();
@@ -101,12 +116,22 @@ export default function AppLauncher() {
               <div className="grid grid-cols-4 gap-1">
                 {grouped[cat].map((app) => {
                   const Icon = app.icon;
+                  const pinned = isPinned(app.id);
                   return (
                     <button
                       key={app.id}
                       onClick={() => handleOpen(app.id)}
-                      className="flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150 group"
+                      className="relative flex flex-col items-center gap-2 p-3 rounded-xl hover:bg-white/[0.06] active:scale-95 transition-all duration-150 group"
                     >
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        onClick={(e) => togglePin(e, app.id)}
+                        title={pinned ? 'Remove from Desktop' : 'Add to Desktop'}
+                        className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center bg-black/40 text-white/80 hover:bg-black/60 hover:text-white transition-colors"
+                      >
+                        {pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                      </span>
                       <div className={`w-12 h-12 rounded-xl ${app.iconBg || 'bg-primary/10'} flex items-center justify-center`}>
                         <Icon className={`w-6 h-6 ${app.iconColor || 'text-primary'}`} />
                       </div>
@@ -161,12 +186,22 @@ export default function AppLauncher() {
             <div className="grid grid-cols-3 gap-1">
               {grouped[cat].map((app) => {
                 const Icon = app.icon;
+                const pinned = isPinned(app.id);
                 return (
                   <button
                     key={app.id}
                     onClick={() => handleOpen(app.id)}
-                    className="flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-white/[0.06] transition-all duration-150 group"
+                    className="relative flex flex-col items-center gap-1.5 p-3 rounded-xl hover:bg-white/[0.06] transition-all duration-150 group"
                   >
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      onClick={(e) => togglePin(e, app.id)}
+                      title={pinned ? 'Remove from Desktop' : 'Add to Desktop'}
+                      className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center bg-black/0 text-muted-foreground/0 group-hover:bg-black/40 group-hover:text-white/80 hover:!bg-black/60 hover:!text-white transition-colors"
+                    >
+                      {pinned ? <PinOff className="w-2.5 h-2.5" /> : <Pin className="w-2.5 h-2.5" />}
+                    </span>
                     <div className={`w-11 h-11 rounded-xl ${app.iconBg || 'bg-primary/10'} flex items-center justify-center group-hover:scale-110 transition-transform duration-150`}>
                       <Icon className={`w-5.5 h-5.5 ${app.iconColor || 'text-primary'}`} />
                     </div>

@@ -13,3 +13,10 @@ tmp/
 temp/
 backend/uploads/
 backups/
+
+# Private roadmap notes — not for the public repo
+bucketlist.md
+
+# Marketing site — not part of the app, kept out of the public repo
+website/
+website

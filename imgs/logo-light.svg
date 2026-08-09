@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" width="220" height="60" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60" width="240" height="60" fill="none">
   <!-- Terminal/monitor icon -->
   <rect x="4" y="8" width="36" height="28" rx="4" stroke="#ffffff" stroke-width="2.5" fill="none"/>
   <!-- Screen inner highlight -->
@@ -33,10 +33,10 @@
     x="63"
     y="51"
     font-family="'Inter', 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
-    font-size="8"
+    font-size="7.5"
     font-weight="400"
-    letter-spacing="2.2"
+    letter-spacing="1.1"
     fill="#ffffff"
     opacity="0.5"
-  >VIRTUAL PC CONTROL</text>
+  >VIRTUAL PRIVATE COMPUTER</text>
 </svg>

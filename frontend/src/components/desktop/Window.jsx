@@ -94,10 +94,22 @@ export default function Window({ windowId }) {
       minHeight={win.minHeight}
       style={{ zIndex: win.zIndex, pointerEvents: 'auto' }}
       dragHandleClassName="window-drag-handle"
-      bounds="parent"
       disableDragging={win.isMaximized}
       enableResizing={!win.isMaximized}
-      onDragStop={(e, d) => updatePosition(windowId, { x: d.x, y: d.y })}
+      onDragStop={(e, d) => {
+        // Free dragging, but soft-clamp on release so a window can hang up to
+        // half its size off the left/right/bottom edges — never fully lost
+        // off-screen. The top edge is never allowed to go negative: that's
+        // where the title bar (the only drag handle) lives, so letting it go
+        // off-screen would strand the window with no way to grab it back.
+        const viewportW = window.innerWidth;
+        const viewportH = window.innerHeight - 68; // minus taskbar
+        const maxOverflowX = win.width / 2;
+        const maxOverflowY = win.height / 2;
+        const x = Math.min(Math.max(d.x, -maxOverflowX), viewportW - win.width + maxOverflowX);
+        const y = Math.min(Math.max(d.y, 0), viewportH - win.height + maxOverflowY);
+        updatePosition(windowId, { x, y });
+      }}
       onResizeStop={(e, direction, ref, delta, position) => {
         updateSize(windowId, {
           width: parseInt(ref.style.width),

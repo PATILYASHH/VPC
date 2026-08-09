@@ -8,6 +8,7 @@ import WindowManager from './WindowManager';
 import Taskbar from './Taskbar';
 import AppLauncher from './AppLauncher';
 import AppIcon from './AppIcon';
+import DesktopIconGrid from './DesktopIconGrid';
 import CommandPalette from './CommandPalette';
 import NotificationCenter from './NotificationCenter';
 import JobQueue from './JobQueue';
@@ -108,12 +109,9 @@ export default function Desktop() {
               ))}
             </div>
           ) : (
-            // Desktop: vertical columns wrapping
-            <div className="flex flex-col flex-wrap gap-2 h-full content-start">
-              {appIds.map((appId) => (
-                <AppIcon key={appId} appId={appId} />
-              ))}
-            </div>
+            // Desktop: freeform draggable grid — positions persist per-icon,
+            // removed icons stay reachable via the VPC launcher.
+            <DesktopIconGrid appIds={appIds} />
           )}
         </div>
       )}

@@ -59,7 +59,7 @@ The installer will:
 
 ## What is VPC?
 
-VPC (Virtual PC Control) is a **web-based desktop environment** for managing your VPS. Instead of juggling terminals, dashboards, and tools — you get a single OS-like interface with windowed apps, a taskbar, and a launcher. Everything your server needs, in one place.
+VPC (Virtual Private Computer) is a **web-based desktop environment** for managing your VPS. Instead of juggling terminals, dashboards, and tools — you get a single OS-like interface with windowed apps, a taskbar, and a launcher. Everything your server needs, in one place.
 
 Think of it as **your server's operating system in the browser**.
 
